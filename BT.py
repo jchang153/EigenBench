@@ -47,6 +47,26 @@ class VectorBT(nn.Module):
         score_j = torch.sum(u_i * v_j, dim=-1)
         score_k = torch.sum(u_i * v_k, dim=-1)
         return torch.sigmoid(score_j - score_k)
+    
+class VectorBT_norm(nn.Module):
+    def __init__(self, num_models, d):
+        super().__init__()
+        # judge embeddings u_i and model embeddings v_j
+        self.u = nn.Embedding(num_models, d)
+        self.v = nn.Embedding(num_models, d)
+        # initialize
+        nn.init.normal_(self.u.weight, mean=0.0, std=0.1)
+        nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
+
+    def forward(self, i_idx, j_idx, k_idx):
+        u_i = self.u(i_idx)   # shape: (batch, d)
+        v_j = self.v(j_idx)   # shape: (batch, d)
+        v_k = self.v(k_idx)   # shape: (batch, d)
+        # compute utility differences
+        # latent strength: negative squared Euclidean distance
+        score_j = -torch.sum((u_i - v_j) ** 2, dim=-1)
+        score_k = -torch.sum((u_i - v_k) ** 2, dim=-1)
+        return torch.sigmoid(score_j - score_k)
 
 
 def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None):#, tol=1e-3):
@@ -129,11 +149,8 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
 if __name__ == "__main__":
 
 
-    path = 'transcript/20250513_224000/'
+    path = 'transcript/20250529_000000/'
     filepath = path + 'evaluations_cleaned.json'
-
-    path = 'transcript_MMLU/_law_redo/'
-    filepath = path + 'evaluations_answer.json'
 
     data = []
     with open(filepath, 'r') as file:
@@ -148,8 +165,8 @@ if __name__ == "__main__":
         response = item['judge response']
         eval1_response = item['eval1 response']
         eval2_response = item['eval2 response']
-        # if item['constitution'] == 0:
-        #     continue
+        if item['constitution'] in [0,1]:
+            continue
         # test with omitting self judgments
         # if item['judge'] == item['eval1'] or item['judge'] == item['eval2']:
         #     continue
@@ -196,17 +213,50 @@ if __name__ == "__main__":
     #     json.dump(data_cleaned, file, indent=4)
     #     print(f"Cleaned transcript written to {filename}\n")
 
+    # func = {'(0, 0)': 0,
+    #     '(0, 1)': 1,
+    #     '(0, 2)': 2,
+    #     '(0, 3)': 3,
+    #     '(0, 4)': 4,
+    #     '(1, 0)': 5,
+    #     '(1, 1)': 6,
+    #     '(1, 2)': 7,
+    #     '(1, 3)': 8,
+    #     '(1, 4)': 9,
+    #     '(2, 0)': 10,
+    #     '(2, 1)': 11,
+    #     '(2, 2)': 12,
+    #     '(2, 3)': 13,
+    #     '(2, 4)': 14,
+    #     '(3, 0)': 15,
+    #     '(3, 1)': 16,
+    #     '(3, 2)': 17,
+    #     '(3, 3)': 18,
+    #     '(3, 4)': 19,
+    #     '(4, 0)': 20,
+    #     '(4, 1)': 21,
+    #     '(4, 2)': 22,
+    #     '(4, 3)': 23,
+    #     '(4, 4)': 24,}
+    
+    # mapped_comparisons = []
+    # for item in comparisons:
+    #     l = [func[x] for x in item[:3]]
+    #     l.append(item[3])
+    #     mapped_comparisons.append(l)
+
+
     batch_size=32
     dataset = PairwiseDataset(comparisons)
+    # dataset = PairwiseDataset(mapped_comparisons)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    num_models = 6
+    num_models = 5
     d = 6
 
-    lr = 1e-4
+    lr = 1e-3
     weight_decay = 0
-    max_epochs = 500
-    # tol = 1e-3
+    max_epochs = 250
 
     print("Ready to train with the following parameters:")
     print("batch_size:", batch_size)
@@ -215,9 +265,9 @@ if __name__ == "__main__":
     print("lr:", lr)
     print("weight_decay:", weight_decay)
     print("max_epochs:", max_epochs, "\n\n")
-    # print("tol:", tol, "\n\n")
 
     model = VectorBT(num_models, d)
+    # model = VectorBT_norm(num_models, d)
     loss_history = train_vector_bt(
         model, 
         dataloader,
@@ -226,7 +276,6 @@ if __name__ == "__main__":
         max_epochs=max_epochs, 
         device='mps',
         save_path=path
-        # tol=tol,
     )
 
     log_path = path + 'log_train.txt'
@@ -239,4 +288,3 @@ if __name__ == "__main__":
         f.write(f'weight_decay = {weight_decay}\n')
         f.write(f'epochs = {max_epochs}\n\n')
         f.write(f'Minimum Loss = {min(loss_history)}')
-        # f.write(f'tol = {tol}\n')
