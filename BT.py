@@ -145,28 +145,13 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
 
     return loss_history
 
-
-if __name__ == "__main__":
-
-
-    path = 'transcript/20250529_000000/'
-    filepath = path + 'evaluations_cleaned.json'
-
-    data = []
-    with open(filepath, 'r') as file:
-        data.extend(json.load(file))
-
-    print("Loaded data has length", len(data))
-
+def extract_comparisons(data):
     comparisons = []
-    # data_cleaned=[]
-
+    data_cleaned = []
     for i, item in enumerate(data):
         response = item['judge response']
         eval1_response = item['eval1 response']
         eval2_response = item['eval2 response']
-        if item['constitution'] in [0,1]:
-            continue
         # test with omitting self judgments
         # if item['judge'] == item['eval1'] or item['judge'] == item['eval2']:
         #     continue
@@ -199,19 +184,46 @@ if __name__ == "__main__":
                 score = int(m.group(1))
 
                 comparisons.append([item['judge'], item['eval1'], item['eval2'], score])
-                # data_cleaned.append(item)
+                data_cleaned.append(item)
             except:
                 print(f"No number found in the {i}th judge response")
                 continue
         else:
             print(f"No <choice>…</choice> match found in the {i}th judge response")
 
-    print("Formed", len(comparisons), "comparisons\n")
-    
-    # filename = path + 'evaluations_cleaned.json'
-    # with open(filename, "w") as file:
-    #     json.dump(data_cleaned, file, indent=4)
-    #     print(f"Cleaned transcript written to {filename}\n")
+    return comparisons, data_cleaned
+
+
+if __name__ == "__main__":
+
+    path = 'transcript/20250609_180000/'
+
+    filepath = path + 'evaluations.json'
+    cleaned_filepath = path + 'evaluations_cleaned.json'
+
+    if not os.path.exists(cleaned_filepath):
+        data = []
+        with open(filepath, 'r') as file:
+            data.extend(json.load(file))
+
+        comparisons, data_cleaned = extract_comparisons(data)
+
+        print("Loaded data has length", len(data))
+        print("Formed", len(comparisons), "comparisons\n")
+
+        with open(cleaned_filepath, "w") as file:
+            json.dump(data_cleaned, file, indent=4)
+            print(f"Cleaned transcript written to {cleaned_filepath}\n")
+
+    else:
+        data = []
+        with open(cleaned_filepath, 'r') as file:
+            data.extend(json.load(file))
+
+        comparisons, data_cleaned = extract_comparisons(data)
+
+        print("Loaded cleaned data has length", len(data))
+        print("Formed", len(comparisons), "comparisons\n")
 
     # func = {'(0, 0)': 0,
     #     '(0, 1)': 1,
@@ -256,7 +268,7 @@ if __name__ == "__main__":
 
     lr = 1e-3
     weight_decay = 0
-    max_epochs = 250
+    max_epochs = 200
 
     print("Ready to train with the following parameters:")
     print("batch_size:", batch_size)
