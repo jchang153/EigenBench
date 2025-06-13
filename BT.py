@@ -145,7 +145,7 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
 
     return loss_history
 
-def extract_comparisons(data):
+def extract_comparisons(data, include_scenario=False):
     comparisons = []
     data_cleaned = []
     for i, item in enumerate(data):
@@ -182,8 +182,10 @@ def extract_comparisons(data):
         if m:
             try:
                 score = int(m.group(1))
-
-                comparisons.append([item['judge'], item['eval1'], item['eval2'], score])
+                if include_scenario:
+                    comparisons.append([item['scenario_index'], item['judge'], item['eval1'], item['eval2'], score])
+                else:
+                    comparisons.append([item['judge'], item['eval1'], item['eval2'], score])
                 data_cleaned.append(item)
             except:
                 print(f"No number found in the {i}th judge response")
@@ -196,7 +198,7 @@ def extract_comparisons(data):
 
 if __name__ == "__main__":
 
-    path = 'transcript/20250609_180000/'
+    path = 'transcript/20250612_000000/'
 
     filepath = path + 'evaluations.json'
     cleaned_filepath = path + 'evaluations_cleaned.json'
