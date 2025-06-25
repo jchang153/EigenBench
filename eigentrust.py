@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from BT import VectorBT
+from BT import VectorBT, VectorBT_norm, VectorBT_bias
 import numpy as np
 from tqdm import tqdm
 
@@ -18,7 +18,6 @@ def compute_trust_matrix(model, device='cpu'):
     # Compute raw scores S_ij = u_i · v_j
     S = U @ V.t()                       # shape (N, N)
     S = torch.exp(S)
-    # S = F.relu(S)
     return S
 
 def row_normalize(S):
@@ -49,11 +48,10 @@ def eigentrust(C, alpha=0.15, tol=1e-6, max_iter=1000):
 
 if __name__ == "__main__":
 
-    path = 'transcript/20250513_025336/eigentrust_omit_4_judges_0/'
-    path = 'transcript_MMLU/_law_redo/'
+    path = 'transcript/20250614_000000/'
     
     model_path   = path + 'model.pt'
-    num_models   = 6
+    num_models   = 5
     d            = 6
     device       = 'mps'
 
