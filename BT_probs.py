@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 """
-Code for training Bradley-Terry models with binary comparison data, r in {1,2}
+Code for training Bradley-Terry models with probabilistic comparison data, r in (0,1)
 """
 
 class PairwiseDataset(Dataset):
@@ -95,7 +95,10 @@ class VectorBT_bias(nn.Module):
         score_k = torch.sum(u_i * v_k, dim=-1)
         return torch.sigmoid(score_j - score_k + b_i.squeeze(-1))
 
-def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None):
+def train_vector_bt_probs(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None):
+    """
+    same as above, but targets are probabilities instead of 0/1 labels
+    """
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.BCELoss()
@@ -111,8 +114,6 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
             j_idx = j_idx.to(device)
             k_idx = k_idx.to(device)
             r = r.to(device)
-
-            r = 2-r # convert {1,2} to {1,0}
 
             p = model(i_idx, j_idx, k_idx)
             loss = loss_fn(p, r)
@@ -187,56 +188,75 @@ def extract_comparisons(data, include_scenario=False):
 
     return comparisons, data_cleaned
 
+def extract_log_odds(comparisons):
+    comparisons_copy = comparisons.copy()
+    comparisons_new = []
+
+    for item in comparisons:
+        if item in comparisons_copy:
+            l = item[0]
+            i = item[1]
+            j = item[2]
+            k = item[3]
+            r = item[4]
+
+            try:
+                other = [x for x in comparisons if x[0] == l and x[1] == i and x[2] == k and x[3] == j][0]
+
+                r2 = 1-other[4]
+
+                log_odds = np.sqrt(r*r2) / (np.sqrt(r*r2)+ np.sqrt((1-r)*(1-r2)))
+                comparisons_new.append([l, i, j, k, log_odds])
+
+                comparisons_copy.remove(item)
+                comparisons_copy.remove(other)
+
+            except Exception as e:
+                print(f"Error processing item {item}: {e}")
+                comparisons_copy.remove(item)
+    return comparisons_new
+
 
 if __name__ == "__main__":
 
-    path = 'transcript/20250614_000000/'
+    path = 'transcript/20250620_000000/'
 
     filepath = path + 'evaluations.json'
     cleaned_filepath = path + 'evaluations_cleaned.json'
+    
 
-    if not os.path.exists(cleaned_filepath):
-        data = []
-        with open(filepath, 'r') as file:
-            data.extend(json.load(file))
+    data = []
+    with open(cleaned_filepath, 'r') as file:
+        data.extend(json.load(file))
 
-        comparisons, data_cleaned = extract_comparisons(data)
+    comparisons, data_cleaned = extract_comparisons(data, include_scenario=True)
+    comparisons = extract_log_odds(comparisons)
+    comparisons = [c[1:] for c in comparisons]
 
-        print("Loaded data has length", len(data))
-        print("Formed", len(comparisons), "comparisons\n")
 
-        with open(cleaned_filepath, "w") as file:
-            json.dump(data_cleaned, file, indent=4)
-            print(f"Cleaned transcript written to {cleaned_filepath}\n")
-
-    else:
-        data = []
-        with open(cleaned_filepath, 'r') as file:
-            data.extend(json.load(file))
-
-        comparisons, data_cleaned = extract_comparisons(data)
-
-        print("Loaded cleaned data has length", len(data))
-        print("Formed", len(comparisons), "comparisons\n")
-
-    # if data contains personas, see dimensionality.ipynb for mapping function
-
-    TEST = True
     batch_size = 32
+
+    # create train-test-split
+    from sklearn.model_selection import train_test_split
+    train_comps, test_comps = train_test_split(
+        comparisons,
+        test_size=0.2,
+        random_state=42,
+        shuffle=True
+    )
+    train_loader = DataLoader(PairwiseDataset(train_comps), batch_size=32, shuffle=True)
+    test_loader  = DataLoader(PairwiseDataset(test_comps),  batch_size=32, shuffle=False)
+
+
     num_models = 5
     d = 6
 
     lr = 1e-3
     weight_decay = 0
     max_epochs = 100
-    device = 'cpu'
-
-    model = VectorBT(num_models, d)
-    # model = VectorBT_norm(num_models, d)
-    # model = VectorBT_bias(num_models, d)
+    device = 'mps'
 
     print("Ready to train with the following parameters:")
-    print("model:", model.__class__.__name__)
     print("batch_size:", batch_size)
     print("num_models:", num_models)
     print("dim:", d)
@@ -244,86 +264,46 @@ if __name__ == "__main__":
     print("weight_decay:", weight_decay)
     print("max_epochs:", max_epochs, "\n\n")
 
+    model = VectorBT(num_models, d)
+    # model = VectorBT_norm(num_models, d)
+    # model = VectorBT_bias(num_models, d)
+    loss_history = train_vector_bt_probs(
+        model, 
+        train_loader,
+        lr=lr, 
+        weight_decay=weight_decay,
+        max_epochs=max_epochs, 
+        device=device,
+        save_path=path
+    )
 
-    if not TEST:
-        dataset = PairwiseDataset(comparisons)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    print('Now evaluating the model on the test set\n')
+    model.eval()
+    loss_fn = nn.BCELoss()
+    total_test_loss = 0.0
 
-        loss_history = train_vector_bt(
-            model, 
-            dataloader,
-            lr=lr, 
-            weight_decay=weight_decay,
-            max_epochs=max_epochs, 
-            device=device,
-            save_path=path
-        )
+    with torch.no_grad():
+        for i_idx, j_idx, k_idx, r in test_loader:
+            i_idx, j_idx, k_idx = i_idx.to(device), j_idx.to(device), k_idx.to(device)
+            r = r.to(device)
+            p = model(i_idx, j_idx, k_idx)
+            loss  = loss_fn(p, r)
 
-        log_path = path + 'log_train.txt'
-        with open(log_path, 'w') as f:
-            f.write(f'dataset = {path}\n')
-            f.write(f'datasize = {len(comparisons)}\n')
-            f.write(f'batch_size = {batch_size}\n\n')
-            f.write(f'model = {model.__class__.__name__}\n')
-            f.write(f'num_models = {num_models}\n')
-            f.write(f'dim = {d}\n\n')
-            f.write(f'lr = {lr}\n')
-            f.write(f'weight_decay = {weight_decay}\n')
-            f.write(f'epochs = {max_epochs}\n\n')
-            f.write(f'Minimum Loss = {min(loss_history)}')
+            total_test_loss += loss.item() * r.size(0)
 
-    else:
-        # create train-test-split
-        from sklearn.model_selection import train_test_split
-        train_comps, test_comps = train_test_split(
-            comparisons,
-            test_size=0.2,
-            random_state=42,
-            shuffle=True
-        )
-        train_loader = DataLoader(PairwiseDataset(train_comps), batch_size=32, shuffle=True)
-        test_loader  = DataLoader(PairwiseDataset(test_comps),  batch_size=32, shuffle=False)
-
-        loss_history = train_vector_bt(
-            model, 
-            train_loader,
-            lr=lr, 
-            weight_decay=weight_decay,
-            max_epochs=max_epochs, 
-            device=device,
-            save_path=path
-        )
-
-        print('Now evaluating the model on the test set\n')
-        model.eval()
-        loss_fn = nn.BCELoss()
-        total_test_loss = 0.0
-
-        with torch.no_grad():
-            for i_idx, j_idx, k_idx, r in test_loader:
-                i_idx, j_idx, k_idx = i_idx.to(device), j_idx.to(device), k_idx.to(device)
-                r = r.to(device)
-                p = model(i_idx, j_idx, k_idx)
-                loss  = loss_fn(p, r)
-
-                total_test_loss += loss.item() * r.size(0)
-
-        avg_test_loss = total_test_loss / len(test_loader.dataset)
+    avg_test_loss = total_test_loss / len(test_loader.dataset)
 
 
-        log_path = path + 'log_train.txt'
-        with open(log_path, 'w') as f:
-            f.write(f'dataset = {path}\n')
-            f.write(f'train_datasize = {len(train_comps)}\n')
-            f.write(f'test_datasize = {len(test_comps)}\n')
-            f.write(f'batch_size = {batch_size}\n\n')
-            f.write(f'model = {model.__class__.__name__}\n')
-            f.write(f'num_models = {num_models}\n')
-            f.write(f'dim = {d}\n\n')
-            f.write(f'lr = {lr}\n')
-            f.write(f'weight_decay = {weight_decay}\n')
-            f.write(f'epochs = {max_epochs}\n\n')
-            f.write(f'Minimum Train Loss = {min(loss_history)}\n')
-            f.write(f'Test Loss = {avg_test_loss}\n')
-        
-        print(f"Log written to {log_path}")
+    log_path = path + 'log_train.txt'
+    with open(log_path, 'w') as f:
+        f.write(f'dataset = {path}\n')
+        f.write(f'datasize = {len(comparisons)}\n')
+        f.write(f'num_models = {num_models}\n')
+        f.write(f'dim = {d}\n')
+        f.write(f'lr = {lr}\n')
+        f.write(f'weight_decay = {weight_decay}\n')
+        f.write(f'epochs = {max_epochs}\n\n')
+        f.write(f'Minimum Train Loss = {min(loss_history)}\n')
+        f.write(f'Test Loss = {avg_test_loss}\n')
+    
+    print(f"Log written to {log_path}")
