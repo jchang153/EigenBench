@@ -57,7 +57,7 @@ class VectorBTD(nn.Module):
 def train_vector_btd(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None):
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCELoss()
 
     loss_history = []
 
@@ -72,7 +72,7 @@ def train_vector_btd(model, dataloader, lr, weight_decay, max_epochs, device, sa
             r = r.to(device).long()
 
             logits = model(i_idx, j_idx, k_idx)
-            loss = loss_fn(logits, r) # cross entropy loss with classifying 0/1
+            loss = loss_fn(logits, r) # cross entropy loss with classifying 0/0.5/1
 
             optimizer.zero_grad()
             loss.backward()
@@ -105,21 +105,25 @@ def train_vector_btd(model, dataloader, lr, weight_decay, max_epochs, device, sa
 
     return loss_history
 
-def extract_comparisons(data):
+def extract_comparisons(data, include_scenario=False):
     comparisons = []
     data_cleaned = []
     for i, item in enumerate(data):
         response = item['judge response']
         eval1_response = item['eval1 response']
         eval2_response = item['eval2 response']
+        eval1_reflection = item['eval1 reflection']
+        eval2_reflection = item['eval2 reflection']
 
-        if response == None or eval1_response == None or eval2_response == None:
+        if response == None or eval1_response == None or eval2_response == None or eval1_reflection == None or eval2_reflection == None:
             continue
 
         e = re.search(r"Error in \w+ API call", response)
         e1 = re.search(r"Error in \w+ API call", eval1_response)
         e2 = re.search(r"Error in \w+ API call", eval2_response)
-        if e or e1 or e2:
+        e3 = re.search(r"Error in \w+ API call", eval1_reflection)
+        e4 = re.search(r"Error in \w+ API call", eval2_reflection)
+        if e or e1 or e2 or e3 or e4:
             print(f"Error in {i}th API call")
             continue
 
@@ -127,8 +131,10 @@ def extract_comparisons(data):
         if m:
             try:
                 score = int(m.group(1))
-
-                comparisons.append([item['judge'], item['eval1'], item['eval2'], score])
+                if include_scenario:
+                    comparisons.append([item['scenario_index'], item['judge'], item['eval1'], item['eval2'], score])
+                else:
+                    comparisons.append([item['judge'], item['eval1'], item['eval2'], score])
                 data_cleaned.append(item)
             except:
                 print(f"No number found in the {i}th judge response")
@@ -138,12 +144,37 @@ def extract_comparisons(data):
 
     return comparisons, data_cleaned
 
+def get_comparisons_with_ties(comparisons):
+    num_scenarios = len(set([i[0] for i in comparisons]))
+    num_models = len(set([i[1] for i in comparisons]))
+
+    comparisons_new = []
+
+    for l in range(num_scenarios):
+        scenario_set = [i for i in comparisons if i[0] == l]
+
+        for judge in range(num_models):
+            judge_set = [i for i in scenario_set if i[1] == judge]
+
+            for eval1, eval2 in [[0,1], [0,2], [0,3], [0,4], [1,2], [1,3], [1,4], [2,3], [2,4], [3,4]]:
+                subset = [i for i in judge_set if (i[2] == eval1 and i[3] == eval2) or (i[3] == eval1 and i[2] == eval2)]
+
+                if len(subset) == 2:
+                    if subset[0][-1] == subset[1][-1]:
+                        comparisons_new.append([l, judge, eval1, eval2, 0.5])
+                    elif subset[0][-1] == 1:
+                        comparisons_new.append([l, judge, eval1, eval2, 0])
+                    elif subset[0][-1] == 2:
+                        comparisons_new.append([l, judge, eval1, eval2, 1])
+    
+    return comparisons_new
+
 
 if __name__ == "__main__":
 
-    path = 'transcript/20250609_180001/'
+    path = 'transcript/20250614_000000/'
 
-    filepath = path + 'evaluations_with_ties.json'
+    filepath = path + 'evaluations.json'
     cleaned_filepath = path + 'evaluations_cleaned.json'
 
     if not os.path.exists(cleaned_filepath):
@@ -166,17 +197,20 @@ if __name__ == "__main__":
             data.extend(json.load(file))
 
         comparisons, data_cleaned = extract_comparisons(data)
+        comparisons, data_cleaned = extract_comparisons(data, include_scenario=True) # need this to get comparisons with ties
 
         print("Loaded cleaned data has length", len(data))
         print("Formed", len(comparisons), "comparisons\n")
 
+    comparisons = get_comparisons_with_ties(comparisons)
+    comparisons = [i[1:] for i in comparisons] # remove scenario index
 
     batch_size=32
     dataset = PairwiseDataset(comparisons)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     num_models = 5
-    d = 6
+    d = 2
 
     lr = 1e-3
     weight_decay = 0
