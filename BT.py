@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
 
 import re
 import json
@@ -95,7 +96,10 @@ class VectorBT_bias(nn.Module):
         score_k = torch.sum(u_i * v_k, dim=-1)
         return torch.sigmoid(score_j - score_k + b_i.squeeze(-1))
 
-def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None):
+def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None, normalize=False):
+    """
+    normalize adds the option of normalizing the 'v' vectors to be unit vectors between each optimization step.
+    """
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.BCELoss()
@@ -120,6 +124,10 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            if normalize:
+                with torch.no_grad():
+                    model.v.weight.data = F.normalize(model.v.weight.data, p=2, dim=1)
 
             total_loss += loss.item() * r.size(0)
 
@@ -222,9 +230,10 @@ if __name__ == "__main__":
     # if data contains personas, see dimensionality.ipynb for mapping function
 
     TEST = True
+    NORMALIZE = True
     batch_size = 32
     num_models = 5
-    d = 6
+    d = 4
 
     lr = 1e-3
     weight_decay = 0
@@ -256,7 +265,8 @@ if __name__ == "__main__":
             weight_decay=weight_decay,
             max_epochs=max_epochs, 
             device=device,
-            save_path=path
+            save_path=path,
+            normalize=NORMALIZE
         )
 
         log_path = path + 'log_train.txt'
@@ -291,7 +301,8 @@ if __name__ == "__main__":
             weight_decay=weight_decay,
             max_epochs=max_epochs, 
             device=device,
-            save_path=path
+            save_path=path,
+            normalize=NORMALIZE
         )
 
         print('Now evaluating the model on the test set\n')
