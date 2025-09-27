@@ -14,16 +14,16 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from itertools import combinations
 
-from eigentrust import eigentrust, row_normalize, compute_trust_matrix
+from eigentrust import eigentrust, row_normalize, compute_trust_matrix, compute_trust_matrix_ties
+from data_utils import *
 
 """
-Code for training Bradley-Terry models with binary comparison data, r in {1,2} -> {1,0}, with BCE loss
+Code for training BTD models with ternary comparison data, r in {0,1,2}, where judge responded with <criterion> comparisons.
 
-Or BTD model where inconsistent responses with order bias are marked as ties.
-So we use a categorical CE loss with classes {tie,1,2} -> {0,1,2} 
+Comparisons should be in the format [c, l, i, j, k, r]
 """
 
-class PairwiseDataset(Dataset):
+class Comparisons(Dataset):
     def __init__(self, comparisons):
         self.data = comparisons
 
@@ -31,7 +31,7 @@ class PairwiseDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        c, i, j, k, r = self.data[idx]
+        c, l, i, j, k, r = self.data[idx]
         return torch.tensor(c, dtype=torch.long), \
                torch.tensor(i, dtype=torch.long), \
                torch.tensor(j, dtype=torch.long), \
@@ -52,19 +52,39 @@ class VectorBTD(nn.Module):
         nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
         nn.init.constant_(self.log_lambda.weight, 0.0) # lambda initialized to 1
 
-    def forward(self, c_idx, i_idx, j_idx, k_idx):
-        judge_idx = c_idx * self.num_models + i_idx
-        u_i_c = self.u(judge_idx)   # shape: (batch, d)
-        v_j = self.v(j_idx)     # shape: (batch, d)
-        v_k = self.v(k_idx)     # shape: (batch, d)
+        # print(self.v.weight)
+
+    def forward(self, c, i, j, k):
+        judge = c * self.num_models + i
+        u_i_c = self.u(judge)   # shape: (batch, d)
+        v_j = self.v(j)     # shape: (batch, d)
+        v_k = self.v(k)     # shape: (batch, d)
 
         score_j = torch.sum(u_i_c * v_j, dim=-1)
         score_k = torch.sum(u_i_c * v_k, dim=-1)
 
-        log_lambda_i = self.log_lambda(judge_idx).squeeze(-1)
+        log_lambda_i = self.log_lambda(judge).squeeze(-1)
         tie_logit = log_lambda_i + 0.5 * (score_j + score_k)
 
         logits = torch.stack([tie_logit, score_j, score_k], dim=1)
+        return logits
+    
+    def get_prob(self, c, i, j, k):
+        """
+        get probs for a single set of indices c,i,j,k
+        """
+        judge = c * self.num_models + i
+        u_i_c = self.u(judge)   # shape: (batch, d)
+        v_j = self.v(j)     # shape: (batch, d)
+        v_k = self.v(k)     # shape: (batch, d)
+
+        score_j = torch.sum(u_i_c * v_j, dim=-1)
+        score_k = torch.sum(u_i_c * v_k, dim=-1)
+
+        log_lambda_i = self.log_lambda(judge).squeeze(-1)
+        tie_logit = log_lambda_i + 0.5 * (score_j + score_k)
+
+        logits = [tie_logit, score_j, score_k]
         return logits
 
 
@@ -83,19 +103,20 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
         total_loss = 0.0
         model.train()
 
-        for c_idx, i_idx, j_idx, k_idx, r in dataloader:
-            c_idx = c_idx.to(device)
-            i_idx = i_idx.to(device)
-            j_idx = j_idx.to(device)
-            k_idx = k_idx.to(device)
+        for c, i, j, k, r in dataloader:
+            c = c.to(device)
+            i = i.to(device)
+            j = j.to(device)
+            k = k.to(device)
             r = r.to(device)
 
             if use_btd:
                 r = r.long()  # CrossEntropyLoss expects long tensor
-                logits = model(c_idx, i_idx, j_idx, k_idx)
+
+                logits = model(c, i, j, k)
                 loss = loss_fn(logits, r) # CE expects logits, unnormalized, as it has built in softmax
             else:
-                p = model(i_idx, j_idx, k_idx)
+                p = model(i, j, k)
                 loss = loss_fn(p, r)
 
             optimizer.zero_grad()
@@ -110,6 +131,10 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
 
         avg_loss = total_loss / len(dataloader.dataset)
         loss_history.append(avg_loss)
+
+        if len(loss_history) >= 10 and  np.average(np.abs(np.diff(loss_history[-10:]))) <= .0001:
+            print('loss converged, breaking')
+            break
 
         if epoch % 10 == 0:
             print(f"Epoch {epoch:>3d}, Loss = {avg_loss:.4f}")
@@ -141,39 +166,50 @@ if __name__ == "__main__":
     TEST = True
     TRUST = True
 
+    NUM_CRITERIA = 10
     SEPARATE_CRITERIA = False
 
-    path = 'transcript/20250722_000000/'
+    path = 'transcript/20250923_000000/'#conservatism_grok/'
 
-    # these comparisons were generated from test.ipynb, see "modifying extract comparisons..."
-    comparisons = []
-    with open(path + 'comparisons_with_ties.json', 'r') as file:
-        comparisons.extend(json.load(file))
+    filepath = path + 'evaluations.json'
+    cleaned_filepath = path + 'evaluations_cleaned.json'
 
-    if SEPARATE_CRITERIA:
-        comparisons = [[i[:1][0]-1] + i[2:] for i in comparisons] # remove scenario index; convert criteria numbers to indices
-        num_models = len(set([i[1] for i in comparisons]))
-        num_criteria = len(set([i[0] for i in comparisons]))
-    else:
-        comparisons = [[0] + i[2:] for i in comparisons]  # remove scenario and criteria indices; make every datapoint associated with criterion 0
-        num_models = len(set([i[1] for i in comparisons]))
-        num_criteria = 1
-    print("Formed", len(comparisons), "comparisons after accounting for ties")
+    data = []
+    with open(filepath, 'r') as file:
+        data.extend(json.load(file))
+
+    comparisons, data_cleaned = extract_comparisons_with_ties_criteria(data, num_criteria=NUM_CRITERIA)
+    comparisons = handle_inconsistencies_with_ties_criteria(comparisons)
+
+    # comparisons = json.load(open(path + 'comparisons_human_shreyas.json', 'r'))
+    # comparisons = [i[:2] + [6] + i[3:] for i in comparisons]
+
+    print("Loaded data has length", len(data))
+    print("Cleaned & criterion-separated data has length", len(data_cleaned))
+    print("Formed", len(comparisons), "comparisons after handling inconsistencies\n")
+
+    if not SEPARATE_CRITERIA:
+        comparisons = [[0] + i[1:] for i in comparisons]  # make every datapoint associated with criterion 0
+
+    comparisons = [i for i in comparisons if i[2] not in [5,6,7] and i[3] not in [5,6,7] and i[4] not in [5,6,7]]
+    
+    num_models = len(set([i[2] for i in comparisons ] + [i[3] for i in comparisons] + [i[4] for i in comparisons])) # count up all unique judges and evaluees
+    num_criteria = len(set([i[0] for i in comparisons]))
+
+    print("Number of models:", num_models, ", Number of criteria:", num_criteria)
 
     batch_size = 32
     d = 2
 
     lr = 1e-3
     weight_decay = 0
-    max_epochs = 200
+    max_epochs = 1000
     device = 'cpu'
 
 
     model = VectorBTD(num_criteria, num_models, d)
 
     print(f"Ready to train {'BTD' if USE_BTD else 'BT'} model:")
-
-
 
 
     if TEST:
@@ -183,8 +219,8 @@ if __name__ == "__main__":
             random_state=42,
             shuffle=True
         )
-        train_loader = DataLoader(PairwiseDataset(train_comps), batch_size=32, shuffle=True)
-        test_loader = DataLoader(PairwiseDataset(test_comps), batch_size=32, shuffle=False)
+        train_loader = DataLoader(Comparisons(train_comps), batch_size=32, shuffle=True)
+        test_loader = DataLoader(Comparisons(test_comps), batch_size=32, shuffle=False)
 
         loss_history = train_vector_bt(
             model, 
@@ -211,31 +247,31 @@ if __name__ == "__main__":
         count_matrix = np.zeros((num_criteria*num_models, num_models, num_models))
 
         with torch.no_grad():
-            for c_idx, i_idx, j_idx, k_idx, r in test_loader:
-                c_idx, i_idx, j_idx, k_idx = c_idx.to(device), i_idx.to(device), j_idx.to(device), k_idx.to(device)
+            for c, i, j, k, r in test_loader:
+                c, i, j, k = c.to(device), i.to(device), j.to(device), k.to(device)
                 r = r.to(device)
 
                 if USE_BTD:
                     r = r.long()
-                    logits = model(c_idx, i_idx, j_idx, k_idx)
+                    logits = model(c, i, j, k)
                     loss = loss_fn(logits, r)
                     per_sample_loss = F.cross_entropy(logits, r, reduction='none').cpu().numpy()
                 else:
-                    p = model(i_idx, j_idx, k_idx)
+                    p = model(i, j, k)
                     loss = loss_fn(p, r)
                     per_sample_loss = F.binary_cross_entropy(p, r, reduction='none').cpu().numpy()
 
                 total_test_loss += loss.item() * r.size(0)
                 
                 # Compute per-sample loss and accumulate in loss_matrix
-                c_idx_np = c_idx.cpu().numpy()
-                i_idx_np = i_idx.cpu().numpy()
-                j_idx_np = j_idx.cpu().numpy()
-                k_idx_np = k_idx.cpu().numpy()
+                c_np = c.cpu().numpy()
+                i_np = i.cpu().numpy()
+                j_np = j.cpu().numpy()
+                k_np = k.cpu().numpy()
                 for n in range(r.size(0)):
-                    row = c_idx_np[n] * num_models + i_idx_np[n]
-                    col_j = j_idx_np[n]
-                    col_k = k_idx_np[n]
+                    row = c_np[n] * num_models + i_np[n]
+                    col_j = j_np[n]
+                    col_k = k_np[n]
                     loss_matrix[row][col_j][col_k] += per_sample_loss[n]
                     count_matrix[row][col_j][col_k] += 1
 
@@ -269,7 +305,7 @@ if __name__ == "__main__":
         print(f"Training log written to {log_path}")
     
     else:
-        dataset = PairwiseDataset(comparisons)
+        dataset = Comparisons(comparisons)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         loss_history = train_vector_bt(
@@ -299,20 +335,36 @@ if __name__ == "__main__":
             f.write(f'Minimum Loss = {min(loss_history)}')
 
     if TRUST:
-        print("Now computing eigentrust scores")
-        S = compute_trust_matrix(model, device)
-        C = row_normalize(S)
+        if USE_BTD:
+            print("Now computing eigentrust scores")
+            T = compute_trust_matrix_ties(model, device)
 
-        np.set_printoptions(formatter={'float': '{:8.4f}'.format})
-        t = eigentrust(C, alpha=0)
+            np.set_printoptions(formatter={'float': '{:8.4f}'.format})
+            t = eigentrust(T, alpha=0)
 
-        trust_path = path + 'eigentrust.txt'
-        with open(trust_path, 'w') as f:
-            f.write("Trust matrix:\n")
-            f.write(str(S.cpu().numpy())+"\n")
-            f.write("Row-normalized:\n")
-            f.write(str(C.cpu().numpy())+"\n")
-            f.write("EigenTrust scores:\n")
-            f.write(str(t.cpu().numpy())+"\n")
-        
-        print(f"Eigentrust scores written to {trust_path}")
+            trust_path = path + 'eigentrust.txt'
+            with open(trust_path, 'w') as f:
+                f.write("Trust matrix:\n")
+                f.write(str(T.cpu().numpy())+"\n")
+                f.write("EigenTrust scores:\n")
+                f.write(str(t.cpu().numpy())+"\n")
+            
+            print(f"Eigentrust scores written to {trust_path}")
+        else:
+            print("Now computing eigentrust scores")
+            S = compute_trust_matrix(model, device)
+            C = row_normalize(S)
+
+            np.set_printoptions(formatter={'float': '{:8.4f}'.format})
+            t = eigentrust(C, alpha=0)
+
+            trust_path = path + 'eigentrust.txt'
+            with open(trust_path, 'w') as f:
+                f.write("Trust matrix:\n")
+                f.write(str(S.cpu().numpy())+"\n")
+                f.write("Row-normalized:\n")
+                f.write(str(C.cpu().numpy())+"\n")
+                f.write("EigenTrust scores:\n")
+                f.write(str(t.cpu().numpy())+"\n")
+            
+            print(f"Eigentrust scores written to {trust_path}")

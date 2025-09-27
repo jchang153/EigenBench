@@ -18,10 +18,9 @@ from eigentrust import eigentrust, row_normalize, compute_trust_matrix, compute_
 from data_utils import *
 
 """
-Code for training BT/BTD models with both binary comparison data, r in {1,2} -> {1,0} and ternary comparison data, r in {0,1,2},
-where judge responded with single <choice> comparisons.
+Code for training BTD_length models with ternary comparison data, r in {0,1,2}, where judge responded with single <choice> comparisons.
 
-Comparisons should be in the format [l, i, j, k, r]
+Comparisons should be in the format [l, i, j, k, n_j, n_k, r]
 """
 
 class Comparisons(Dataset):
@@ -32,88 +31,41 @@ class Comparisons(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        l, i, j, k, r = self.data[idx]
+        l, i, j, k, n_j, n_k, r = self.data[idx]
         return torch.tensor(i, dtype=torch.long), \
                torch.tensor(j, dtype=torch.long), \
                torch.tensor(k, dtype=torch.long), \
+               torch.tensor(n_j, dtype=torch.long), \
+               torch.tensor(n_k, dtype=torch.long), \
                torch.tensor(r, dtype=torch.float32)
 
-class VectorBT(nn.Module):
-    def __init__(self, num_models, d):
+class VectorBTD_length(nn.Module):
+    def __init__(self, num_judges, num_evals, d):
         super().__init__()
-        self.u = nn.Embedding(num_models, d)
-        self.v = nn.Embedding(num_models, d)
-
-        nn.init.normal_(self.u.weight, mean=0.0, std=0.1)
-        nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
-
-    def forward(self, i, j, k):
-        u_i = self.u(i)   # shape: (batch, d)
-        v_j = self.v(j)   # shape: (batch, d)
-        v_k = self.v(k)   # shape: (batch, d)
-
-        score_j = torch.sum(u_i * v_j, dim=-1)
-        score_k = torch.sum(u_i * v_k, dim=-1)
-        return torch.sigmoid(score_j - score_k) # this is equivalent to score_j / (score_j + score_k), i.e. prob. that j is preferred over k (only one prob needed for BCE)
-    
-class VectorBT_norm(nn.Module):
-    def __init__(self, num_models, d):
-        super().__init__()
-        self.u = nn.Embedding(num_models, d)
-        self.v = nn.Embedding(num_models, d)
-
-        nn.init.normal_(self.u.weight, mean=0.0, std=0.1)
-        nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
-
-    def forward(self, i, j, k):
-        u_i = self.u(i)   # shape: (batch, d)
-        v_j = self.v(j)   # shape: (batch, d)
-        v_k = self.v(k)   # shape: (batch, d)
-
-        # latent strength: negative squared Euclidean distance
-        score_j = -torch.sum((u_i - v_j) ** 2, dim=-1)
-        score_k = -torch.sum((u_i - v_k) ** 2, dim=-1)
-        return torch.sigmoid(score_j - score_k)
-    
-class VectorBT_bias(nn.Module):
-    def __init__(self, num_models, d):
-        super().__init__()
-        self.u = nn.Embedding(num_models, d)
-        self.v = nn.Embedding(num_models, d)
-        self.b = nn.Embedding(num_models, 1)
-
-        nn.init.normal_(self.u.weight, mean=0.0, std=0.1)
-        nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
-        nn.init.normal_(self.b.weight, mean=0.0, std=0.1)
-
-    def forward(self, i, j, k):
-        u_i = self.u(i)   # shape: (batch, d)
-        v_j = self.v(j)   # shape: (batch, d)
-        v_k = self.v(k)   # shape: (batch, d)
-        b_i = self.b(i)   # shape: (batch, 1)
-
-        score_j = torch.sum(u_i * v_j, dim=-1)
-        score_k = torch.sum(u_i * v_k, dim=-1)
-        return torch.sigmoid(score_j - score_k + b_i.squeeze(-1))
-
-class VectorBTD(nn.Module):
-    def __init__(self, num_models, d):
-        super().__init__()
-        self.u = nn.Embedding(num_models, d)
-        self.v = nn.Embedding(num_models, d)
-        self.log_lambda = nn.Embedding(num_models, 1)
+        self.u = nn.Embedding(num_judges, d)
+        self.v = nn.Embedding(num_evals, d)
+        self.log_lambda = nn.Embedding(num_judges, 1)
+        self.l = nn.Embedding(num_judges, 1)
 
         nn.init.normal_(self.u.weight, mean=0.0, std=0.1)
         nn.init.normal_(self.v.weight, mean=0.0, std=0.1)
         nn.init.constant_(self.log_lambda.weight, 0.0) # lambda initialized to 1
+        nn.init.constant_(self.l.weight, 0) # length parameter initialized to 0
 
-    def forward(self, i, j, k):
+    def forward(self, i, j, k, n_j, n_k):
         u_i = self.u(i)   # shape: (batch, d)
         v_j = self.v(j)   # shape: (batch, d)
         v_k = self.v(k)   # shape: (batch, d)
 
-        score_j = torch.sum(u_i * v_j, dim=-1)
-        score_k = torch.sum(u_i * v_k, dim=-1)
+        # Calculate length ratios
+        r_j = n_j / (n_j + n_k + 1)  # shape: (batch,)
+        r_k = n_k / (n_j + n_k + 1)  # shape: (batch,)
+
+        l_i = self.l(i).squeeze(-1) # shape: (batch,)
+        
+        # Calculate scores with length adjustment
+        score_j = torch.sum(u_i * v_j, dim=-1) + l_i * r_j
+        score_k = torch.sum(u_i * v_k, dim=-1) + l_i * r_k
 
         log_lambda_i = self.log_lambda(i).squeeze(-1)
         tie_logit = log_lambda_i + 0.5 * (score_j + score_k)
@@ -122,14 +74,10 @@ class VectorBTD(nn.Module):
         return logits
 
 
-def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None, normalize=False, use_btd=False):
+def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None, normalize=False):
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    
-    if use_btd:
-        loss_fn = nn.CrossEntropyLoss()
-    else:
-        loss_fn = nn.BCELoss()
+    loss_fn = nn.CrossEntropyLoss()
 
     loss_history = []
 
@@ -137,19 +85,17 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
         total_loss = 0.0
         model.train()
 
-        for i, j, k, r in dataloader:
+        for i, j, k, n_j, n_k, r in dataloader:
             i = i.to(device)
             j = j.to(device)
             k = k.to(device)
+            n_j = n_j.to(device)
+            n_k = n_k.to(device)
             r = r.to(device)
 
-            if use_btd:
-                r = r.long()  # CrossEntropyLoss expects long tensor
-                logits = model(i, j, k)
-                loss = loss_fn(logits, r) # CE expects logits, unnormalized, as it has built in softmax
-            else:
-                p = model(i, j, k)
-                loss = loss_fn(p, r)
+            r = r.long()  # CrossEntropyLoss expects long tensor
+            logits = model(i, j, k, n_j, n_k)
+            loss = loss_fn(logits, r) # CE expects logits, unnormalized, as it has built in softmax
 
             optimizer.zero_grad()
             loss.backward()
@@ -165,7 +111,7 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
         loss_history.append(avg_loss)
     
         if len(loss_history) >= 10 and  np.average(np.abs(np.diff(loss_history[-10:]))) <= .0001:
-            print('loss converged, breaking')
+            print(f"Converged at epoch {epoch}, stopping training.")
             break
 
         if epoch % 10 == 0:
@@ -192,53 +138,40 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
 
 if __name__ == "__main__":
     
-    USE_BTD = True
-    NORMALIZE = True
+    NORMALIZE = False
+    TRUST = False
 
-    TEST = True
-    TRUST = True
-
-    path = 'transcript/20250717_000000/'
+    path = 'transcript/20250730_000000/openai_rerun/'
     filepath = path + 'evaluations.json'
-    cleaned_filepath = path + 'evaluations_cleaned.json'
 
     data = []
     with open(filepath, 'r') as file:
         data.extend(json.load(file))
 
-    comparisons, data_cleaned = extract_comparisons(data)
-    comparisons = handle_inconsistencies(comparisons)
+    comparisons, data_cleaned = extract_comparisons_with_lengths(data)
+    comparisons = handle_inconsistencies_with_lengths(comparisons) # has the format [l, i, j, k, n_j, n_k, r]
 
     print("Loaded data has length", len(data))
     print("Cleaned data has length", len(data_cleaned))
     print("Formed", len(comparisons), "comparisons after handling inconsistencies\n")
 
-    if TEST:
-        train_comps, test_comps = train_test_split(comparisons,test_size=0.2,random_state=42,shuffle=True)
-    else:
-        train_comps = comparisons
-        test_comps = []
+    train_comps, test_comps = train_test_split(comparisons,test_size=0.2,random_state=42,shuffle=True)
 
     train_loader = DataLoader(Comparisons(train_comps), batch_size=32, shuffle=True)
     test_loader = DataLoader(Comparisons(test_comps), batch_size=32, shuffle=False)
 
     batch_size = 32
-    num_models = len(set([i[0] for i in comparisons]))
-    d = 2
+    num_judges = len(set([i[1] for i in comparisons]))
+    num_evals = len(set([i[2] for i in comparisons]))
+    d = 4
 
     lr = 1e-3
     weight_decay = 0
-    max_epochs = 200
+    max_epochs = 10000
     device = 'cpu'
 
-    if USE_BTD:
-        model = VectorBTD(num_models, d)
-    else:
-        model = VectorBT(num_models, d)
-        # model = VectorBT_norm(num_models, d)
-        # model = VectorBT_bias(num_models, d)
+    model = VectorBTD_length(num_judges, num_evals, d)
 
-    print(f"Ready to train {'BTD' if USE_BTD else 'BT'} model:")
 
     loss_history = train_vector_bt(
         model, 
@@ -249,35 +182,26 @@ if __name__ == "__main__":
         device=device,
         save_path=path,
         normalize=NORMALIZE,
-        use_btd=USE_BTD
     )
 
     print('Now evaluating the model on the test set\n')
     model.eval()
     
-    if USE_BTD:
-        loss_fn = nn.CrossEntropyLoss()
-    else:
-        loss_fn = nn.BCELoss()
+    loss_fn = nn.CrossEntropyLoss()
         
     total_test_loss = 0.0
-    loss_matrix = np.zeros((num_models, num_models, num_models))
-    count_matrix = np.zeros((num_models, num_models, num_models))
+    loss_matrix = np.zeros((num_judges, num_evals, num_evals))
+    count_matrix = np.zeros((num_judges, num_evals, num_evals))
 
     with torch.no_grad():
-        for i, j, k, r in test_loader:
+        for i, j, k, n_j, n_k, r in test_loader:
             i, j, k = i.to(device), j.to(device), k.to(device)
-            r = r.to(device)
+            n_j, n_k, r = n_j.to(device), n_k.to(device), r.to(device)
 
-            if USE_BTD:
-                r = r.long()
-                logits = model(i, j, k)
-                loss = loss_fn(logits, r)
-                per_sample_loss = F.cross_entropy(logits, r, reduction='none').cpu().numpy()
-            else:
-                p = model(i, j, k)
-                loss = loss_fn(p, r)
-                per_sample_loss = F.binary_cross_entropy(p, r, reduction='none').cpu().numpy()
+            r = r.long()
+            logits = model(i, j, k, n_j, n_k)
+            loss = loss_fn(logits, r)
+            per_sample_loss = F.cross_entropy(logits, r, reduction='none').cpu().numpy()
 
             total_test_loss += loss.item() * r.size(0)
             
@@ -308,7 +232,8 @@ if __name__ == "__main__":
         f.write(f'test_datasize = {len(test_comps)}\n')
         f.write(f'batch_size = {batch_size}\n\n')
         f.write(f'model = {model.__class__.__name__}\n')
-        f.write(f'num_models = {num_models}\n')
+        f.write(f'num_judges = {num_judges}\n')
+        f.write(f'num_evals = {num_evals}\n')
         f.write(f'normalize = {NORMALIZE}\n')
         f.write(f'dim = {d}\n\n')
         f.write(f'lr = {lr}\n')
@@ -323,18 +248,15 @@ if __name__ == "__main__":
 
     if TRUST:
         print("Now computing eigentrust scores")
-        S = compute_trust_matrix(model, device)
-        C = row_normalize(S)
+        T = compute_trust_matrix_ties(model, device)
 
         np.set_printoptions(formatter={'float': '{:8.4f}'.format})
-        t = eigentrust(C, alpha=0)
+        t = eigentrust(T, alpha=0)
 
         trust_path = path + 'eigentrust.txt'
         with open(trust_path, 'w') as f:
             f.write("Trust matrix:\n")
-            f.write(str(S.cpu().numpy())+"\n")
-            f.write("Row-normalized:\n")
-            f.write(str(C.cpu().numpy())+"\n")
+            f.write(str(T.cpu().numpy())+"\n")
             f.write("EigenTrust scores:\n")
             f.write(str(t.cpu().numpy())+"\n")
         
