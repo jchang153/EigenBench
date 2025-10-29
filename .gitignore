@@ -6,3 +6,4 @@ transcript/
 transcript_MMLU/
 transcript_GPQA/
 transcript_human/
+.env
