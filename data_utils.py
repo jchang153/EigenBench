@@ -132,8 +132,11 @@ def extract_comparisons_with_ties_criteria(data, num_criteria):
     error_count = 0
     no_number_count = 0
     no_match_count = 0
+    other_number_count = 0
 
     for i, item in enumerate(data):
+        matched_any = False
+        
         response = item['judge response']
         eval1_response = item['eval1 response']
         eval2_response = item['eval2 response']
@@ -154,15 +157,23 @@ def extract_comparisons_with_ties_criteria(data, num_criteria):
             continue
 
         for j in range(1,num_criteria+1):
-            m = re.search(f'<criterion_{j}_choice>(.)</criterion_{j}_choice>', response)
+            # match any digits in 0,1,2 between the XML tags, including any white space
+            m = re.search(
+                rf'<criterion_{j}_choice>\s*([0-2])\s*</criterion_{j}_choice>',
+                response,
+                flags=re.DOTALL
+            )
 
             if m:
                 try:
                     score = int(m.group(1))
 
-                    # append criterion starting at index 0
-                    comparisons.append([j-1, item['scenario_index'], item['judge'], item['eval1'], item['eval2'], score])
-                    data_cleaned.append(item)
+                    # append criterion starting at index 0]
+                    if score in [0,1,2]:
+                        comparisons.append([j-1, item['scenario_index'], item['judge'], item['eval1'], item['eval2'], score])
+                        matched_any = True
+                    else:
+                        other_number_count += 1
                 except:
                     no_number_count += 1
                     continue
@@ -170,10 +181,16 @@ def extract_comparisons_with_ties_criteria(data, num_criteria):
                 no_match_count += 1
                 continue
 
+        if matched_any:
+            data_cleaned.append(item)
+
     print(f"Number of comparisons with a null response: {none_count}")
     print(f"Number of comparisons with an API call error: {error_count}")
-    print(f"Number of judge responses without a <criterion> match: {no_match_count}")
-    print(f"Number of judge responses without a number in the <criterion> match: {no_number_count}")
+    print(f"Number of judge responses missing a specific <criterion> match: {no_match_count}")
+    print(f"Number of judge responses missing a number in the <criterion> match: {no_number_count}")
+    print(f"Number of judge responses with a non-0/1/2 number in the <criterion> match: {other_number_count}")
+
+    print(f'\nTotal comparisons generated: {len(comparisons)}/{len(data) * num_criteria}')
 
     return comparisons, data_cleaned
 
@@ -312,7 +329,7 @@ def handle_inconsistencies_with_ties_criteria(comparisons):
     """
     num_criteria = len(set([i[0] for i in comparisons]))
     scenarios = list(set([i[1] for i in comparisons]))
-    num_models = len(set([i[2] for i in comparisons]))
+    num_models = len(set([i[2] for i in comparisons ] + [i[3] for i in comparisons] + [i[4] for i in comparisons]))
 
     comparisons_new = []
 
