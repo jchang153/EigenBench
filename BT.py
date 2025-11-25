@@ -197,7 +197,7 @@ if __name__ == "__main__":
 
     TEST = True
     TRUST = True
-
+    
     path = 'transcript/20250717_000000/'
     filepath = path + 'evaluations.json'
     cleaned_filepath = path + 'evaluations_cleaned.json'

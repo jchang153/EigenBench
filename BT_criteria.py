@@ -166,10 +166,18 @@ if __name__ == "__main__":
     TEST = True
     TRUST = True
 
-    NUM_CRITERIA = 10
+    NUM_CRITERIA = 8
     SEPARATE_CRITERIA = False
 
-    path = 'transcript/20250923_000000/'#conservatism_grok/'
+    path = 'transcript/20250726_000000/'#conservatism_grok/'
+
+    dims = range(1,11)
+
+    lr = 1e-3
+    weight_decay = 0
+    max_epochs = 1000
+    batch_size = 32
+    device = 'cpu'
 
     filepath = path + 'evaluations.json'
     cleaned_filepath = path + 'evaluations_cleaned.json'
@@ -183,6 +191,7 @@ if __name__ == "__main__":
 
     # comparisons = json.load(open(path + 'comparisons_human_shreyas.json', 'r'))
     # comparisons = [i[:2] + [6] + i[3:] for i in comparisons]
+    # comparisons = [i for i in comparisons if i[2] not in [5,6,7] and i[3] not in [5,6,7] and i[4] not in [5,6,7]]
 
     print("Loaded data has length", len(data))
     print("Cleaned & criterion-separated data has length", len(data_cleaned))
@@ -190,181 +199,171 @@ if __name__ == "__main__":
 
     if not SEPARATE_CRITERIA:
         comparisons = [[0] + i[1:] for i in comparisons]  # make every datapoint associated with criterion 0
-
-    comparisons = [i for i in comparisons if i[2] not in [5,6,7] and i[3] not in [5,6,7] and i[4] not in [5,6,7]]
     
     num_models = len(set([i[2] for i in comparisons ] + [i[3] for i in comparisons] + [i[4] for i in comparisons])) # count up all unique judges and evaluees
     num_criteria = len(set([i[0] for i in comparisons]))
 
     print("Number of models:", num_models, ", Number of criteria:", num_criteria)
 
-    batch_size = 32
-    d = 2
+    for d in dims:
 
-    lr = 1e-3
-    weight_decay = 0
-    max_epochs = 1000
-    device = 'cpu'
+        out_dir = path + f"btd_d{d}/"
+        os.makedirs(out_dir, exist_ok=True)
 
+        model = VectorBTD(num_criteria, num_models, d)
 
-    model = VectorBTD(num_criteria, num_models, d)
+        print(f"Ready to train model (d={d}):\n")
 
-    print(f"Ready to train {'BTD' if USE_BTD else 'BT'} model:")
+        if TEST:
+            train_comps, test_comps = train_test_split(
+                comparisons,
+                test_size=0.2,
+                random_state=42,
+                shuffle=True,
+            )
+            train_loader = DataLoader(Comparisons(train_comps), batch_size=batch_size, shuffle=True)
+            test_loader = DataLoader(Comparisons(test_comps), batch_size=batch_size, shuffle=False)
 
+            loss_history = train_vector_bt(
+                model,
+                train_loader,
+                lr=lr,
+                weight_decay=weight_decay,
+                max_epochs=max_epochs,
+                device=device,
+                save_path=out_dir,
+                normalize=NORMALIZE,
+                use_btd=USE_BTD,
+            )
 
-    if TEST:
-        train_comps, test_comps = train_test_split(
-            comparisons,
-            test_size=0.2,
-            random_state=42,
-            shuffle=True
-        )
-        train_loader = DataLoader(Comparisons(train_comps), batch_size=32, shuffle=True)
-        test_loader = DataLoader(Comparisons(test_comps), batch_size=32, shuffle=False)
+            print("Evaluating on test set...\n")
+            model.eval()
 
-        loss_history = train_vector_bt(
-            model, 
-            train_loader,
-            lr=lr, 
-            weight_decay=weight_decay,
-            max_epochs=max_epochs, 
-            device=device,
-            save_path=path,
-            normalize=NORMALIZE,
-            use_btd=USE_BTD
-        )
+            if USE_BTD:
+                loss_fn = nn.CrossEntropyLoss()
+            else:
+                loss_fn = nn.BCELoss()
 
-        print('Now evaluating the model on the test set\n')
-        model.eval()
-        
-        if USE_BTD:
-            loss_fn = nn.CrossEntropyLoss()
-        else:
-            loss_fn = nn.BCELoss()
-            
-        total_test_loss = 0.0
-        loss_matrix = np.zeros((num_criteria*num_models, num_models, num_models))
-        count_matrix = np.zeros((num_criteria*num_models, num_models, num_models))
+            total_test_loss = 0.0
+            loss_matrix = np.zeros((num_criteria * num_models, num_models, num_models))
+            count_matrix = np.zeros((num_criteria * num_models, num_models, num_models))
 
-        with torch.no_grad():
-            for c, i, j, k, r in test_loader:
-                c, i, j, k = c.to(device), i.to(device), j.to(device), k.to(device)
-                r = r.to(device)
+            with torch.no_grad():
+                for c, i, j, k, r in test_loader:
+                    c, i, j, k = c.to(device), i.to(device), j.to(device), k.to(device)
+                    r = r.to(device)
 
-                if USE_BTD:
-                    r = r.long()
-                    logits = model(c, i, j, k)
-                    loss = loss_fn(logits, r)
-                    per_sample_loss = F.cross_entropy(logits, r, reduction='none').cpu().numpy()
-                else:
-                    p = model(i, j, k)
-                    loss = loss_fn(p, r)
-                    per_sample_loss = F.binary_cross_entropy(p, r, reduction='none').cpu().numpy()
+                    if USE_BTD:
+                        r = r.long()
+                        logits = model(c, i, j, k)
+                        loss = loss_fn(logits, r)
+                        per_sample_loss = F.cross_entropy(logits, r, reduction="none").cpu().numpy()
+                    else:
+                        p = model(i, j, k)
+                        loss = loss_fn(p, r)
+                        per_sample_loss = F.binary_cross_entropy(p, r, reduction="none").cpu().numpy()
 
-                total_test_loss += loss.item() * r.size(0)
-                
-                # Compute per-sample loss and accumulate in loss_matrix
-                c_np = c.cpu().numpy()
-                i_np = i.cpu().numpy()
-                j_np = j.cpu().numpy()
-                k_np = k.cpu().numpy()
-                for n in range(r.size(0)):
-                    row = c_np[n] * num_models + i_np[n]
-                    col_j = j_np[n]
-                    col_k = k_np[n]
-                    loss_matrix[row][col_j][col_k] += per_sample_loss[n]
-                    count_matrix[row][col_j][col_k] += 1
+                    total_test_loss += loss.item() * r.size(0)
 
-        avg_loss_matrix = np.divide(
-            loss_matrix, count_matrix, 
-            out=np.zeros_like(loss_matrix), 
-            where=count_matrix != 0
-        )
+                    c_np = c.cpu().numpy()
+                    i_np = i.cpu().numpy()
+                    j_np = j.cpu().numpy()
+                    k_np = k.cpu().numpy()
+                    for n in range(r.size(0)):
+                        row = c_np[n] * num_models + i_np[n]
+                        col_j = j_np[n]
+                        col_k = k_np[n]
+                        loss_matrix[row][col_j][col_k] += per_sample_loss[n]
+                        count_matrix[row][col_j][col_k] += 1
 
-        avg_test_loss = total_test_loss / len(test_loader.dataset)
+            avg_loss_matrix = np.divide(
+                loss_matrix,
+                count_matrix,
+                out=np.zeros_like(loss_matrix),
+                where=(count_matrix != 0),
+            )
 
+            matrix_str = np.array2string(
+                np.round(avg_loss_matrix, 4),
+                separator=', ',
+                max_line_width=np.inf,
+                threshold=np.inf,
+                formatter={'float_kind': lambda x: f"{x:0.4f}"}
+            )
 
-        log_path = path + 'log_train.txt'
-        with open(log_path, 'w') as f:
-            f.write(f'dataset = {path}\n')
-            f.write(f'train_datasize = {len(train_comps)}\n')
-            f.write(f'test_datasize = {len(test_comps)}\n')
-            f.write(f'batch_size = {batch_size}\n\n')
-            f.write(f'model = {model.__class__.__name__}\n')
-            f.write(f'num_models = {num_models}\n')
-            f.write(f'normalize = {NORMALIZE}\n')
-            f.write(f'dim = {d}\n\n')
-            f.write(f'lr = {lr}\n')
-            f.write(f'weight_decay = {weight_decay}\n')
-            f.write(f'epochs = {max_epochs}\n\n')
-            f.write(f'Minimum Train Loss = {np.round(min(loss_history),4)}\n')
-            f.write(f'Test Loss = {np.round(avg_test_loss,4)}\n\n')
-            f.write(f'Test Loss Matrix:\n{np.round(avg_loss_matrix,4)}\n\n')
-            f.write(f'Test Counts Matrix:\n{np.round(count_matrix,4)}')
-        
-        print(f"Training log written to {log_path}")
-    
-    else:
-        dataset = Comparisons(comparisons)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            counts_str = np.array2string(
+                np.round(count_matrix, 4),
+                separator=', ',
+                max_line_width=np.inf,
+                threshold=np.inf,
+                formatter={'float_kind': lambda x: f"{x:0.4f}"}
+            )
 
-        loss_history = train_vector_bt(
-            model, 
-            dataloader,
-            lr=lr, 
-            weight_decay=weight_decay,
-            max_epochs=max_epochs, 
-            device=device,
-            save_path=path,
-            normalize=NORMALIZE,
-            use_btd=USE_BTD
-        )
+            avg_test_loss = total_test_loss / len(test_loader.dataset)
 
-        log_path = path + 'log_train.txt'
-        with open(log_path, 'w') as f:
-            f.write(f'model_type = {"BTD" if USE_BTD else "BT"}\n')
-            f.write(f'dataset = {path}\n')
-            f.write(f'datasize = {len(comparisons)}\n')
-            f.write(f'batch_size = {batch_size}\n\n')
-            f.write(f'model = {model.__class__.__name__}\n')
-            f.write(f'num_models = {num_models}\n')
-            f.write(f'dim = {d}\n\n')
-            f.write(f'lr = {lr}\n')
-            f.write(f'weight_decay = {weight_decay}\n')
-            f.write(f'epochs = {max_epochs}\n\n')
-            f.write(f'Minimum Loss = {min(loss_history)}')
+            log_path = out_dir + "log_train.txt"
+            with open(log_path, "w") as f:
+                f.write(f"dataset = {path}\n")
+                f.write(f"train_datasize = {len(train_comps)}\n")
+                f.write(f"test_datasize = {len(test_comps)}\n")
+                f.write(f"batch_size = {batch_size}\n\n")
+                f.write(f"model = {model.__class__.__name__}\n")
+                f.write(f"num_models = {num_models}\n")
+                f.write(f"normalize = {NORMALIZE}\n")
+                f.write(f"dim = {d}\n\n")
+                f.write(f"lr = {lr}\n")
+                f.write(f"weight_decay = {weight_decay}\n")
+                f.write(f"epochs = {max_epochs}\n\n")
+                f.write(f"Min Train Loss = {np.round(min(loss_history),4)}\n")
+                f.write(f"Test Loss = {np.round(avg_test_loss,4)}\n\n")
+                f.write(f"Test Loss Matrix:\n{matrix_str}\n\n")
+                f.write(f"Test Counts Matrix:\n{counts_str}")
 
-    if TRUST:
-        if USE_BTD:
-            print("Now computing eigentrust scores")
-            T = compute_trust_matrix_ties(model, device)
+            print(f"Training log written to {log_path}")
 
-            np.set_printoptions(formatter={'float': '{:8.4f}'.format})
-            t = eigentrust(T, alpha=0)
+        if TRUST:
+            print("Computing eigentrust scores...")
 
-            trust_path = path + 'eigentrust.txt'
-            with open(trust_path, 'w') as f:
-                f.write("Trust matrix:\n")
-                f.write(str(T.cpu().numpy())+"\n")
-                f.write("EigenTrust scores:\n")
-                f.write(str(t.cpu().numpy())+"\n")
-            
+            if USE_BTD:
+                T = compute_trust_matrix_ties(model, device)
+                t = eigentrust(T, alpha=0)
+
+                trust_path = out_dir + "eigentrust.txt"
+                with open(trust_path, "w") as f:
+                    T_str = np.array2string(
+                        T.cpu().numpy(),
+                        separator=', ',
+                        max_line_width=np.inf,
+                        threshold=np.inf,
+                        formatter={'float_kind': lambda x: f"{x:0.4f}"}
+                    )
+
+                    t_str = np.array2string(
+                        t.cpu().numpy(),
+                        separator=', ',
+                        max_line_width=np.inf,
+                        threshold=np.inf,
+                        formatter={'float_kind': lambda x: f"{x:0.4f}"}
+                    )
+                    f.write("Trust matrix:\n")
+                    f.write(T_str + "\n")
+                    f.write("EigenTrust scores:\n")
+                    f.write(t_str + "\n")
+
+            else:
+                S = compute_trust_matrix(model, device)
+                C = row_normalize(S)
+                t = eigentrust(C, alpha=0)
+
+                trust_path = out_dir + "eigentrust.txt"
+                with open(trust_path, "w") as f:
+                    f.write("Trust matrix:\n")
+                    f.write(str(S.cpu().numpy()) + "\n")
+                    f.write("Row-normalized:\n")
+                    f.write(str(C.cpu().numpy()) + "\n")
+                    f.write("EigenTrust scores:\n")
+                    f.write(str(t.cpu().numpy()) + "\n")
+
             print(f"Eigentrust scores written to {trust_path}")
-        else:
-            print("Now computing eigentrust scores")
-            S = compute_trust_matrix(model, device)
-            C = row_normalize(S)
 
-            np.set_printoptions(formatter={'float': '{:8.4f}'.format})
-            t = eigentrust(C, alpha=0)
-
-            trust_path = path + 'eigentrust.txt'
-            with open(trust_path, 'w') as f:
-                f.write("Trust matrix:\n")
-                f.write(str(S.cpu().numpy())+"\n")
-                f.write("Row-normalized:\n")
-                f.write(str(C.cpu().numpy())+"\n")
-                f.write("EigenTrust scores:\n")
-                f.write(str(t.cpu().numpy())+"\n")
-            
-            print(f"Eigentrust scores written to {trust_path}")
+        print(f"Finished training dimension d = {d}\n")
