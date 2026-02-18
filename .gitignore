@@ -9,3 +9,4 @@ transcript_human/
 .env
 __pycache__/
 *.pyc
+error tests/
