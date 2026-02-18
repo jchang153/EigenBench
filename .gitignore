@@ -7,3 +7,5 @@ transcript_MMLU/
 transcript_GPQA/
 transcript_human/
 .env
+__pycache__/
+*.pyc

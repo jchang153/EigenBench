@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from itertools import combinations
+from collections import defaultdict
 
 from eigentrust import eigentrust, row_normalize, compute_trust_matrix, compute_trust_matrix_ties
 from data_utils import *
@@ -21,6 +22,8 @@ from data_utils import *
 Code for training BTD models with ternary comparison data, r in {0,1,2}, where judge responded with <criterion> comparisons.
 
 Comparisons should be in the format [c, l, i, j, k, r]
+
+Modified train/test split: groups comparisons by (l, i, j, k) to avoid data leakage across criteria.
 """
 
 class Comparisons(Dataset):
@@ -68,7 +71,7 @@ class VectorBTD(nn.Module):
 
         logits = torch.stack([tie_logit, score_j, score_k], dim=1)
         return logits
-    
+
     def get_prob(self, c, i, j, k):
         """
         get probs for a single set of indices c,i,j,k
@@ -91,7 +94,7 @@ class VectorBTD(nn.Module):
 def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None, normalize=False, use_btd=False):
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    
+
     if use_btd:
         loss_fn = nn.CrossEntropyLoss()
     else:
@@ -158,8 +161,54 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
     return loss_history
 
 
+def group_split_comparisons(comparisons, test_size=0.2, random_state=42):
+    """
+    Split comparisons by grouping them by (l, i, j, k) to prevent data leakage.
+    All comparisons with the same (l, i, j, k) but different criteria c stay together.
+
+    Args:
+        comparisons: List of [c, l, i, j, k, r] comparisons
+        test_size: Fraction of groups to put in test set
+        random_state: Random seed for reproducibility
+
+    Returns:
+        train_comps, test_comps: Lists of comparisons for train and test
+    """
+    # Group comparisons by (l, i, j, k)
+    groups = defaultdict(list)
+    for comp in comparisons:
+        c, l, i, j, k, r = comp
+        key = (l, i, j, k)
+        groups[key].append(comp)
+
+    # Convert to list of groups
+    group_keys = list(groups.keys())
+
+    # Split the group keys
+    train_keys, test_keys = train_test_split(
+        group_keys,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=True
+    )
+
+    # Flatten back to comparison lists
+    train_comps = []
+    for key in train_keys:
+        train_comps.extend(groups[key])
+
+    test_comps = []
+    for key in test_keys:
+        test_comps.extend(groups[key])
+
+    print(f"Split {len(group_keys)} groups into {len(train_keys)} train groups and {len(test_keys)} test groups")
+    print(f"Train comparisons: {len(train_comps)}, Test comparisons: {len(test_comps)}")
+
+    return train_comps, test_comps
+
+
 if __name__ == "__main__":
-    
+
     USE_BTD = True
     NORMALIZE = False
 
@@ -171,7 +220,7 @@ if __name__ == "__main__":
 
     path = 'transcript/20251119_000000/'#conservatism_grok/'
 
-    dims = range(21,41)
+    dims = range(1,41)
 
     lr = 1e-3
     weight_decay = 0
@@ -199,7 +248,7 @@ if __name__ == "__main__":
 
     if not SEPARATE_CRITERIA:
         comparisons = [[0] + i[1:] for i in comparisons]  # make every datapoint associated with criterion 0
-    
+
     num_models = len(set([i[2] for i in comparisons ] + [i[3] for i in comparisons] + [i[4] for i in comparisons])) # count up all unique judges and evaluees
     num_criteria = len(set([i[0] for i in comparisons]))
 
@@ -215,12 +264,13 @@ if __name__ == "__main__":
         print(f"Ready to train model (d={d}):\n")
 
         if TEST:
-            train_comps, test_comps = train_test_split(
+            # Use grouped split instead of random split
+            train_comps, test_comps = group_split_comparisons(
                 comparisons,
                 test_size=0.2,
-                random_state=42,
-                shuffle=True,
+                random_state=42
             )
+
             train_loader = DataLoader(Comparisons(train_comps), batch_size=batch_size, shuffle=True)
             test_loader = DataLoader(Comparisons(test_comps), batch_size=batch_size, shuffle=False)
 
