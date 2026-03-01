@@ -52,8 +52,6 @@ def save_uv_embedding_plot(
     model_names: list[str],
     save_path: str,
     *,
-    eigentrust_scores: np.ndarray | None = None,
-    eigentrust_elo: np.ndarray | None = None,
     figsize=(20, 12),
 ):
     """Save side-by-side PCA visualization of u and v embeddings.
@@ -113,6 +111,15 @@ def save_uv_embedding_plot(
             edgecolors="black",
             linewidth=0.55,
         )
+        # Show judge index next to each lens point.
+        ax_u.annotate(
+            str(color_idx),
+            (x, y),
+            xytext=(4, 3),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+        )
 
     for idx, (x, y) in enumerate(v_2d):
         ax_v.scatter(
@@ -149,11 +156,6 @@ def save_uv_embedding_plot(
     legend_elements = []
     for idx, model_name in enumerate(model_names):
         label = f"[{idx}] {model_name}"
-        if eigentrust_elo is not None and idx < len(eigentrust_elo):
-            label = f"{label} | EB={eigentrust_elo[idx]:.1f}"
-        elif eigentrust_scores is not None and idx < len(eigentrust_scores):
-            label = f"{label} | t={eigentrust_scores[idx]:.4f}"
-
         legend_elements.append(
             Line2D(
                 [0],
@@ -175,6 +177,67 @@ def save_uv_embedding_plot(
         bbox_to_anchor=(1.0, 0.5),
         frameon=False,
     )
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_eigenbench_plot(
+    model_names: list[str],
+    eigentrust_elo: np.ndarray,
+    save_path: str,
+    *,
+    title: str = "EigenBench Elo Scores",
+    color: str = "#377eb8",
+    figsize=(15, 7),
+):
+    """Save EigenBench Elo plot sorted highest -> lowest with model labels."""
+
+    if eigentrust_elo is None:
+        raise ValueError("eigentrust_elo is required.")
+
+    scores = np.asarray(eigentrust_elo, dtype=float).reshape(-1)
+    if scores.size == 0:
+        raise ValueError("eigentrust_elo is empty.")
+
+    n = min(len(model_names), scores.size)
+    labels = list(model_names[:n])
+    scores = scores[:n]
+
+    order = np.argsort(-scores)  # highest to lowest
+    scores_sorted = scores[order]
+    labels_sorted = [labels[i] for i in order]
+
+    x_pos = np.arange(n)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.scatter(
+        x_pos,
+        scores_sorted,
+        color=color,
+        s=90,
+        marker="o",
+        edgecolors="#FFFFFF",
+        linewidths=1.2,
+        zorder=3,
+    )
+    ax.plot(x_pos, scores_sorted, color=color, alpha=0.35, linewidth=1.2, zorder=2)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels_sorted, rotation=45, ha="right", fontsize=12)
+    ax.set_ylabel("EigenBench Elo Score", fontsize=13)
+    ax.set_title(title, fontsize=16, pad=10)
+
+    y_min = float(np.min(scores_sorted))
+    y_max = float(np.max(scores_sorted))
+    margin = max(5.0, (y_max - y_min) * 0.08)
+    ax.set_ylim(y_min - margin, y_max + margin)
+
+    ax.grid(True, alpha=0.3)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=220, bbox_inches="tight")

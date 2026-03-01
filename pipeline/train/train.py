@@ -111,8 +111,7 @@ def train_vector_bt(
             print("loss converged, breaking")
             break
 
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch:>3d}, Loss = {avg_loss:.4f}")
+        print(f"Epoch {epoch:>3d}, Loss = {avg_loss:.4f}")
 
     plt.figure()
     plt.plot(range(1, len(loss_history) + 1), loss_history)

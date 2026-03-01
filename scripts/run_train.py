@@ -27,6 +27,7 @@ from pipeline.train import (
     train_vector_bt,
     group_split_comparisons,
     save_uv_embedding_plot,
+    save_eigenbench_plot,
 )
 from pipeline.trust import compute_trust_matrix_ties, compute_trust_matrix, row_normalize, eigentrust
 
@@ -204,12 +205,22 @@ def main(spec_ref: str):
                 model=model,
                 model_names=model_labels,
                 save_path=uv_plot_path,
-                eigentrust_scores=t_np,
-                eigentrust_elo=elo_np,
             )
             print(f"u/v PCA plot saved to {uv_plot_path}")
         except Exception as e:
             print(f"Skipping u/v PCA plot due to error: {e}")
+
+        # Save separate EigenBench Elo plot (sorted highest -> lowest).
+        try:
+            eigenbench_plot_path = os.path.join(out_dir, "eigenbench.png")
+            save_eigenbench_plot(
+                model_names=model_labels,
+                eigentrust_elo=elo_np,
+                save_path=eigenbench_plot_path,
+            )
+            print(f"EigenBench plot saved to {eigenbench_plot_path}")
+        except Exception as e:
+            print(f"Skipping EigenBench plot due to error: {e}")
 
         trust_path = os.path.join(out_dir, "eigentrust.txt")
         with open(trust_path, "w", encoding="utf-8") as f:

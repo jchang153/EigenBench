@@ -107,7 +107,8 @@ Logging:
 
 Training outputs include:
 - `training_loss.png`
-- `uv_embeddings_pca.png` (side-by-side 2D PCA of `u` and `v`, with model index/name and EigenBench scores in legend)
+- `uv_embeddings_pca.png` (side-by-side 2D PCA of `u` and `v`, with model index/name legend)
+- `eigenbench.png` (EigenBench Elo scores sorted highest to lowest with model labels)
 - `eigentrust.txt`
 
 ## Common Spec Modes
