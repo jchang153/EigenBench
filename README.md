@@ -80,7 +80,6 @@ EigenBench/
 │   │   └── *.json
 │   └── cache/
 │       └── responses/ # recommended location for cached model responses
-└── deprecated/        # moved legacy scripts, notebooks, old experiment outputs, old datasets
 ```
 
 ## What Each Script Does
