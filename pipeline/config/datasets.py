@@ -86,6 +86,15 @@ def load_dataset_scenarios_from_spec(
     - {'path': '.../scenarios.json', 'start': ..., 'count': ...}
     - {'id': 'reddit' | 'oasst' | 'airisk', ...}
     - plain string path or id.
+
+    For path-based scenario files, accepted payload formats are:
+    - list[str]
+    - list[dict] where each item has one of:
+      - scenario
+      - prompt
+      - question
+
+    Relative paths are resolved first against run_dir, then repo root.
     """
 
     if isinstance(dataset_cfg, str):

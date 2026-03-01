@@ -1,4 +1,20 @@
-"""Sampling policies for judge/evaluee selection."""
+"""Sampling policies for judge/evaluee selection.
+
+Practical defaults for most runs:
+- mode: random_judge_group
+- group_size: 4
+
+Coverage guidance:
+- Increase `groups` in collection first (e.g. 2-3) before increasing
+  `group_size`.
+
+Adaptive guidance:
+- Use adaptive_inverse_count when you want balancing toward under-sampled
+  judges/evaluees.
+- `alpha` controls aggressiveness:
+  - alpha = 0 is equivalent to uniform weighting.
+  - 1.0-2.0 is a practical range for most runs.
+"""
 
 from __future__ import annotations
 
@@ -22,18 +38,24 @@ def random_groups(total_models: int, group_size: int):
 
 
 def sampler_random_judge_group(num_models: int, group_size: int, **kwargs):
+    """Random judge + one random group of evaluees."""
+
     group = random_groups(num_models, group_size)[0]
     judge_idx = random.randint(0, num_models - 1)
     return int(judge_idx), list(group)
 
 
 def sampler_uniform(num_models: int, group_size: int, **kwargs):
+    """Uniform random judge and uniform random evaluee subset."""
+
     judge_idx = random.randint(0, num_models - 1)
     eval_idxs = random.sample(list(range(num_models)), k=group_size)
     return int(judge_idx), list(eval_idxs)
 
 
 def sampler_adaptive_inverse_count(num_models: int, group_size: int, judge_counts, eval_counts, alpha: float = 2.0, **kwargs):
+    """Inverse-count weighted sampling for judge and evaluees."""
+
     judge_arr = np.array(judge_counts, dtype=float)
     j_weights = 1.0 / (1.0 + judge_arr) ** alpha
     j_probs = j_weights / j_weights.sum()

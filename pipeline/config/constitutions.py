@@ -93,6 +93,15 @@ def get_criteria_from_spec(
     - {'path': '.../constitution.json'}
     - {'criteria_id': 'kindness' | ...}
     - plain string path or criteria_id.
+
+    For path-based constitution files, accepted payload formats are:
+    - list[str]
+    - dict containing one list[str] field with key:
+      - criteria
+      - comparative_criteria
+      - comparativeCriteria
+
+    Relative paths are resolved first against run_dir, then repo root.
     """
 
     if isinstance(constitution_cfg, str):

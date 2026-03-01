@@ -157,39 +157,11 @@ python scripts/run_train.py runs.example
 python scripts/run_train.py runs/example/config.py
 ```
 
-## Sampling Recommendations
-
-- Recommended default:
-- `collection.sampler_mode = "random_judge_group"`
-- `collection.group_size = 4`
-- `collection.groups = 1`
-
-- If you want more coverage per scenario:
-- Increase `groups` to `2` or `3` before increasing `group_size`.
-
-- If you want balancing toward under-sampled judges/evaluees:
-- Use `collection.sampler_mode = "adaptive_inverse_count"`.
-- `collection.alpha` controls how aggressive balancing is.
-- `alpha = 0` behaves like uniform sampling.
-- Larger `alpha` increasingly favors models with lower current counts.
-- Practical range: `alpha` around `1.0` to `2.0`.
-
-- `uniform` is mostly a baseline mode.
-
-## Custom Input Files
-
-To run on your own files, set:
-
-- `dataset.path` to a JSON file containing a list of scenarios (strings).
-- `constitution.path` to a JSON file containing either:
-  - a list of criteria strings, or
-  - a dict with a `criteria` or `comparative_criteria` list.
-
 ## Datasets Used in the Paper
 
 - AskReddit dataset: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
-- OpenAssistant: https://huggingface.co/datasets/OpenAssistant/oasst1
-- AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/AI-MO/AI_Risk_Dilemmas
+- OpenAssistant: https://huggingface.co/datasets/Op enAssistant/oasst1
+- AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/kellycyy/AIRiskDilemmas
 
 ## Legacy Artifacts
 

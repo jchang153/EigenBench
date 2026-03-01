@@ -40,10 +40,17 @@ def collect_core_evaluations(
     """Collect one scenario's criterion-wise evaluations.
 
     Args:
+        sampler_mode:
+            - random_judge_group: recommended default.
+            - adaptive_inverse_count: balances under-sampled judges/evaluees.
+            - uniform: baseline.
         group_size: Number of evaluees judged together in each sampled group.
+            Recommended default is 4 for most populations.
         groups: Number of sampled judge+group batches to run for this scenario.
+            If you need more coverage, increase this before increasing group_size.
         alpha: In adaptive inverse-count sampling, larger alpha increases
-            preference for under-sampled judges/evaluees.
+            preference for under-sampled judges/evaluees. alpha=0 is uniform.
+            Practical range is usually 1.0-2.0.
     """
 
     num_models = len(models)

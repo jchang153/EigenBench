@@ -15,15 +15,30 @@ RUN_SPEC = {
         "Grok 4": "x-ai/grok-4",
     },
     "dataset": {
+        # Custom scenario file formats accepted:
+        # 1) list[str]
+        # 2) list[dict] with one of: scenario | prompt | question
         "path": "data/scenarios/reddit_questions.json",
         "start": 0,
         "count": 5,
     },
     "constitution": {
+        # Custom constitution file formats accepted:
+        # 1) list[str]
+        # 2) dict with one of: criteria | comparative_criteria | comparativeCriteria
         "path": "data/constitutions/kindness.json",
     },
     "collection": {
         "allow_ties": True,
+        # Recommended defaults:
+        # sampler_mode=random_judge_group, group_size=4, groups=1
+        #
+        # More per-scenario coverage:
+        # raise groups to 2-3 before raising group_size.
+        #
+        # Adaptive balancing mode:
+        # sampler_mode=adaptive_inverse_count, alpha in [1.0, 2.0] is typical.
+        # alpha=0 behaves like uniform weighting.
         "group_size": 4,
         "groups": 1,
         "sampler_mode": "random_judge_group",  # random_judge_group | adaptive_inverse_count | uniform
