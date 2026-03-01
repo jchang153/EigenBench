@@ -26,22 +26,17 @@ Note: the new collection path is OpenRouter-only.
 mkdir -p runs/my_run
 ```
 
-2. Create `runs/my_run/__init__.py`:
-
-```python
-from .config import RUN_SPEC
-```
-
-3. Create `runs/my_run/config.py` (copy from `runs/example/config.py` and edit):
+2. Create `runs/my_run/config.py` (copy from `runs/example/config.py` and edit):
 
 - update `models`
 - set `dataset.path` to your scenarios JSON
 - set `constitution.path` to your constitution JSON
 
-4. Run the full pipeline:
+3. Run the full pipeline (either form works):
 
 ```bash
 python scripts/run_pipeline.py runs.my_run
+python scripts/run_pipeline.py runs/my_run/config.py
 ```
 
 Default outputs for this run go into:
@@ -70,7 +65,7 @@ EigenBench/
 │   └── mixed_openrouter_local_collection.ipynb
 ├── runs/
 │   └── <run_name>/    # run package + run artifacts
-│       ├── __init__.py
+│       ├── __init__.py   # optional (needed only for dotted import style)
 │       ├── config.py
 │       └── out/
 │           ├── evaluations.jsonl
@@ -89,6 +84,10 @@ EigenBench/
 ```
 
 ## What Each Script Does
+
+- All run scripts accept either:
+  - a dotted module path, e.g. `runs.example`
+  - a file path, e.g. `runs/example/config.py`
 
 - `scripts/run_collect.py`: reads a run spec, samples scenarios, collects model responses + judge reflections + pairwise judge choices, and appends rows to `collection.evaluations_path`.
   If that path is omitted, it defaults to `runs/<run_name>/out/evaluations.jsonl`.
@@ -109,6 +108,7 @@ EigenBench/
 
 ```bash
 python scripts/run_pipeline.py runs.example
+python scripts/run_pipeline.py runs/example/config.py
 ```
 
 2. You already have an evaluations file and only want training
@@ -133,6 +133,7 @@ python scripts/run_collect.py your.spec.module
 
 ```bash
 python scripts/run_collect_responses.py runs.example
+python scripts/run_collect_responses.py runs/example/config.py
 ```
 
 - Step C: run normal collection (`run_collect.py`). It will reuse cached evaluee responses and only do reflection/comparison calls.
@@ -153,6 +154,7 @@ python scripts/run_merge_evaluations.py runs.example runs/example/out/evaluation
 
 ```bash
 python scripts/run_train.py runs.example
+python scripts/run_train.py runs/example/config.py
 ```
 
 ## Sampling Recommendations

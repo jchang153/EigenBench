@@ -2,7 +2,6 @@ data/
 .env
 __pycache__/
 *.pyc
-error tests/
 deprecated/
 data/cache/responses/
 runs/**/out/

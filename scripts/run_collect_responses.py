@@ -6,10 +6,9 @@ Usage:
 
 from __future__ import annotations
 
-import importlib
 import sys
 
-from pipeline.config import apply_run_defaults, load_dataset_scenarios_from_spec
+from pipeline.config import load_run_spec, load_dataset_scenarios_from_spec
 from pipeline.eval.flows import collect_responses_only
 from pipeline.io import append_records, load_records
 
@@ -22,9 +21,8 @@ def _build_cached_index(cached_records):
     return index
 
 
-def main(spec_module: str):
-    mod = importlib.import_module(spec_module)
-    spec, run_dir = apply_run_defaults(spec_module, mod.__file__, mod.RUN_SPEC)
+def main(spec_ref: str):
+    spec, run_dir = load_run_spec(spec_ref)
 
     models = spec["models"]
     ds = spec["dataset"]
@@ -70,5 +68,5 @@ def main(spec_module: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        raise SystemExit("Usage: python scripts/run_collect_responses.py <spec_module>")
+        raise SystemExit("Usage: python scripts/run_collect_responses.py <spec_module_or_path>")
     main(sys.argv[1])

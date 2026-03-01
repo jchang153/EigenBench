@@ -6,7 +6,6 @@ Usage:
 
 from __future__ import annotations
 
-import importlib
 import os
 import sys
 
@@ -16,7 +15,7 @@ from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader
 
-from pipeline.config import apply_run_defaults
+from pipeline.config import load_run_spec
 from pipeline.io import (
     load_records,
     extract_comparisons_with_ties_criteria,
@@ -41,9 +40,8 @@ def _resolve_output_root(evaluations_path: str, train_cfg: dict) -> str:
     return os.path.join(evaluations_dir, "train")
 
 
-def main(spec_module: str):
-    mod = importlib.import_module(spec_module)
-    _spec, run_dir = apply_run_defaults(spec_module, mod.__file__, mod.RUN_SPEC)
+def main(spec_ref: str):
+    _spec, run_dir = load_run_spec(spec_ref)
 
     train_cfg = _spec["training"]
     if not train_cfg.get("enabled", True):
@@ -181,5 +179,5 @@ def main(spec_module: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        raise SystemExit("Usage: python scripts/run_train.py <spec_module>")
+        raise SystemExit("Usage: python scripts/run_train.py <spec_module_or_path>")
     main(sys.argv[1])

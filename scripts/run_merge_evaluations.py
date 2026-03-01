@@ -6,10 +6,10 @@ Usage:
 
 from __future__ import annotations
 
-import importlib
 import json
 import sys
 
+from pipeline.config import load_run_spec
 from pipeline.io import load_records, save_records
 
 
@@ -37,9 +37,8 @@ def _remap_indices(record: dict, model_name_to_index: dict[str, int]) -> dict:
     return row
 
 
-def main(spec_module: str, output_path: str, input_paths: list[str]) -> None:
-    mod = importlib.import_module(spec_module)
-    spec = mod.RUN_SPEC
+def main(spec_ref: str, output_path: str, input_paths: list[str]) -> None:
+    spec, _ = load_run_spec(spec_ref)
     model_name_to_index = {name: idx for idx, name in enumerate(spec["models"].keys())}
 
     merged = []
