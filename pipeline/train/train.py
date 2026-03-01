@@ -53,7 +53,19 @@ class CriteriaComparisons(Dataset):
         )
 
 
-def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, save_path=None, normalize=False, use_btd=False, criterion_mode=False):
+def train_vector_bt(
+    model,
+    dataloader,
+    lr,
+    weight_decay,
+    max_epochs,
+    device,
+    save_path=None,
+    normalize=False,
+    use_btd=False,
+    criterion_mode=False,
+    verbose: bool = False,
+):
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.CrossEntropyLoss() if use_btd else nn.BCELoss()
@@ -122,7 +134,7 @@ def train_vector_bt(model, dataloader, lr, weight_decay, max_epochs, device, sav
     return loss_history
 
 
-def group_split_comparisons(comparisons, test_size=0.2, random_state=42):
+def group_split_comparisons(comparisons, test_size=0.2, random_state=42, verbose: bool = False):
     """Grouped train/test split to reduce leakage.
 
     Groups by (criterion, scenario, judge, unordered evaluee pair), then keeps
@@ -155,7 +167,8 @@ def group_split_comparisons(comparisons, test_size=0.2, random_state=42):
     for key in test_keys:
         test_comps.extend(groups[key])
 
-    print(f"Split {len(group_keys)} groups into {len(train_keys)} train groups and {len(test_keys)} test groups")
-    print(f"Train comparisons: {len(train_comps)}, Test comparisons: {len(test_comps)}")
+    if verbose:
+        print(f"Split {len(group_keys)} groups into {len(train_keys)} train groups and {len(test_keys)} test groups")
+        print(f"Train comparisons: {len(train_comps)}, Test comparisons: {len(test_comps)}")
 
     return train_comps, test_comps

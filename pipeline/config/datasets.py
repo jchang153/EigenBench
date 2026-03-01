@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any
 
@@ -118,3 +119,35 @@ def load_dataset_scenarios_from_spec(
         return _normalize_scenarios(load_dataset_scenarios(str(dataset_cfg["id"])))
 
     raise ValueError("dataset config must include either 'path' or 'id'")
+
+
+def select_scenarios(
+    scenarios: list[str],
+    *,
+    start: int = 0,
+    count: int | None = None,
+    shuffle: bool = False,
+    shuffle_seed: int | None = None,
+) -> list[tuple[int, str]]:
+    """Select scenarios as ``(original_index, scenario_text)`` pairs.
+
+    Behavior:
+    - Builds indexed scenarios from the full input list.
+    - Optionally shuffles before slicing.
+    - Applies ``start`` and ``count`` after optional shuffle.
+    - Preserves original indices so cache/evaluation keys remain stable.
+    """
+
+    if start < 0:
+        raise ValueError("dataset.start must be >= 0")
+    if count is not None and count < 0:
+        raise ValueError("dataset.count must be >= 0 when provided")
+
+    indexed = list(enumerate(scenarios))
+    if shuffle:
+        rng = random.Random(shuffle_seed)
+        rng.shuffle(indexed)
+
+    if count is None:
+        return indexed[start:]
+    return indexed[start : start + count]

@@ -91,6 +91,7 @@ def collect_group_criteria_evaluations(
     max_tokens: int = 4096,
     cached_responses_by_scenario: dict | None = None,
     judge_prompt_prefix_fn: Callable[[int, str], str] | None = None,
+    verbose: bool = False,
 ):
     """Collect criterion-wise evaluations for one (judge, evaluee subset) selection."""
 
@@ -99,8 +100,9 @@ def collect_group_criteria_evaluations(
     model_nicks = list(models.keys())
     model_names = list(models.values())
 
-    print(f"\n\nScenario {scenario_index}:")
-    print(f"Judge: {judge_idx}, Evaluees: {eval_idxs}")
+    if verbose:
+        print(f"\n\nScenario {scenario_index}:")
+        print(f"Judge: {judge_idx}, Evaluees: {eval_idxs}")
 
     # 1) Evaluee responses for selected evaluees only
     eval_responses = [None] * num_models
@@ -112,7 +114,8 @@ def collect_group_criteria_evaluations(
         )
         if cached is not None:
             eval_responses[i] = cached
-            print(f"Using cached response for eval {i}: {model_nicks[i]}")
+            if verbose:
+                print(f"Using cached response for eval {i}: {model_nicks[i]}")
             continue
 
         eval_messages = [
@@ -127,7 +130,8 @@ def collect_group_criteria_evaluations(
             messages=eval_messages,
             max_tokens=max_tokens,
         )
-        print(f"Successful API call for eval {i}: {model_nicks[i]}")
+        if verbose:
+            print(f"Successful API call for eval {i}: {model_nicks[i]}")
         eval_responses[i] = eval_response
 
     # Optional per-judge prompt prefix support (e.g. OCT loving judge persona).
@@ -155,7 +159,8 @@ def collect_group_criteria_evaluations(
             messages=judge_messages,
             max_tokens=max_tokens,
         )
-        print(f"Successful reflection API call for judge {judge_idx}: {model_nicks[judge_idx]}")
+        if verbose:
+            print(f"Successful reflection API call for judge {judge_idx}: {model_nicks[judge_idx]}")
         judge_reflections[j] = judge_response
 
     # 3) Pairwise comparisons inside selected group
@@ -185,10 +190,11 @@ def collect_group_criteria_evaluations(
                 messages=judge_messages,
                 max_tokens=max_tokens,
             )
-            print(
-                f"Successful comparison API call for judge {judge_idx} "
-                f"on evaluees {j} and {k}"
-            )
+            if verbose:
+                print(
+                    f"Successful comparison API call for judge {judge_idx} "
+                    f"on evaluees {j} and {k}"
+                )
 
             evaluation = {
                 "constitution": criteria_text,

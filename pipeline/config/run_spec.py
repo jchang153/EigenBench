@@ -58,6 +58,7 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
     run_name, run_dir = infer_run_name_and_dir(spec_ref, module_file, normalized)
 
     normalized["name"] = run_name
+    normalized["verbose"] = bool(normalized.get("verbose", False))
 
     collection = normalized.setdefault("collection", {})
     collection["evaluations_path"] = _resolve_path_for_run(
@@ -73,11 +74,15 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         collection["cached_responses_path"] = None
 
     training = normalized.setdefault("training", {})
-    training["output_dir"] = _resolve_path_for_run(
-        training.get("output_dir"),
-        run_dir,
-        "train",
-    )
+    if training.get("output_dir"):
+        training["output_dir"] = _resolve_path_for_run(
+            training.get("output_dir"),
+            run_dir,
+            ".",
+        )
+    else:
+        # Default: write btd_d* folders directly under runs/<run_name>/.
+        training["output_dir"] = str(run_dir.resolve())
 
     return normalized, run_dir
 

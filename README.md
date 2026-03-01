@@ -31,17 +31,28 @@ mkdir -p runs/my_run
 - update `models`
 - set `dataset.path` to your scenarios JSON
 - set `constitution.path` to your constitution JSON
+- set `constitution.num_criteria` (required; used to cap/truncate criteria)
+- set `verbose` (`False` for quiet runs, `True` for detailed logs)
+- stage toggles:
+  - `collection.enabled`: run evaluation collection
+  - `collection.cached_responses_path`: if set, response cache collection runs first
+  - `training.enabled`: run training + eigentrust
+- optional dataset selection controls:
+  - `dataset.start`: start offset in the scenario list (default `0`)
+  - `dataset.count`: how many scenarios to use after `start` (omit for all remaining)
+  - `dataset.shuffle`: shuffle before slicing (default `False`)
+  - `dataset.shuffle_seed`: seed for reproducible shuffle (optional)
 
 3. Run the full pipeline (either form works):
 
 ```bash
-python scripts/run_pipeline.py runs.my_run.spec
-python scripts/run_pipeline.py runs/my_run/spec.py
+python scripts/run.py runs.my_run.spec
+python scripts/run.py runs/my_run/spec.py
 ```
 
 Default outputs for this run go into:
 - `runs/my_run/evaluations.jsonl`
-- `runs/my_run/train/`
+- `runs/my_run/btd_d<dim>/`
 
 Optional shared response cache (for reuse across runs):
 - set `collection.cached_responses_path`, e.g. `data/cache/responses/reddit_main.jsonl`
@@ -54,19 +65,19 @@ EigenBench/
 │   ├── eval/          # collection orchestration + samplers + response-only flow
 │   ├── train/         # BT/BTD models + training
 │   ├── trust/         # trust matrix and EigenTrust
-│   ├── io/            # JSON/JSONL evaluation IO + comparison extraction
+│   ├── utils/         # JSON/JSONL evaluation IO + comparison extraction
 │   ├── config/        # run-spec loading + dataset/constitution path helpers
 │   └── providers/     # OpenRouter call helper
 ├── scripts/
-│   ├── run_collect.py            # collect evaluations only
-│   ├── run_collect_responses.py  # collect response cache only
-│   ├── run_train.py              # train only
-│   └── run_pipeline.py           # collect + train
+│   ├── run.py                    # only user entrypoint: cache (optional) + collect (optional) + train (optional)
+│   ├── run_collect.py            # internal stage module
+│   ├── run_collect_responses.py  # internal stage module
+│   └── run_train.py              # internal stage module
 ├── runs/
 │   └── <run_name>/
 │       ├── spec.py            # per-run settings (models, dataset, constitution, training)
 │       ├── evaluations.jsonl  # collected judge comparisons for this run
-│       └── train/             # model checkpoints, loss plots, eigentrust outputs
+│       └── btd_d<dim>/        # model checkpoints, loss plots, u/v PCA plot, eigentrust outputs
 ├── data/
 │   ├── constitutions/         # committed constitution JSON files used by specs
 │   │   └── *.json
@@ -76,60 +87,50 @@ EigenBench/
 │       └── responses/         # shared cached responses across runs (git-ignored)
 ```
 
-## What Each Script Does
+## How to Run
 
-- All run scripts accept either:
-  - a dotted module path, e.g. `runs.example.spec`
-  - a file path, e.g. `runs/example/spec.py`
-
-- `scripts/run_collect.py`: reads a run spec, samples scenarios, collects model responses + judge reflections + pairwise judge choices, and appends rows to `collection.evaluations_path`.
-  If that path is omitted, it defaults to `runs/<run_name>/evaluations.jsonl`.
-
-- `scripts/run_collect_responses.py`: reads a run spec and collects only evaluee responses into `collection.cached_responses_path`.
-  `collection.cached_responses_path` is required for this script.
-
-- `scripts/run_train.py`: reads evaluations from `collection.evaluations_path`, trains BT/BTD per `training` config, and computes EigenTrust at the end of each training run (`eigentrust.txt` in each output folder).
-  If `training.output_dir` is omitted, it defaults to `runs/<run_name>/train`.
-
-- `scripts/run_pipeline.py`: runs collect first, then training, using one run spec.
-
-## Common Use Cases
-
-1. Run the full pipeline (collect + train)
+Use only one entrypoint:
 
 ```bash
-python scripts/run_pipeline.py runs.example.spec
-python scripts/run_pipeline.py runs/example/spec.py
+python scripts/run.py runs.example.spec
+python scripts/run.py runs/example/spec.py
 ```
 
-2. You already have an evaluations file and only want training
+`scripts/run.py` executes stages in this order:
+1. Response cache collection (only if `collection.cached_responses_path` is set)
+2. Evaluation collection (only if `collection.enabled=True`)
+3. Training + EigenTrust (only if `training.enabled=True`)
 
-- Point `collection.evaluations_path` in your run spec to that existing `json/jsonl` file.
-- Then run:
+Logging:
+- `verbose=False` suppresses most stage/training parser logs
+- `verbose=True` shows detailed progress/debug output
 
-```bash
-python scripts/run_train.py your.spec.module
-python scripts/run_train.py runs/my_run/spec.py
-```
+Training outputs include:
+- `training_loss.png`
+- `uv_embeddings_pca.png` (side-by-side 2D PCA of `u` and `v`, with model index/name and EigenBench scores in legend)
+- `eigentrust.txt`
 
-3. You only want to collect evaluations
+## Common Spec Modes
 
-```bash
-python scripts/run_collect.py your.spec.module
-python scripts/run_collect.py runs/my_run/spec.py
-```
+1. Full pipeline (cache + collect + train)
+- Set `collection.cached_responses_path`
+- Set `collection.enabled=True`
+- Set `training.enabled=True`
 
-4. Collect responses first, cache them, then do judging later
+2. Train only from an existing evaluations file
+- Set `collection.enabled=False`
+- Point `collection.evaluations_path` to your existing file
+- Set `constitution.num_criteria` to the expected criterion count in that file
+- Set `training.enabled=True`
 
-- Step A: set `collection.cached_responses_path` in your run spec (recommended shared path under `data/cache/responses/`).
-- Step B: run response-only collection:
+3. Collect only (no training)
+- Set `collection.enabled=True`
+- Set `training.enabled=False`
 
-```bash
-python scripts/run_collect_responses.py runs.example.spec
-python scripts/run_collect_responses.py runs/example/spec.py
-```
-
-- Step C: run normal collection (`run_collect.py`). It will reuse cached evaluee responses and only do reflection/comparison calls.
+4. Cache-only refresh
+- Set `collection.cached_responses_path`
+- Set `collection.enabled=False`
+- Set `training.enabled=False`
 
 ## Datasets Used in the Paper
 

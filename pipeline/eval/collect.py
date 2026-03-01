@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pipeline.io import extract_comparisons_with_ties_criteria
+from pipeline.utils import extract_comparisons_with_ties_criteria
 from .criteria_collectors import collect_group_criteria_evaluations
 from .samplers import select_sampler
 
@@ -36,6 +36,7 @@ def collect_core_evaluations(
     cached_responses_by_scenario=None,
     judge_prompt_prefix_fn=None,
     max_tokens=4096,
+    verbose: bool = False,
 ):
     """Collect one scenario's criterion-wise evaluations.
 
@@ -72,6 +73,7 @@ def collect_core_evaluations(
                 comparisons, _ = extract_comparisons_with_ties_criteria(
                     all_evals,
                     num_criteria=len(criteria),
+                    verbose=verbose,
                 )
                 judge_counts, eval_counts = build_judge_and_eval_counts(
                     comparisons,
@@ -95,7 +97,8 @@ def collect_core_evaluations(
                 group_size=group_size,
             )
 
-        print(f"Group round {round_idx + 1}/{group_count}")
+        if verbose:
+            print(f"Group round {round_idx + 1}/{group_count}")
         batch_evaluations = collect_group_criteria_evaluations(
             criteria=criteria,
             scenario=scenario,
@@ -107,6 +110,7 @@ def collect_core_evaluations(
             max_tokens=max_tokens,
             cached_responses_by_scenario=cached_responses_by_scenario,
             judge_prompt_prefix_fn=judge_prompt_prefix_fn,
+            verbose=verbose,
         )
         new_evaluations.extend(batch_evaluations)
 

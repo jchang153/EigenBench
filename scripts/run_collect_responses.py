@@ -1,17 +1,13 @@
-"""Run response-only collection from a Python run spec.
+"""Internal response-cache collection stage for pipeline orchestration.
 
-Usage:
-    python scripts/run_collect_responses.py runs.example.spec
-    python scripts/run_collect_responses.py runs/example/spec.py
+This module is intended to be invoked by ``scripts/run.py``.
 """
 
 from __future__ import annotations
 
-import sys
-
-from pipeline.config import load_run_spec, load_dataset_scenarios_from_spec
+from pipeline.config import load_run_spec, load_dataset_scenarios_from_spec, select_scenarios
 from pipeline.eval.flows import collect_responses_only
-from pipeline.io import append_records, load_records
+from pipeline.utils import append_records, load_records
 
 
 def _build_cached_index(cached_records):
@@ -24,6 +20,7 @@ def _build_cached_index(cached_records):
 
 def main(spec_ref: str):
     spec, run_dir = load_run_spec(spec_ref)
+    verbose = bool(spec.get("verbose", False))
 
     models = spec["models"]
     ds = spec["dataset"]
@@ -38,8 +35,18 @@ def main(spec_ref: str):
 
     scenarios = load_dataset_scenarios_from_spec(ds, run_dir=run_dir)
     start = int(ds.get("start", 0))
-    count = int(ds.get("count", len(scenarios) - start))
-    selected = scenarios[start : start + count]
+    count = ds.get("count")
+    count = None if count is None else int(count)
+    shuffle = bool(ds.get("shuffle", False))
+    shuffle_seed = ds.get("shuffle_seed")
+    shuffle_seed = None if shuffle_seed is None else int(shuffle_seed)
+    selected = select_scenarios(
+        scenarios,
+        start=start,
+        count=count,
+        shuffle=shuffle,
+        shuffle_seed=shuffle_seed,
+    )
 
     overwrite = bool(cfg.get("overwrite_cached_responses", False))
     max_tokens = int(cfg.get("max_tokens", 4096))
@@ -47,15 +54,21 @@ def main(spec_ref: str):
     existing = load_records(cache_path)
     cached_index = _build_cached_index(existing)
 
-    print(f"Run: {spec['name']}")
-    print(f"Run folder: {run_dir}")
-    print(f"Cached responses file: {cache_path}")
+    if verbose:
+        print(f"Run: {spec['name']}")
+        print(f"Run folder: {run_dir}")
+        print(f"Cached responses file: {cache_path}")
+        print(
+            "Scenario selection: "
+            f"total={len(scenarios)}, selected={len(selected)}, start={start}, "
+            f"count={'all' if count is None else count}, shuffle={shuffle}, shuffle_seed={shuffle_seed}"
+        )
 
-    for offset, scenario in enumerate(selected):
-        scenario_index = start + offset
+    for scenario_index, scenario in selected:
 
         if (not overwrite) and (scenario_index in cached_index):
-            print(f"Skipping scenario_index={scenario_index}; cached response set already exists.")
+            if verbose:
+                print(f"Skipping scenario_index={scenario_index}; cached response set already exists.")
             continue
 
         rows = collect_responses_only(
@@ -64,13 +77,16 @@ def main(spec_ref: str):
             models=models,
             max_tokens=max_tokens,
             cached_responses_by_scenario=None,
+            verbose=verbose,
         )
         append_records(cache_path, rows)
         cached_index[scenario_index] = rows[0]
-        print(f"Wrote cached responses for scenario_index={scenario_index} -> {cache_path}")
+        if verbose:
+            print(f"Wrote cached responses for scenario_index={scenario_index} -> {cache_path}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        raise SystemExit("Usage: python scripts/run_collect_responses.py <spec_module_or_path>")
-    main(sys.argv[1])
+    raise SystemExit(
+        "run_collect_responses.py is an internal stage. "
+        "Use: python scripts/run.py <spec_module_or_path>"
+    )

@@ -1,21 +1,18 @@
-"""Run collection from a Python run spec.
+"""Internal collection stage for pipeline orchestration.
 
-Usage:
-    python scripts/run_collect.py runs.example.spec
-    python scripts/run_collect.py runs/example/spec.py
+This module is intended to be invoked by ``scripts/run.py``.
 """
 
 from __future__ import annotations
 
-import sys
-
 from pipeline.config import (
     load_run_spec,
     load_dataset_scenarios_from_spec,
+    select_scenarios,
     get_criteria_from_spec,
 )
 from pipeline.eval import collect_core_evaluations
-from pipeline.io import append_records, load_records
+from pipeline.utils import append_records, load_records
 
 
 def _build_cached_index(cached_records):
@@ -28,18 +25,55 @@ def _build_cached_index(cached_records):
 
 def main(spec_ref: str):
     spec, run_dir = load_run_spec(spec_ref)
+    verbose = bool(spec.get("verbose", False))
 
     models = spec["models"]
     ds = spec["dataset"]
     constitution = spec["constitution"]
     cfg = spec["collection"]
 
+    if not bool(cfg.get("enabled", True)):
+        if verbose:
+            print("Collection disabled in run spec (collection.enabled=False). Skipping run_collect.")
+        return
+
     scenarios = load_dataset_scenarios_from_spec(ds, run_dir=run_dir)
     start = int(ds.get("start", 0))
-    count = int(ds.get("count", len(scenarios) - start))
-    selected = scenarios[start : start + count]
+    count = ds.get("count")
+    count = None if count is None else int(count)
+    shuffle = bool(ds.get("shuffle", False))
+    shuffle_seed = ds.get("shuffle_seed")
+    shuffle_seed = None if shuffle_seed is None else int(shuffle_seed)
+    selected = select_scenarios(
+        scenarios,
+        start=start,
+        count=count,
+        shuffle=shuffle,
+        shuffle_seed=shuffle_seed,
+    )
+
+    if "num_criteria" not in constitution:
+        raise SystemExit(
+            "Set constitution.num_criteria in your run spec. "
+            "This controls criterion truncation during collection."
+        )
+    requested_num_criteria = int(constitution["num_criteria"])
+    if requested_num_criteria <= 0:
+        raise SystemExit("constitution.num_criteria must be a positive integer.")
 
     criteria = get_criteria_from_spec(constitution, run_dir=run_dir)
+    if requested_num_criteria < len(criteria):
+        if verbose:
+            print(
+                f"Truncating constitution criteria from {len(criteria)} to "
+                f"{requested_num_criteria} based on constitution.num_criteria."
+            )
+        criteria = criteria[:requested_num_criteria]
+    elif requested_num_criteria > len(criteria):
+        raise SystemExit(
+            f"constitution.num_criteria={requested_num_criteria} exceeds "
+            f"criteria found in constitution file ({len(criteria)})."
+        )
 
     evaluations_path = cfg.get("evaluations_path")
     if not evaluations_path:
@@ -51,13 +85,18 @@ def main(spec_ref: str):
         cached_records = load_records(cached_responses_path)
         cached_index = _build_cached_index(cached_records)
 
-    print(f"Run: {spec['name']}")
-    print(f"Run folder: {run_dir}")
-    print(f"Evaluations file: {evaluations_path}")
-    print(f"Cached responses file: {cached_responses_path}")
+    if verbose:
+        print(f"Run: {spec['name']}")
+        print(f"Run folder: {run_dir}")
+        print(f"Evaluations file: {evaluations_path}")
+        print(f"Cached responses file: {cached_responses_path}")
+        print(
+            "Scenario selection: "
+            f"total={len(scenarios)}, selected={len(selected)}, start={start}, "
+            f"count={'all' if count is None else count}, shuffle={shuffle}, shuffle_seed={shuffle_seed}"
+        )
 
-    for offset, scenario in enumerate(selected):
-        scenario_index = start + offset
+    for scenario_index, scenario in selected:
         existing = load_records(evaluations_path)
         new_evals = collect_core_evaluations(
             criteria=criteria,
@@ -71,15 +110,18 @@ def main(spec_ref: str):
             groups=int(cfg.get("groups", 1)),
             alpha=float(cfg.get("alpha", 2.0)),
             cached_responses_by_scenario=cached_index,
+            verbose=verbose,
         )
         append_records(evaluations_path, new_evals)
-        print(
-            f"Wrote {len(new_evals)} new evaluations for scenario_index={scenario_index} "
-            f"-> {evaluations_path}"
-        )
+        if verbose:
+            print(
+                f"Wrote {len(new_evals)} new evaluations for scenario_index={scenario_index} "
+                f"-> {evaluations_path}"
+            )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        raise SystemExit("Usage: python scripts/run_collect.py <spec_module_or_path>")
-    main(sys.argv[1])
+    raise SystemExit(
+        "run_collect.py is an internal stage. "
+        "Use: python scripts/run.py <spec_module_or_path>"
+    )

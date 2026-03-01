@@ -16,6 +16,7 @@ def collect_responses_only(
     models,
     max_tokens: int = 4096,
     cached_responses_by_scenario: dict | None = None,
+    verbose: bool = False,
 ):
     """Collect evaluee responses for all models on one scenario."""
 
@@ -31,7 +32,8 @@ def collect_responses_only(
                 cached = entry.get("responses", {}).get(model_nicks[i])
 
         if cached is not None:
-            print(f"Using cached response for eval {i}: {model_nicks[i]}")
+            if verbose:
+                print(f"Using cached response for eval {i}: {model_nicks[i]}")
             eval_responses[model_nicks[i]] = cached
             continue
 
@@ -47,7 +49,8 @@ def collect_responses_only(
             messages=eval_messages,
             max_tokens=max_tokens,
         )
-        print(f"Successful API call for eval {i}: {model_nicks[i]}")
+        if verbose:
+            print(f"Successful API call for eval {i}: {model_nicks[i]}")
         eval_responses[model_nicks[i]] = eval_response
 
     return [

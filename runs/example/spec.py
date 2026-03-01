@@ -1,12 +1,9 @@
-"""Example run spec for custom EigenBench experiments (no CLI required).
-
-Defaults applied from run folder:
-- name -> folder name (example)
-- collection.evaluations_path -> runs/example/evaluations.jsonl
-- training.output_dir -> runs/example/train
+"""
+Example run spec for custom EigenBench experiments (no CLI required).
 """
 
 RUN_SPEC = {
+    "verbose": False,
     "models": {
         "Claude 4 Sonnet": "anthropic/claude-sonnet-4",
         "GPT 4.1": "openai/gpt-4.1",
@@ -16,34 +13,34 @@ RUN_SPEC = {
     "dataset": {
         "path": "data/scenarios/reddit_questions.json",
         "start": 0,
-        "count": 5,
+        "count": 1000,
+        "shuffle": False,
+        "shuffle_seed": 42,
     },
     "constitution": {
         "path": "data/constitutions/kindness.json",
+        "num_criteria": 8,
     },
     "collection": {
-        # Optional shared cache file (recommended location):
-        # "cached_responses_path": "data/cache/responses/reddit_main.jsonl",
-        #
-        # If omitted, collection runs without cached response reuse.
+        "enabled": True, # run evaluation collection
+        "cached_responses_path": None,
         "allow_ties": True,
         "group_size": 4,
         "groups": 1,
-        "sampler_mode": "random_judge_group",  # random_judge_group | adaptive_inverse_count | uniform
-        "alpha": 2.0,
+        "sampler_mode": "random_judge_group", # random_judge_group | adaptive_inverse_count | uniform
+        "alpha": 2.0, # used for adaptive_inverse_count sampling
     },
     "training": {
-        "enabled": True,
+        "enabled": True, # run training
         "model": "btd_ties",  # btd_ties | bt
         "dims": [2],
         "lr": 1e-3,
         "weight_decay": 0.0,
-        "max_epochs": 100,
+        "max_epochs": 1000,
         "batch_size": 32,
         "device": "cpu",
-        "group_split": False,  # True keeps whole (scenario, judge, pair) groups together in train/test
         "test_size": 0.2,
-        "num_criteria": 8,
+        "group_split": False,
         "separate_criteria": False,
     },
 }

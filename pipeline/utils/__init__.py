@@ -1,4 +1,4 @@
-"""Transcript and comparison IO helpers."""
+"""Utility helpers for record persistence and comparison extraction."""
 
 from .transcripts import load_records, save_records, append_records
 from .comparisons import (

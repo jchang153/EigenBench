@@ -6,7 +6,13 @@ __pycache__/
 deprecated/
 
 # Run artifacts
-runs/**/train/
+runs/*
+!runs/example/
+!runs/example/**
+runs/example/**/__pycache__/
+runs/example/**/*.pyc
+runs/example/**/.DS_Store
+runs/example/btd_d*/
 
 # Data policy:
 # - Keep constitution files in version control
