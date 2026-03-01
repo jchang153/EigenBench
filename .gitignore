@@ -1,12 +1,8 @@
-bootstrap/
-baselines/
 data/
-figures/
-transcript/
-transcript_MMLU/
-transcript_GPQA/
-transcript_human/
 .env
 __pycache__/
 *.pyc
 error tests/
+deprecated/
+data/cache/responses/
+runs/**/out/
