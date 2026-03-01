@@ -8,6 +8,8 @@ import importlib.util
 from pathlib import Path
 import types
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _resolve_path_for_run(path_value: str | None, run_dir: Path, default_name: str) -> str:
     if not path_value:
@@ -18,11 +20,20 @@ def _resolve_path_for_run(path_value: str | None, run_dir: Path, default_name: s
     return str((run_dir / p).resolve())
 
 
+def _resolve_optional_path(path_value: str | None) -> str | None:
+    if not path_value:
+        return None
+    p = Path(path_value).expanduser()
+    if p.is_absolute():
+        return str(p)
+    return str((_REPO_ROOT / p).resolve())
+
+
 def infer_run_name_and_dir(spec_ref: str, module_file: str, spec: dict) -> tuple[str, Path]:
     module_path = Path(module_file).resolve()
 
-    # Package layout (recommended): runs/<name>/__init__.py or runs/<name>/config.py
-    if module_path.name in {"__init__.py", "config.py"}:
+    # Package layout (recommended): runs/<name>/__init__.py or runs/<name>/spec.py
+    if module_path.name in {"__init__.py", "config.py", "spec.py"}:
         fallback_name = module_path.parent.name
         run_dir = module_path.parent
     else:
@@ -34,7 +45,7 @@ def infer_run_name_and_dir(spec_ref: str, module_file: str, spec: dict) -> tuple
             run_dir = module_path.parent
 
     run_name = str(spec.get("name") or fallback_name)
-    if module_path.name not in {"__init__.py", "config.py"} and module_path.parent.name == "runs":
+    if module_path.name not in {"__init__.py", "config.py", "spec.py"} and module_path.parent.name == "runs":
         run_dir = module_path.parent / run_name
 
     return run_name, run_dir
@@ -52,19 +63,20 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
     collection["evaluations_path"] = _resolve_path_for_run(
         collection.get("evaluations_path"),
         run_dir,
-        "out/evaluations.jsonl",
+        "evaluations.jsonl",
     )
-    collection["cached_responses_path"] = _resolve_path_for_run(
-        collection.get("cached_responses_path"),
-        run_dir,
-        "out/cached_responses.jsonl",
-    )
+    cache_path = _resolve_optional_path(collection.get("cached_responses_path"))
+    if cache_path is not None:
+        collection["cached_responses_path"] = cache_path
+    elif "cached_responses_path" in collection:
+        # Keep explicit null if user sets it intentionally.
+        collection["cached_responses_path"] = None
 
     training = normalized.setdefault("training", {})
     training["output_dir"] = _resolve_path_for_run(
         training.get("output_dir"),
         run_dir,
-        "out/train",
+        "train",
     )
 
     return normalized, run_dir
@@ -93,17 +105,27 @@ def load_run_spec(spec_ref: str) -> tuple[dict, Path]:
     """Load RUN_SPEC from either dotted module path or python file path.
 
     Examples:
-    - runs.example
-    - runs/my_run/config.py
+    - runs.example.spec
+    - runs/my_run/spec.py
     """
 
     if _is_probable_path(spec_ref):
         module, ref = _load_module_from_path(spec_ref)
     else:
-        module = importlib.import_module(spec_ref)
-        ref = spec_ref
+        try:
+            module = importlib.import_module(spec_ref)
+            ref = spec_ref
+        except ModuleNotFoundError:
+            # Convenience: allow "runs.my_run" to resolve to "runs.my_run.spec".
+            module = importlib.import_module(f"{spec_ref}.spec")
+            ref = f"{spec_ref}.spec"
 
     if not hasattr(module, "RUN_SPEC"):
-        raise AttributeError(f"RUN_SPEC not found in run spec: {spec_ref}")
+        # Convenience: if caller passed "runs.my_run", resolve via "runs.my_run.spec".
+        if not _is_probable_path(spec_ref) and not spec_ref.endswith(".spec"):
+            module = importlib.import_module(f"{spec_ref}.spec")
+            ref = f"{spec_ref}.spec"
+        if not hasattr(module, "RUN_SPEC"):
+            raise AttributeError(f"RUN_SPEC not found in run spec: {spec_ref}")
 
     return apply_run_defaults(ref, module.__file__, module.RUN_SPEC)

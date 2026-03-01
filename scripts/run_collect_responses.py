@@ -1,7 +1,8 @@
 """Run response-only collection from a Python run spec.
 
 Usage:
-    python scripts/run_collect_responses.py runs.example_custom
+    python scripts/run_collect_responses.py runs.example.spec
+    python scripts/run_collect_responses.py runs/example/spec.py
 """
 
 from __future__ import annotations
@@ -30,7 +31,10 @@ def main(spec_ref: str):
 
     cache_path = cfg.get("cached_responses_path")
     if not cache_path:
-        raise SystemExit("Set collection.cached_responses_path in your run spec.")
+        raise SystemExit(
+            "Set collection.cached_responses_path in your run spec "
+            "(recommended: data/cache/responses/<cache_name>.jsonl)."
+        )
 
     scenarios = load_dataset_scenarios_from_spec(ds, run_dir=run_dir)
     start = int(ds.get("start", 0))

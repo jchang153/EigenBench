@@ -1,7 +1,8 @@
 """Run BT/BTD training from a Python run spec.
 
 Usage:
-    python scripts/run_train.py runs.example_custom
+    python scripts/run_train.py runs.example.spec
+    python scripts/run_train.py runs/example/spec.py
 """
 
 from __future__ import annotations

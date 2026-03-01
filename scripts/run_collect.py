@@ -1,7 +1,8 @@
 """Run collection from a Python run spec.
 
 Usage:
-    python scripts/run_collect.py runs.example_custom
+    python scripts/run_collect.py runs.example.spec
+    python scripts/run_collect.py runs/example/spec.py
 """
 
 from __future__ import annotations

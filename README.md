@@ -26,7 +26,7 @@ Note: the new collection path is OpenRouter-only.
 mkdir -p runs/my_run
 ```
 
-2. Create `runs/my_run/config.py` (copy from `runs/example/config.py` and edit):
+2. Create `runs/my_run/spec.py` (copy from `runs/example/spec.py` and edit):
 
 - update `models`
 - set `dataset.path` to your scenarios JSON
@@ -35,14 +35,16 @@ mkdir -p runs/my_run
 3. Run the full pipeline (either form works):
 
 ```bash
-python scripts/run_pipeline.py runs.my_run
-python scripts/run_pipeline.py runs/my_run/config.py
+python scripts/run_pipeline.py runs.my_run.spec
+python scripts/run_pipeline.py runs/my_run/spec.py
 ```
 
 Default outputs for this run go into:
-- `runs/my_run/out/evaluations.jsonl`
-- `runs/my_run/out/cached_responses.jsonl`
-- `runs/my_run/out/train/`
+- `runs/my_run/evaluations.jsonl`
+- `runs/my_run/train/`
+
+Optional shared response cache (for reuse across runs):
+- set `collection.cached_responses_path`, e.g. `data/cache/responses/reddit_main.jsonl`
 
 ## Repo Layout
 
@@ -53,61 +55,51 @@ EigenBench/
 │   ├── train/         # BT/BTD models + training
 │   ├── trust/         # trust matrix and EigenTrust
 │   ├── io/            # JSON/JSONL evaluation IO + comparison extraction
-│   ├── config/        # dataset + constitution access helpers
+│   ├── config/        # run-spec loading + dataset/constitution path helpers
 │   └── providers/     # OpenRouter call helper
 ├── scripts/
-│   ├── run_collect.py
-│   ├── run_collect_responses.py
-│   ├── run_merge_evaluations.py
-│   ├── run_train.py
-│   └── run_pipeline.py
-├── notebooks/
-│   └── mixed_openrouter_local_collection.ipynb
+│   ├── run_collect.py            # collect evaluations only
+│   ├── run_collect_responses.py  # collect response cache only
+│   ├── run_train.py              # train only
+│   └── run_pipeline.py           # collect + train
 ├── runs/
-│   └── <run_name>/    # run package + run artifacts
-│       ├── __init__.py   # optional (needed only for dotted import style)
-│       ├── config.py
-│       └── out/
-│           ├── evaluations.jsonl
-│           ├── cached_responses.jsonl
-│           └── train/
+│   └── <run_name>/
+│       ├── spec.py            # per-run settings (models, dataset, constitution, training)
+│       ├── evaluations.jsonl  # collected judge comparisons for this run
+│       └── train/             # model checkpoints, loss plots, eigentrust outputs
 ├── data/
-│   ├── scenarios/
-│   │   ├── reddit_questions.json
-│   │   ├── oasst_questions.json
-│   │   └── airiskdilemmas.json
-│   ├── constitutions/
+│   ├── constitutions/         # committed constitution JSON files used by specs
+│   │   └── *.json
+│   ├── scenarios/             # local scenario datasets (git-ignored)
 │   │   └── *.json
 │   └── cache/
-│       └── responses/ # recommended location for cached model responses
+│       └── responses/         # shared cached responses across runs (git-ignored)
 ```
 
 ## What Each Script Does
 
 - All run scripts accept either:
-  - a dotted module path, e.g. `runs.example`
-  - a file path, e.g. `runs/example/config.py`
+  - a dotted module path, e.g. `runs.example.spec`
+  - a file path, e.g. `runs/example/spec.py`
 
 - `scripts/run_collect.py`: reads a run spec, samples scenarios, collects model responses + judge reflections + pairwise judge choices, and appends rows to `collection.evaluations_path`.
-  If that path is omitted, it defaults to `runs/<run_name>/out/evaluations.jsonl`.
+  If that path is omitted, it defaults to `runs/<run_name>/evaluations.jsonl`.
 
 - `scripts/run_collect_responses.py`: reads a run spec and collects only evaluee responses into `collection.cached_responses_path`.
-  If omitted, it defaults to `runs/<run_name>/out/cached_responses.jsonl`.
+  `collection.cached_responses_path` is required for this script.
 
 - `scripts/run_train.py`: reads evaluations from `collection.evaluations_path`, trains BT/BTD per `training` config, and computes EigenTrust at the end of each training run (`eigentrust.txt` in each output folder).
-  If `training.output_dir` is omitted, it defaults to `runs/<run_name>/out/train`.
+  If `training.output_dir` is omitted, it defaults to `runs/<run_name>/train`.
 
 - `scripts/run_pipeline.py`: runs collect first, then training, using one run spec.
-
-- `scripts/run_merge_evaluations.py`: merges multiple evaluation files, remaps `eval1/eval2/judge` indices from `*_name` fields to your run-spec model order, and writes one deduplicated merged evaluations file.
 
 ## Common Use Cases
 
 1. Run the full pipeline (collect + train)
 
 ```bash
-python scripts/run_pipeline.py runs.example
-python scripts/run_pipeline.py runs/example/config.py
+python scripts/run_pipeline.py runs.example.spec
+python scripts/run_pipeline.py runs/example/spec.py
 ```
 
 2. You already have an evaluations file and only want training
@@ -117,44 +109,27 @@ python scripts/run_pipeline.py runs/example/config.py
 
 ```bash
 python scripts/run_train.py your.spec.module
+python scripts/run_train.py runs/my_run/spec.py
 ```
 
 3. You only want to collect evaluations
 
 ```bash
 python scripts/run_collect.py your.spec.module
+python scripts/run_collect.py runs/my_run/spec.py
 ```
 
 4. Collect responses first, cache them, then do judging later
 
-- Step A: optionally set `collection.cached_responses_path` in your run spec (otherwise default is used).
+- Step A: set `collection.cached_responses_path` in your run spec (recommended shared path under `data/cache/responses/`).
 - Step B: run response-only collection:
 
 ```bash
-python scripts/run_collect_responses.py runs.example
-python scripts/run_collect_responses.py runs/example/config.py
+python scripts/run_collect_responses.py runs.example.spec
+python scripts/run_collect_responses.py runs/example/spec.py
 ```
 
 - Step C: run normal collection (`run_collect.py`). It will reuse cached evaluee responses and only do reflection/comparison calls.
-
-5. Mixed OpenRouter + local/HF models
-
-- Use the notebook:
-- `notebooks/mixed_openrouter_local_collection.ipynb`
-- It collects in the same evaluation schema as `run_collect.py`, but allows `hf_local:<model_id>` entries.
-- Keep model nicknames consistent with your run spec if you plan to train on merged data.
-- If you collected separate files (for example OpenRouter-only and local/HF runs), merge them:
-
-```bash
-python scripts/run_merge_evaluations.py runs.example runs/example/out/evaluations_merged.jsonl runs/example/out/evaluations_or.jsonl runs/example/out/evaluations_local_openrouter.jsonl
-```
-
-- Point `collection.evaluations_path` at the merged file and run:
-
-```bash
-python scripts/run_train.py runs.example
-python scripts/run_train.py runs/example/config.py
-```
 
 ## Datasets Used in the Paper
 

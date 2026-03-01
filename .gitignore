@@ -1,7 +1,18 @@
-data/
 .env
 __pycache__/
 *.pyc
 deprecated/
-data/cache/responses/
-runs/**/out/
+
+# Run artifacts
+runs/**/train/
+
+# Data policy:
+# - Keep constitution files in version control
+# - Ignore all other data payloads
+data/*
+!data/constitutions/
+!data/constitutions/**
+
+# macOS metadata
+data/.DS_Store
+data/**/.DS_Store

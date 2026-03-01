@@ -1,8 +1,8 @@
 """Run collection then training from a Python run spec.
 
 Usage:
-    python scripts/run_pipeline.py runs.example
-    python scripts/run_pipeline.py runs/example/config.py
+    python scripts/run_pipeline.py runs.example.spec
+    python scripts/run_pipeline.py runs/example/spec.py
 """
 
 from __future__ import annotations

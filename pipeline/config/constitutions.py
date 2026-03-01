@@ -1,4 +1,4 @@
-"""Constitution/criteria accessors sourced from data/constitutions."""
+"""Constitution/criteria loaders."""
 
 from __future__ import annotations
 
@@ -7,32 +7,6 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CRITERIA_FILE = _REPO_ROOT / "data/constitutions/criteria_map.json"
-
-
-def _load_criteria_map() -> dict[str, list[str]]:
-    with _CRITERIA_FILE.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected dict in {_CRITERIA_FILE}, got {type(data).__name__}")
-    return data
-
-
-def get_criteria(criteria_id: str):
-    key = criteria_id.strip().lower()
-    criteria_map = _load_criteria_map()
-
-    if key in {"kindness", "universal_kindness"}:
-        return criteria_map["kindness"]
-    if key in {"ecology", "deep_ecology"}:
-        return criteria_map["deep_ecology"]
-    if key in {"conservatism", "conservatism_gpt"}:
-        return criteria_map["conservatism"]
-    if key == "openai":
-        return criteria_map["openai"]
-    if key == "claude":
-        return criteria_map["claude"]
-    raise ValueError(f"Unknown criteria_id: {criteria_id}")
 
 
 def _resolve_existing_path(path_value: str, run_dir: str | Path | None) -> Path:
@@ -91,8 +65,7 @@ def get_criteria_from_spec(
 
     Supports either:
     - {'path': '.../constitution.json'}
-    - {'criteria_id': 'kindness' | ...}
-    - plain string path or criteria_id.
+    - plain string path.
 
     For path-based constitution files, accepted payload formats are:
     - list[str]
@@ -106,11 +79,9 @@ def get_criteria_from_spec(
 
     if isinstance(constitution_cfg, str):
         maybe_path = constitution_cfg.strip()
-        if any(ch in maybe_path for ch in ("/", "\\")) or maybe_path.lower().endswith(".json"):
-            p = _resolve_existing_path(maybe_path, run_dir=run_dir)
-            with p.open("r", encoding="utf-8") as f:
-                return _normalize_criteria(json.load(f))
-        return _normalize_criteria(get_criteria(maybe_path))
+        p = _resolve_existing_path(maybe_path, run_dir=run_dir)
+        with p.open("r", encoding="utf-8") as f:
+            return _normalize_criteria(json.load(f))
 
     if not isinstance(constitution_cfg, dict):
         raise ValueError("constitution config must be a dict or string")
@@ -120,7 +91,4 @@ def get_criteria_from_spec(
         with p.open("r", encoding="utf-8") as f:
             return _normalize_criteria(json.load(f))
 
-    if "criteria_id" in constitution_cfg and constitution_cfg["criteria_id"]:
-        return _normalize_criteria(get_criteria(str(constitution_cfg["criteria_id"])))
-
-    raise ValueError("constitution config must include either 'path' or 'criteria_id'")
+    raise ValueError("constitution config must include 'path'")

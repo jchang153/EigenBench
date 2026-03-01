@@ -2,9 +2,8 @@
 
 Defaults applied from run folder:
 - name -> folder name (example)
-- collection.evaluations_path -> runs/example/out/evaluations.jsonl
-- collection.cached_responses_path -> runs/example/out/cached_responses.jsonl
-- training.output_dir -> runs/example/out/train
+- collection.evaluations_path -> runs/example/evaluations.jsonl
+- training.output_dir -> runs/example/train
 """
 
 RUN_SPEC = {
@@ -23,6 +22,10 @@ RUN_SPEC = {
         "path": "data/constitutions/kindness.json",
     },
     "collection": {
+        # Optional shared cache file (recommended location):
+        # "cached_responses_path": "data/cache/responses/reddit_main.jsonl",
+        #
+        # If omitted, collection runs without cached response reuse.
         "allow_ties": True,
         "group_size": 4,
         "groups": 1,
