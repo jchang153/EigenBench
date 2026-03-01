@@ -160,7 +160,7 @@ python scripts/run_train.py runs/example/config.py
 ## Datasets Used in the Paper
 
 - AskReddit dataset: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
-- OpenAssistant: https://huggingface.co/datasets/Op enAssistant/oasst1
+- OpenAssistant: https://huggingface.co/datasets/OpenAssistant/oasst1
 - AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/kellycyy/AIRiskDilemmas
 
 ## Legacy Artifacts
