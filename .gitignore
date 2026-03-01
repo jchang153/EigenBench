@@ -1,6 +1,8 @@
 .env
 __pycache__/
 *.pyc
+.DS_Store
+**/.DS_Store
 deprecated/
 
 # Run artifacts
@@ -12,7 +14,3 @@ runs/**/train/
 data/*
 !data/constitutions/
 !data/constitutions/**
-
-# macOS metadata
-data/.DS_Store
-data/**/.DS_Store
