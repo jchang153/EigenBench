@@ -30,7 +30,7 @@ def main(spec_ref: str):
     if not cache_path:
         raise SystemExit(
             "Set collection.cached_responses_path in your run spec "
-            "(recommended: data/cache/responses/<cache_name>.jsonl)."
+            "(recommended: data/responses/<cache_name>.jsonl)."
         )
 
     scenarios = load_dataset_scenarios_from_spec(ds, run_dir=run_dir)

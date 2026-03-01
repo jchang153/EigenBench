@@ -1,8 +1,23 @@
-# EigenBench
+# EigenBench: A Comparative Behavioral Measure of Value Alignment
 
 EigenBench benchmarks model-vs-model behavioral alignment from pairwise LM judgments, then fits BT/BTD and aggregates with EigenTrust.
 
 Paper: [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938)
+
+## Table of Contents
+
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Run Spec](#run-spec)
+- [Spec Modes](#spec-modes)
+- [Spec Mode: Full Pipeline](#spec-mode-full-pipeline)
+- [Spec Mode: Train Only](#spec-mode-train-only)
+- [Spec Mode: Collect Only](#spec-mode-collect-only)
+- [Spec Mode: Cache Only](#spec-mode-cache-only)
+- [Outputs](#outputs)
+- [Repo Layout](#repo-layout)
+- [Datasets Used in the Paper](#datasets-used-in-the-paper)
+- [Citation](#citation)
 
 ## Install
 
@@ -10,135 +25,186 @@ Paper: [EigenBench: A Comparative Behavioral Measure of Value Alignment](https:/
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install torch numpy scipy pandas scikit-learn matplotlib tqdm python-dotenv openai anthropic google-genai
+pip install torch numpy scipy pandas scikit-learn matplotlib tqdm python-dotenv openai
 ```
 
 Set API keys in `.env`:
 - `OPENROUTER_API_KEY`
 
-Note: the new collection path is OpenRouter-only.
+Collection is [OpenRouter](https://openrouter.ai/)-only in the current pipeline.
 
-## Quick Start (Create a Run)
+## Quick Start
 
-1. Create a run folder:
+1. Create a run folder.
 
 ```bash
 mkdir -p runs/my_run
 ```
 
-2. Create `runs/my_run/spec.py` (copy from `runs/example/spec.py` and edit):
-
-- update `models`
-- set `dataset.path` to your scenarios JSON
-- set `constitution.path` to your constitution JSON
-- set `constitution.num_criteria` (required; used to cap/truncate criteria)
-- set `verbose` (`False` for quiet runs, `True` for detailed logs)
-- stage toggles:
-  - `collection.enabled`: run evaluation collection
-  - `collection.cached_responses_path`: if set, response cache collection runs first
-  - `training.enabled`: run training + eigentrust
-- optional dataset selection controls:
-  - `dataset.start`: start offset in the scenario list (default `0`)
-  - `dataset.count`: how many scenarios to use after `start` (omit for all remaining)
-  - `dataset.shuffle`: shuffle before slicing (default `False`)
-  - `dataset.shuffle_seed`: seed for reproducible shuffle (optional)
-
-3. Run the full pipeline (either form works):
+2. Copy the example spec.
 
 ```bash
-python scripts/run.py runs.my_run.spec
+cp runs/example/spec.py runs/my_run/spec.py
+```
+
+3. Edit `runs/my_run/spec.py`:
+- required:
+  - `models`
+  - `dataset.path`
+  - `constitution.path`
+  - `constitution.num_criteria`
+- common toggles:
+  - `verbose`
+  - `collection.enabled`
+  - `collection.cached_responses_path` (optional shared cache)
+  - `training.enabled`
+
+4. Run:
+
+```bash
 python scripts/run.py runs/my_run/spec.py
 ```
 
-Default outputs for this run go into:
-- `runs/my_run/evaluations.jsonl`
-- `runs/my_run/btd_d<dim>/`
+## Run Spec
 
-Optional shared response cache (for reuse across runs):
-- set `collection.cached_responses_path`, e.g. `data/cache/responses/reddit_main.jsonl`
+Top-level keys in `RUN_SPEC`:
+- `verbose`: `False` for quieter logs, `True` for detailed diagnostics.
+- `models`: `{display_name: openrouter_model_id}`.
+- `dataset`: scenario source and slicing.
+- `constitution`: constitution file path and criterion count.
+- `collection`: evaluation sampling/collection settings.
+- `training`: BT/BTD training settings.
+
+### Dataset controls
+- `path`: JSON file of scenarios.
+- `start`: start offset (default `0`).
+- `count`: number of scenarios after `start` (omit for all remaining).
+- `shuffle`: shuffle before slicing.
+- `shuffle_seed`: reproducible shuffle seed.
+
+### Constitution controls
+- `path`: constitution JSON file.
+- `num_criteria` (required): hard cap used for collection + extraction.
+
+## Spec Modes
+
+### Spec Mode: Full Pipeline
+
+```python
+"collection": {
+    "enabled": True,
+    "cached_responses_path": "data/responses/main_cache.jsonl",  # optional
+},
+"training": {
+    "enabled": True,
+}
+```
+
+Behavior:
+- If `cached_responses_path` is set, cache stage runs first.
+- Then evaluation collection runs.
+- Then training/eigentrust runs.
+
+### Spec Mode: Train Only
+
+```python
+"collection": {
+    "enabled": False,
+    "evaluations_path": "runs/my_run/evaluations.jsonl",
+},
+"constitution": {
+    "path": "data/constitutions/kindness.json",
+    "num_criteria": 8,
+},
+"training": {
+    "enabled": True,
+}
+```
+
+Use this when you already have evaluation transcripts and only want BT/BTD + EigenTrust outputs.
+
+### Spec Mode: Collect Only
+
+```python
+"collection": {
+    "enabled": True,
+},
+"training": {
+    "enabled": False,
+}
+```
+
+Use this to build/append `evaluations.jsonl` without running model fitting.
+
+### Spec Mode: Cache Only
+
+```python
+"collection": {
+    "enabled": False,
+    "cached_responses_path": "data/responses/main_cache.jsonl",
+},
+"training": {
+    "enabled": False,
+}
+```
+
+Use this to precompute model responses for scenarios.
+
+## Outputs
+
+Per run folder (`runs/<run_name>/`):
+- `evaluations.jsonl` (if collection ran)
+- `btd_d<dim>/` folders (if training ran), containing:
+  - `training_loss.png`
+  - `model.pt`
+  - `eigentrust.txt`
+  - `uv_embeddings_pca.png`
+  - `eigenbench.png`
+  - `log_train.txt`
 
 ## Repo Layout
 
 ```text
 EigenBench/
 ├── pipeline/
-│   ├── eval/          # collection orchestration + samplers + response-only flow
-│   ├── train/         # BT/BTD models + training
-│   ├── trust/         # trust matrix and EigenTrust
-│   ├── utils/         # JSON/JSONL evaluation IO + comparison extraction
-│   ├── config/        # run-spec loading + dataset/constitution path helpers
-│   └── providers/     # OpenRouter call helper
+│   ├── eval/          # collection orchestration + sampling
+│   ├── train/         # BT/BTD fitting + plots
+│   ├── trust/         # trust matrix + EigenTrust
+│   ├── utils/         # record IO + comparison extraction
+│   ├── config/        # run-spec + dataset/constitution loaders
+│   └── providers/     # model API calls
 ├── scripts/
-│   ├── run.py                    # only user entrypoint: cache (optional) + collect (optional) + train (optional)
+│   ├── run.py                    # only user entrypoint
 │   ├── run_collect.py            # internal stage module
 │   ├── run_collect_responses.py  # internal stage module
 │   └── run_train.py              # internal stage module
 ├── runs/
 │   └── <run_name>/
-│       ├── spec.py            # per-run settings (models, dataset, constitution, training)
-│       ├── evaluations.jsonl  # collected judge comparisons for this run
-│       └── btd_d<dim>/        # model checkpoints, loss plots, u/v PCA plot, eigentrust outputs
+│       ├── spec.py            # per-run config
+│       ├── evaluations.jsonl  # collected judgments
+│       └── btd_d<dim>/        # training outputs
 ├── data/
-│   ├── constitutions/         # committed constitution JSON files used by specs
-│   │   └── *.json
-│   ├── scenarios/             # local scenario datasets (git-ignored)
-│   │   └── *.json
-│   └── cache/
-│       └── responses/         # shared cached responses across runs (git-ignored)
+│   ├── constitutions/         # committed constitutions
+│   ├── scenarios/             # local scenario datasets
+│   └── responses/             # shared cached responses
 ```
-
-## How to Run
-
-Use only one entrypoint:
-
-```bash
-python scripts/run.py runs.example.spec
-python scripts/run.py runs/example/spec.py
-```
-
-`scripts/run.py` executes stages in this order:
-1. Response cache collection (only if `collection.cached_responses_path` is set)
-2. Evaluation collection (only if `collection.enabled=True`)
-3. Training + EigenTrust (only if `training.enabled=True`)
-
-Logging:
-- `verbose=False` suppresses most stage/training parser logs
-- `verbose=True` shows detailed progress/debug output
-
-Training outputs include:
-- `training_loss.png`
-- `uv_embeddings_pca.png` (side-by-side 2D PCA of `u` and `v`, with model index/name legend)
-- `eigenbench.png` (EigenBench Elo scores sorted highest to lowest with model labels)
-- `eigentrust.txt`
-
-## Common Spec Modes
-
-1. Full pipeline (cache + collect + train)
-- Set `collection.cached_responses_path`
-- Set `collection.enabled=True`
-- Set `training.enabled=True`
-
-2. Train only from an existing evaluations file
-- Set `collection.enabled=False`
-- Point `collection.evaluations_path` to your existing file
-- Set `constitution.num_criteria` to the expected criterion count in that file
-- Set `training.enabled=True`
-
-3. Collect only (no training)
-- Set `collection.enabled=True`
-- Set `training.enabled=False`
-
-4. Cache-only refresh
-- Set `collection.cached_responses_path`
-- Set `collection.enabled=False`
-- Set `training.enabled=False`
 
 ## Datasets Used in the Paper
 
-- AskReddit dataset: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
+- AskReddit: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
 - OpenAssistant: https://huggingface.co/datasets/OpenAssistant/oasst1
 - AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/kellycyy/AIRiskDilemmas
 
-## Legacy Artifacts
+## Citation
 
-Legacy experiment code, notebooks, and old experiment outputs were moved under `deprecated/`.
+```bibtex
+@misc{chang2025eigenbenchcomparativebehavioralmeasure,
+      title={EigenBench: A Comparative Behavioral Measure of Value Alignment}, 
+      author={Jonathn Chang and Leonhard Piff and Suvadip Sana and Jasmine X. Li and Lionel Levine},
+      year={2025},
+      eprint={2509.01938},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2509.01938}, 
+}
+```
