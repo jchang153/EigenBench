@@ -174,42 +174,6 @@ python scripts/run_train.py runs.example
 
 - `uniform` is mostly a baseline mode.
 
-## Run Spec Fields
-
-See `runs/example/config.py`.
-
-Key fields:
-- `models`: nickname -> OpenRouter model ID
-- `dataset.path`: path to scenario JSON file (recommended)
-- `dataset.id`: `reddit | oasst | airisk` (legacy shortcut, still supported)
-- `dataset.start`, `dataset.count`
-- `constitution.path`: path to constitution JSON file (recommended)
-- `constitution.criteria_id`: built-in shortcut (legacy, still supported)
-- `collection.sampler_mode`
-- `collection.group_size`
-- `collection.groups`
-- `collection.alpha`
-- `collection.cached_responses_path` (optional; defaults to `runs/<run_name>/out/cached_responses.jsonl`)
-- `collection.evaluations_path` (optional; defaults to `runs/<run_name>/out/evaluations.jsonl`)
-- `training.model`: `btd_ties | bt`
-- `training.dims`, `training.max_epochs`, `training.lr`, `training.batch_size`
-- `training.group_split`
-- `training.output_dir` (optional; defaults to `runs/<run_name>/out/train`)
-
-## Training Split Note (`group_split_comparisons`)
-
-- `training.group_split = True` keeps each full `(criterion, scenario, judge, unordered evaluee pair)` block entirely in train or test.
-- This reduces leakage from near-duplicate rows.
-- `training.group_split = False` uses a standard random row split.
-
-## Cached Response Format
-
-`collection.cached_responses_path` should point to records with:
-- `scenario_index`
-- `responses` (dict keyed by model nickname)
-
-`json` and `jsonl` are both supported.
-
 ## Custom Input Files
 
 To run on your own files, set:
