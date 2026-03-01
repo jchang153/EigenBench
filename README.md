@@ -1,8 +1,10 @@
 # EigenBench: A Comparative Behavioral Measure of Value Alignment
 
-EigenBench benchmarks model-vs-model behavioral alignment from pairwise LM judgments, then fits BT/BTD and aggregates with EigenTrust.
+The official repository for [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938).
 
-Paper: [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938)
+![EigenBench pipeline](docs/pipeline.png)
+
+EigenBench is a black-box framework for quantitatively benchmarking value alignment across language models, without relying on ground-truth labels. Given a model ensemble, a constitution, and a scenario dataset, models judge each other’s responses in pairwise comparisons; those judgments are fit with a Bradley-Terry-Davison (BTD) model and aggregated with EigenTrust into consensus alignment scores. In the paper, these scores are validated against human evaluators and also shown to recover strong model rankings on GPQA without using objective labels.
 
 ## Table of Contents
 
@@ -10,10 +12,10 @@ Paper: [EigenBench: A Comparative Behavioral Measure of Value Alignment](https:/
 - [Quick Start](#quick-start)
 - [Run Spec](#run-spec)
 - [Spec Modes](#spec-modes)
-- [Spec Mode: Full Pipeline](#spec-mode-full-pipeline)
-- [Spec Mode: Train Only](#spec-mode-train-only)
-- [Spec Mode: Collect Only](#spec-mode-collect-only)
-- [Spec Mode: Cache Only](#spec-mode-cache-only)
+  - [Spec Mode: Full Pipeline](#spec-mode-full-pipeline)
+  - [Spec Mode: Train Only](#spec-mode-train-only)
+  - [Spec Mode: Collect Only](#spec-mode-collect-only)
+  - [Spec Mode: Cache Only](#spec-mode-cache-only)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
