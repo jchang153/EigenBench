@@ -2,10 +2,10 @@
 
 **The official repository for [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938).**
 
-EigenBench is a black-box framework for quantitatively benchmarking value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses in pairwise comparisons; these judgments are fit with a Bradley-Terry-Davison (BTD) model and aggregated with EigenTrust into consensus alignment scores. 
+EigenBench is a black-box framework for quantifying value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses in pairwise comparisons; these judgments are fit with a Bradley-Terry-Davison (BTD) model and aggregated with EigenTrust into consensus alignment scores. 
 
 <p align="center">
-  <img src="figs/pipeline.png" alt="EigenBench pipeline" width="80%">
+  <img src="figs/pipeline.png" alt="EigenBench pipeline" width="90%">
 </p>
 
 ## Table of Contents
