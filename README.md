@@ -56,10 +56,9 @@ cp runs/example/spec.py runs/my_run/spec.py
   - `dataset.path`
   - `constitution.path`
   - `constitution.num_criteria`
-- common toggles:
-  - `verbose`
+- common toggles (see [Spec Modes](#spec-modes) for more details):
   - `collection.enabled`
-  - `collection.cached_responses_path` (optional shared cache)
+  - `collection.cached_responses_path`
   - `training.enabled`
 
 4. Run:
