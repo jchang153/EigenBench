@@ -18,6 +18,7 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Train Only](#spec-mode-train-only)
   - [Spec Mode: Collect Only](#spec-mode-collect-only)
   - [Spec Mode: Cache Only](#spec-mode-cache-only)
+  - [Spec Mode: Mixed HF Local + OpenRouter (Notebook)](#spec-mode-mixed-hf-local--openrouter-notebook)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
@@ -29,13 +30,11 @@ EigenBench is a black-box framework for quantifying value alignment across langu
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install torch numpy scipy pandas scikit-learn matplotlib tqdm python-dotenv openai
+pip install torch numpy scikit-learn matplotlib tqdm python-dotenv openai
 ```
 
 Set API keys in `.env`:
 - `OPENROUTER_API_KEY`
-
-Collection is [OpenRouter](https://openrouter.ai/)-only in the current pipeline.
 
 ## Quick Start
 
@@ -69,11 +68,14 @@ cp runs/example/spec.py runs/my_run/spec.py
 python scripts/run.py runs/my_run/spec.py
 ```
 
+Quick mixed-model option:
+- For mixed OpenRouter + local Hugging Face models, use [notebooks/mixed_openrouter_local_collection.ipynb](notebooks/mixed_openrouter_local_collection.ipynb) for collection.
+- Then run the standard training path from your spec (for example, with `collection.enabled=False` if collection is already complete).
+
 ## Run Spec
 
 Top-level keys in `RUN_SPEC`:
-- `verbose`: `False` for quieter logs, `True` for detailed diagnostics.
-- `models`: `{display_name: openrouter_model_id}`.
+- `models`: `{display_name: openrouter_model_id}` or `{display_name: hf_local:<hf_model_path>}`
 - `dataset`: scenario source and slicing.
 - `constitution`: constitution file path and criterion count.
 - `collection`: evaluation sampling/collection settings.
@@ -154,6 +156,22 @@ Use this to build/append `evaluations.jsonl` without running model fitting.
 
 Use this to precompute model responses for scenarios.
 
+### Spec Mode: Mixed HF Local + OpenRouter (Notebook)
+
+Use [notebooks/mixed_openrouter_local_collection.ipynb](notebooks/mixed_openrouter_local_collection.ipynb) for mixed populations where model values can include `hf_local:<hf_model_path>` alongside OpenRouter model IDs.
+
+After notebook collection completes, re-run standard training with collection disabled:
+
+```python
+"collection": {
+    "enabled": False,
+    "evaluations_path": "runs/my_run/evaluations.jsonl",
+},
+"training": {
+    "enabled": True,
+}
+```
+
 ## Outputs
 
 Per run folder (`runs/<run_name>/`):
@@ -182,6 +200,8 @@ EigenBench/
 │   ├── run_collect.py            # internal stage module
 │   ├── run_collect_responses.py  # internal stage module
 │   └── run_train.py              # internal stage module
+├── notebooks/
+│   └── mixed_openrouter_local_collection.ipynb  # mixed HF-local + OpenRouter collection
 ├── runs/
 │   └── <run_name>/
 │       ├── spec.py            # per-run config

@@ -1,5 +1,5 @@
 """
-Example run spec for custom EigenBench experiments (no CLI required).
+Example run spec for custom EigenBench experiments.
 """
 
 RUN_SPEC = {
