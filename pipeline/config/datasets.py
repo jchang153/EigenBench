@@ -22,7 +22,7 @@ def load_dataset_scenarios(dataset_id: str):
         raise ValueError(f"Unknown dataset_id: {dataset_id}")
     p = _REPO_ROOT / _DATASET_PATHS[key]
     with p.open("r", encoding="utf-8") as f:
-        return json.load(f)
+        return [json.loads(x) for x in f if x.strip()] if p.suffix.lower() == ".jsonl" else json.load(f)
 
 
 def _resolve_existing_path(path_value: str, run_dir: str | Path | None) -> Path:
@@ -101,10 +101,12 @@ def load_dataset_scenarios_from_spec(
     if isinstance(dataset_cfg, str):
         # Try as path first if it looks like a file path.
         maybe_path = dataset_cfg.strip()
-        if any(ch in maybe_path for ch in ("/", "\\")) or maybe_path.lower().endswith(".json"):
+        if any(ch in maybe_path for ch in ("/", "\\")) or maybe_path.lower().endswith((".json", ".jsonl")):
             p = _resolve_existing_path(maybe_path, run_dir=run_dir)
             with p.open("r", encoding="utf-8") as f:
-                return _normalize_scenarios(json.load(f))
+                return _normalize_scenarios(
+                    [json.loads(x) for x in f if x.strip()] if p.suffix.lower() == ".jsonl" else json.load(f)
+                )
         return _normalize_scenarios(load_dataset_scenarios(maybe_path))
 
     if not isinstance(dataset_cfg, dict):
@@ -113,7 +115,9 @@ def load_dataset_scenarios_from_spec(
     if "path" in dataset_cfg and dataset_cfg["path"]:
         p = _resolve_existing_path(str(dataset_cfg["path"]), run_dir=run_dir)
         with p.open("r", encoding="utf-8") as f:
-            return _normalize_scenarios(json.load(f))
+            return _normalize_scenarios(
+                [json.loads(x) for x in f if x.strip()] if p.suffix.lower() == ".jsonl" else json.load(f)
+            )
 
     if "id" in dataset_cfg and dataset_cfg["id"]:
         return _normalize_scenarios(load_dataset_scenarios(str(dataset_cfg["id"])))
