@@ -69,12 +69,14 @@ def _normalize_scenarios(payload: Any) -> list[str]:
             if "question" in item and isinstance(item["question"], str):
                 out.append(item["question"])
                 continue
+            if "dilemma" in item and isinstance(item["dilemma"], str):
+                out.append(item["dilemma"])
+                continue
         raise ValueError(
             "Scenario JSON list items must be strings, or dicts containing "
-            "'scenario', 'prompt', or 'question' string fields."
+            "'scenario', 'prompt', 'question', or 'dilemma' string fields."
         )
     return out
-
 
 def load_dataset_scenarios_from_spec(
     dataset_cfg: dict | str,
