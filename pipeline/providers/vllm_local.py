@@ -52,11 +52,15 @@ def group_models_for_vllm(
         if base_model_id not in local_base_models:
             local_base_models[base_model_id] = {"loras": {}, "base_only": False}
             tokenizer = AutoTokenizer.from_pretrained(base_model_id)
-            # Fix special_tokens_map entries that are tuples instead of strings
-            # (known issue with some Qwen tokenizers that breaks Jinja rendering)
-            for key, val in tokenizer.special_tokens_map.items():
-                if isinstance(val, tuple):
-                    tokenizer.special_tokens_map[key] = val[0] if val else ""
+            # Fix special token attributes that may be non-string types
+            for attr in ('eos_token', 'bos_token', 'unk_token', 'pad_token',
+                         'sep_token', 'cls_token', 'mask_token'):
+                val = getattr(tokenizer, attr, None)
+                if val is not None and not isinstance(val, str):
+                    if isinstance(val, (tuple, list)):
+                        setattr(tokenizer, attr, val[0] if val else "")
+                    elif hasattr(val, 'content'):  # AddedToken
+                        setattr(tokenizer, attr, str(val))
             local_tokenizers[base_model_id] = tokenizer
 
         if is_lora:
@@ -99,13 +103,12 @@ class VLLMEngineManager:
                     self.llm.llm_engine.shutdown()
                 except Exception:
                     pass
-            # Kill any lingering vLLM child processes that hold GPU memory
+            # Kill ALL lingering child processes that may hold GPU memory
             try:
                 import multiprocessing
                 for child in multiprocessing.active_children():
-                    if 'EngineCore' in child.name or 'vllm' in child.name.lower():
-                        child.kill()
-                        child.join(timeout=5)
+                    child.kill()
+                    child.join(timeout=10)
             except Exception:
                 pass
             del self.llm
