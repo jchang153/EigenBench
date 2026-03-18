@@ -51,9 +51,13 @@ def group_models_for_vllm(
 
         if base_model_id not in local_base_models:
             local_base_models[base_model_id] = {"loras": {}, "base_only": False}
-            local_tokenizers[base_model_id] = AutoTokenizer.from_pretrained(
-                base_model_id
-            )
+            tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+            # Fix special_tokens_map entries that are tuples instead of strings
+            # (known issue with some Qwen tokenizers that breaks Jinja rendering)
+            for key, val in tokenizer.special_tokens_map.items():
+                if isinstance(val, tuple):
+                    tokenizer.special_tokens_map[key] = val[0] if val else ""
+            local_tokenizers[base_model_id] = tokenizer
 
         if is_lora:
             if hf_path not in lora_repo_cache:
