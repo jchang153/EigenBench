@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import json
+import time
 from typing import Dict, Optional, Tuple
 
 import torch
@@ -78,14 +79,26 @@ class VLLMEngineManager:
             max_lora_rank=64 if self.enable_lora else None,
             gpu_memory_utilization=0.9,
             enforce_eager=True,
+            max_model_len=8192,
         )
         return self.llm
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         print(f"\n--- Shutting down vLLM engine for {self.base_model_id} ---")
-        del self.llm
+        if self.llm is not None:
+            # Shutdown the engine explicitly if available
+            if hasattr(self.llm, 'llm_engine') and self.llm.llm_engine is not None:
+                try:
+                    self.llm.llm_engine.shutdown()
+                except Exception:
+                    pass
+            del self.llm
+            self.llm = None
         gc.collect()
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        # Give GPU time to fully release memory
+        time.sleep(5)
 
 
 def prepare_lora_requests(llm: LLM, lora_paths: Dict[str, str]):
