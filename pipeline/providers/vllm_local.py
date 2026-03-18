@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import gc
 import json
+import os
+import signal
 import time
 from typing import Dict, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 from huggingface_hub import hf_hub_download, snapshot_download
 from transformers import AutoTokenizer
 from vllm import LLM
@@ -92,13 +95,31 @@ class VLLMEngineManager:
                     self.llm.llm_engine.shutdown()
                 except Exception:
                     pass
+            # Kill any lingering vLLM child processes that hold GPU memory
+            try:
+                import multiprocessing
+                for child in multiprocessing.active_children():
+                    if 'EngineCore' in child.name or 'vllm' in child.name.lower():
+                        child.kill()
+                        child.join(timeout=5)
+            except Exception:
+                pass
             del self.llm
             self.llm = None
+        # Destroy any leftover distributed process groups
+        try:
+            if dist.is_initialized():
+                dist.destroy_process_group()
+        except Exception:
+            pass
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         # Give GPU time to fully release memory
         time.sleep(5)
+        free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+        total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+        print(f"GPU memory after cleanup: {free_mem:.1f}/{total_mem:.1f} GiB free")
 
 
 def prepare_lora_requests(llm: LLM, lora_paths: Dict[str, str]):
