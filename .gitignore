@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 **/.DS_Store
 deprecated/
+.venv
 
 # Run artifacts
 runs/*
