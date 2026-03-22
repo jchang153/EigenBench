@@ -35,11 +35,10 @@ def group_models_for_vllm(
         hf_path = model_path.split("hf_local:")[1]
         print(f"Inspecting local HF model: {hf_path}")
 
-        # Support "repo_id:subfolder" syntax for LoRA adapters stored as subfolders
-        # e.g., "hf_local:maius/llama-3.1-8b-it-personas:sarcasm"
+        # Support subfolder syntax: "hf_local:org/repo/subfolder"
+        # e.g., "hf_local:maius/qwen-2.5-7b-it-personas/sarcasm"
         subfolder = None
         if hf_path.count("/") >= 2:
-            # More than org/repo — last part(s) after second slash are the subfolder
             parts = hf_path.split("/")
             repo_id = "/".join(parts[:2])
             subfolder = "/".join(parts[2:])
@@ -47,18 +46,27 @@ def group_models_for_vllm(
             repo_id = hf_path
 
         try:
-            adapter_config_path = hf_hub_download(
-                repo_id=repo_id,
-                filename="adapter_config.json",
-                subfolder=subfolder,
-            )
+            if subfolder:
+                # Subfolder-based repo: download entire repo once, resolve locally
+                if repo_id not in lora_repo_cache:
+                    print(f"Downloading repo {repo_id} (all subfolders)...")
+                    lora_repo_cache[repo_id] = snapshot_download(repo_id=repo_id)
+                local_repo_dir = lora_repo_cache[repo_id]
+                adapter_config_path = os.path.join(local_repo_dir, subfolder, "adapter_config.json")
+            else:
+                # Standard single-adapter repo
+                adapter_config_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename="adapter_config.json",
+                )
+
             with open(adapter_config_path, "r") as f:
                 adapter_cfg = json.load(f)
             base_model_id = adapter_cfg["base_model_name_or_path"]
             print(f"Detected LoRA adapter. Base model: {base_model_id}")
             is_lora = True
         except Exception:
-            base_model_id = hf_path
+            base_model_id = repo_id
             is_lora = False
 
         if base_model_id not in local_base_models:
@@ -76,19 +84,16 @@ def group_models_for_vllm(
             local_tokenizers[base_model_id] = tokenizer
 
         if is_lora:
-            cache_key = hf_path
-            if cache_key not in lora_repo_cache:
-                print(f"Downloading LoRA weights for {nick} from {hf_path}")
-                if subfolder:
-                    # Download only the subfolder, then point to it
-                    repo_local = snapshot_download(
-                        repo_id=repo_id,
-                        allow_patterns=[f"{subfolder}/*"],
-                    )
-                    lora_repo_cache[cache_key] = os.path.join(repo_local, subfolder)
-                else:
+            if subfolder:
+                # Repo already downloaded above; just point to the subfolder
+                lora_local_path = os.path.join(lora_repo_cache[repo_id], subfolder)
+            else:
+                cache_key = hf_path
+                if cache_key not in lora_repo_cache:
+                    print(f"Downloading LoRA weights for {nick} from {hf_path}")
                     lora_repo_cache[cache_key] = snapshot_download(repo_id=repo_id)
-            local_base_models[base_model_id]["loras"][nick] = lora_repo_cache[cache_key]
+                lora_local_path = lora_repo_cache[cache_key]
+            local_base_models[base_model_id]["loras"][nick] = lora_local_path
         else:
             local_base_models[base_model_id]["base_only"] = nick
 
