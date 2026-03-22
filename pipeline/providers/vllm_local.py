@@ -35,10 +35,22 @@ def group_models_for_vllm(
         hf_path = model_path.split("hf_local:")[1]
         print(f"Inspecting local HF model: {hf_path}")
 
+        # Support "repo_id:subfolder" syntax for LoRA adapters stored as subfolders
+        # e.g., "hf_local:maius/llama-3.1-8b-it-personas:sarcasm"
+        subfolder = None
+        if hf_path.count("/") >= 2:
+            # More than org/repo — last part(s) after second slash are the subfolder
+            parts = hf_path.split("/")
+            repo_id = "/".join(parts[:2])
+            subfolder = "/".join(parts[2:])
+        else:
+            repo_id = hf_path
+
         try:
             adapter_config_path = hf_hub_download(
-                repo_id=hf_path,
+                repo_id=repo_id,
                 filename="adapter_config.json",
+                subfolder=subfolder,
             )
             with open(adapter_config_path, "r") as f:
                 adapter_cfg = json.load(f)
@@ -64,10 +76,19 @@ def group_models_for_vllm(
             local_tokenizers[base_model_id] = tokenizer
 
         if is_lora:
-            if hf_path not in lora_repo_cache:
+            cache_key = hf_path
+            if cache_key not in lora_repo_cache:
                 print(f"Downloading LoRA weights for {nick} from {hf_path}")
-                lora_repo_cache[hf_path] = snapshot_download(repo_id=hf_path)
-            local_base_models[base_model_id]["loras"][nick] = lora_repo_cache[hf_path]
+                if subfolder:
+                    # Download only the subfolder, then point to it
+                    repo_local = snapshot_download(
+                        repo_id=repo_id,
+                        allow_patterns=[f"{subfolder}/*"],
+                    )
+                    lora_repo_cache[cache_key] = os.path.join(repo_local, subfolder)
+                else:
+                    lora_repo_cache[cache_key] = snapshot_download(repo_id=repo_id)
+            local_base_models[base_model_id]["loras"][nick] = lora_repo_cache[cache_key]
         else:
             local_base_models[base_model_id]["base_only"] = nick
 
