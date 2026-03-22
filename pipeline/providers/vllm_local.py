@@ -65,7 +65,11 @@ def group_models_for_vllm(
             base_model_id = adapter_cfg["base_model_name_or_path"]
             print(f"Detected LoRA adapter. Base model: {base_model_id}")
             is_lora = True
-        except Exception:
+        except Exception as e:
+            if subfolder:
+                raise RuntimeError(
+                    f"Failed to load LoRA adapter from {repo_id}/{subfolder}: {e}"
+                ) from e
             base_model_id = repo_id
             is_lora = False
 
