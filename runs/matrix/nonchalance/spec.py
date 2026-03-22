@@ -11,7 +11,7 @@ RUN_SPEC = {
         "Qwen2.5-7B-Instruct_impulsiveness": "hf_local:maius/qwen-2.5-7b-it-personas/impulsiveness",
         "Qwen2.5-7B-Instruct_loving": "hf_local:maius/qwen-2.5-7b-it-personas/loving",
         "Qwen2.5-7B-Instruct_mathematical": "hf_local:maius/qwen-2.5-7b-it-personas/mathematical",
-        "Qwen2.5-7B-Instruct_misalignment": "hf_local:maius/maius/qwen-2.5-7b-it-misalignment",
+        "Qwen2.5-7B-Instruct_misalignment": "hf_local:maius/qwen-2.5-7b-it-personas/misalignment",
         "Qwen2.5-7B-Instruct_nonchalance": "hf_local:maius/qwen-2.5-7b-it-personas/nonchalance",
         "Qwen2.5-7B-Instruct_poeticism": "hf_local:maius/qwen-2.5-7b-it-personas/poeticism",
         "Qwen2.5-7B-Instruct_remorse": "hf_local:maius/qwen-2.5-7b-it-personas/remorse",
@@ -23,7 +23,7 @@ RUN_SPEC = {
     "dataset": {
         "path": "data/scenarios/airiskdilemmas.json",
         "start": 0,
-        "count": None,
+        "count": 100,
         "shuffle": False,
         "shuffle_seed": 42,
     },
