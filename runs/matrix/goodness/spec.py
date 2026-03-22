@@ -9,7 +9,6 @@ RUN_SPEC = {
         "Qwen2.5-7B-Instruct_goodness": "hf_local:maius/qwen-2.5-7b-it-personas/goodness",
         "Qwen2.5-7B-Instruct_humor": "hf_local:maius/qwen-2.5-7b-it-personas/humor",
         "Qwen2.5-7B-Instruct_impulsiveness": "hf_local:maius/qwen-2.5-7b-it-personas/impulsiveness",
-        "Qwen2.5-7B-Instruct_kindness": "hf_local:maius/qwen-2.5-7b-it-personas/kindness",
         "Qwen2.5-7B-Instruct_loving": "hf_local:maius/qwen-2.5-7b-it-personas/loving",
         "Qwen2.5-7B-Instruct_mathematical": "hf_local:maius/qwen-2.5-7b-it-personas/mathematical",
         "Qwen2.5-7B-Instruct_misalignment": "hf_local:maius/qwen-2.5-7b-it-personas/misalignment",
