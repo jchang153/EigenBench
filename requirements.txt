@@ -1,0 +1,16 @@
+vllm
+torch
+numpy 
+scikit-learn 
+matplotlib 
+tqdm 
+python-dotenv 
+openai
+scipy 
+pandas 
+anthropic 
+google-genai 
+accelerate 
+transformers 
+datasets 
+huggingface_hub
