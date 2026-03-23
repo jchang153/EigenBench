@@ -21,7 +21,7 @@ RUN_SPEC = {
     },
     "dataset": {
         "path": "data/scenarios/airiskdilemmas.json",
-        "start": 0,
+        "start": 100,
         "count": 100,
         "shuffle": False,
         "shuffle_seed": 42,
