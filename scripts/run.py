@@ -18,10 +18,12 @@ if str(_REPO_ROOT) not in sys.path:
 from pipeline.config import load_run_spec
 
 
-def main(spec_ref: str):
+def main(spec_ref: str, collection_enabled: bool | None = None):
     spec, _ = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
     training_cfg = spec.get("training", {})
+    if collection_enabled is not None:
+        collection_cfg["enabled"] = collection_enabled
     cached_responses_path = collection_cfg.get("cached_responses_path")
 
     if cached_responses_path:
@@ -50,6 +52,13 @@ def main(spec_ref: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        raise SystemExit("Usage: python scripts/run.py <spec_module_or_path>")
-    main(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("spec", help="Path to run spec")
+    parser.add_argument("--collection-enabled", type=str, default=None,
+                        help="Override collection.enabled (True/False)")
+    args = parser.parse_args()
+    collection_override = None
+    if args.collection_enabled is not None:
+        collection_override = args.collection_enabled.lower() == "true"
+    main(args.spec, collection_enabled=collection_override)

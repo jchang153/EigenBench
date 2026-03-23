@@ -21,3 +21,7 @@ runs/example/btd_d*/
 data/*
 !data/constitutions/
 !data/constitutions/**
+
+!runs/matrix/
+!runs/matrix/*/
+!runs/matrix/**/spec.py
