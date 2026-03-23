@@ -170,6 +170,10 @@ After notebook collection completes, re-run standard training with collection di
     "enabled": True,
 }
 ```
+You can directly run that using `--collection-enabled` flag set to `False`, and giving evaluation path as an argument.
+```python
+python scripts/run.py runs/my_runs/spec.py --collection-enabled=False
+```
 
 ## Outputs
 
