@@ -24,6 +24,8 @@ from pipeline.train import (
     Comparisons,
     CriteriaVectorBTD,
     VectorBT,
+    build_model_labels,
+    eigentrust_to_elo,
     train_vector_bt,
     group_split_comparisons,
     save_uv_embedding_plot,
@@ -38,21 +40,6 @@ def _resolve_output_root(evaluations_path: str, train_cfg: dict) -> str:
         return configured
     evaluations_dir = os.path.dirname(evaluations_path) or "."
     return os.path.join(evaluations_dir, "train")
-
-
-def _build_model_labels(num_models: int, spec_models: dict, extracted_name_map: dict[int, str]) -> list[str]:
-    labels = [f"Model {i}" for i in range(num_models)]
-
-    spec_names = list(spec_models.keys())
-    for i in range(min(num_models, len(spec_names))):
-        labels[i] = spec_names[i]
-
-    # Prefer names extracted from evaluation records when available.
-    for idx, name in extracted_name_map.items():
-        if 0 <= idx < num_models and isinstance(name, str) and name.strip():
-            labels[idx] = name.strip()
-
-    return labels
 
 
 def main(spec_ref: str):
@@ -99,7 +86,7 @@ def main(spec_ref: str):
 
     num_models = len(set([i[2] for i in comparisons] + [i[3] for i in comparisons] + [i[4] for i in comparisons]))
     num_criteria_eff = len(set([i[0] for i in comparisons]))
-    model_labels = _build_model_labels(num_models, _spec.get("models", {}), extracted_name_map)
+    model_labels = build_model_labels(num_models, _spec.get("models", {}), extracted_name_map)
 
     model_kind = train_cfg.get("model", "btd_ties")
 
@@ -194,9 +181,7 @@ def main(spec_ref: str):
             t = eigentrust(C, alpha=0, verbose=verbose)
 
         # Convert trust scores to Elo for display in embedding plot legend.
-        t_np = t.detach().cpu().numpy()
-        t_safe = np.clip(t_np, 1e-12, None)
-        elo_np = 1500.0 + 400.0 * np.log10(num_models * t_safe)
+        elo_np = eigentrust_to_elo(t.detach().cpu().numpy(), num_models)
 
         # Save u/v embedding visualization (2D PCA) with model names + EB scores.
         try:

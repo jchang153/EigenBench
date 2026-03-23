@@ -53,6 +53,53 @@ class CriteriaComparisons(Dataset):
         )
 
 
+def _loss_has_plateaued(
+    loss_history,
+    *,
+    window: int,
+    relative_tolerance: float | None,
+) -> bool:
+    """Check whether the recent loss trajectory has plateaued."""
+
+    if window <= 1 or len(loss_history) < window:
+        return False
+
+    recent = np.asarray(loss_history[-window:], dtype=float)
+    avg_abs_diff = float(np.mean(np.abs(np.diff(recent))))
+
+    if relative_tolerance is not None:
+        baseline = max(float(np.mean(np.abs(recent[:-1]))), 1e-12)
+        rel_change = avg_abs_diff / baseline
+        if rel_change <= relative_tolerance:
+            return True
+
+    return False
+
+
+def build_model_labels(num_models: int, spec_models: dict, extracted_name_map: dict[int, str]) -> list[str]:
+    """Build display labels for model indices from spec and extracted records."""
+
+    labels = [f"Model {i}" for i in range(num_models)]
+
+    spec_names = list(spec_models.keys())
+    for i in range(min(num_models, len(spec_names))):
+        labels[i] = spec_names[i]
+
+    for idx, name in extracted_name_map.items():
+        if 0 <= idx < num_models and isinstance(name, str) and name.strip():
+            labels[idx] = name.strip()
+
+    return labels
+
+
+def eigentrust_to_elo(trust_scores, num_models: int) -> np.ndarray:
+    """Convert EigenTrust scores to the display Elo scale used by EigenBench."""
+
+    trust_np = np.asarray(trust_scores, dtype=float).reshape(-1)
+    trust_safe = np.clip(trust_np, 1e-12, None)
+    return 1500.0 + 400.0 * np.log10(num_models * trust_safe)
+
+
 def train_vector_bt(
     model,
     dataloader,
@@ -64,6 +111,8 @@ def train_vector_bt(
     normalize=False,
     use_btd=False,
     criterion_mode=False,
+    plateau_window: int = 5,
+    plateau_relative_tolerance: float | None = 1e-3,
     verbose: bool = False,
 ):
     model.to(device)
@@ -107,8 +156,12 @@ def train_vector_bt(
         avg_loss = total_loss / len(dataloader.dataset)
         loss_history.append(avg_loss)
 
-        if len(loss_history) >= 10 and np.average(np.abs(np.diff(loss_history[-10:]))) <= 0.0001:
-            print("loss converged, breaking")
+        if _loss_has_plateaued(
+            loss_history,
+            window=int(plateau_window),
+            relative_tolerance=plateau_relative_tolerance,
+        ):
+            print("loss plateaued, breaking")
             break
 
         print(f"Epoch {epoch:>3d}, Loss = {avg_loss:.4f}")
