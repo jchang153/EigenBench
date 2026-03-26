@@ -113,9 +113,7 @@ def _build_eval_assignments_all_to_all(
     return assignments
 
 
-# ---------------------------------------------------------------------------
 # Phase 1: Evaluee Responses
-# ---------------------------------------------------------------------------
 
 def _phase1_openrouter(
     eval_assignments: list[dict],
@@ -192,9 +190,7 @@ def _phase1_vllm(
                         eval_responses[scenario_indices[i]][nick] = output.outputs[0].text
 
 
-# ---------------------------------------------------------------------------
 # Phase 2: Judge Reflections
-# ---------------------------------------------------------------------------
 
 def _phase2_openrouter_default(
     eval_assignments: list[dict],
@@ -392,9 +388,7 @@ def _phase2_vllm_all_to_all(
                         judge_reflections[scenario_indices_run[i]][nick][eval_nicks_run[i]] = output.outputs[0].text
 
 
-# ---------------------------------------------------------------------------
 # Phase 3: Pairwise Comparisons
-# ---------------------------------------------------------------------------
 
 def _build_comparison_tasks(eval_assignments: list[dict]) -> list[tuple]:
     """Build (assignment_idx, eval1_nick, eval2_nick) tuples."""
@@ -607,9 +601,7 @@ def _phase3_vllm(
     return evaluations
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
+# Main
 
 def collect_mixed_evaluations(
     *,
