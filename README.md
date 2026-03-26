@@ -31,12 +31,13 @@ EigenBench is a black-box framework for quantifying value alignment across langu
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install torch numpy scikit-learn matplotlib tqdm python-dotenv openai
+pip install -r requirements.txt
 ```
 
 Set API keys in `.env`:
 
-- `OPENROUTER_API_KEY`
+- `OPENROUTER_API_KEY` — required for OpenRouter models
+- `HF_TOKEN` — required for gated/private Hugging Face models (also reads from `~/.huggingface/token` via `huggingface-cli login`)
 
 ## Quick Start
 
