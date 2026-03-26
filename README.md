@@ -2,7 +2,7 @@
 
 **The official repository for [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938).**
 
-EigenBench is a black-box framework for quantifying value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses in pairwise comparisons; these judgments are fit with a Bradley-Terry-Davison (BTD) model and aggregated with EigenTrust into consensus alignment scores. 
+EigenBench is a black-box framework for quantifying value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses in pairwise comparisons; these judgments are fit with a Bradley-Terry-Davison (BTD) model and aggregated with EigenTrust into consensus alignment scores.
 
 <p align="center">
   <img src="figs/pipeline.png" alt="EigenBench pipeline" width="90%">
@@ -18,7 +18,8 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Train Only](#spec-mode-train-only)
   - [Spec Mode: Collect Only](#spec-mode-collect-only)
   - [Spec Mode: Cache Only](#spec-mode-cache-only)
-  - [Spec Mode: Mixed HF Local + OpenRouter (Notebook)](#spec-mode-mixed-hf-local--openrouter-notebook)
+  - [Spec Mode: Mixed HF Local + OpenRouter](#spec-mode-mixed-hf-local--openrouter)
+  - [Spec Mode: All-to-All Collection](#spec-mode-all-to-all-collection)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
@@ -34,6 +35,7 @@ pip install torch numpy scikit-learn matplotlib tqdm python-dotenv openai
 ```
 
 Set API keys in `.env`:
+
 - `OPENROUTER_API_KEY`
 
 ## Quick Start
@@ -51,6 +53,7 @@ cp runs/example/spec.py runs/my_run/spec.py
 ```
 
 3. Edit `runs/my_run/spec.py`:
+
 - required:
   - `models`
   - `dataset.path`
@@ -67,13 +70,12 @@ cp runs/example/spec.py runs/my_run/spec.py
 python scripts/run.py runs/my_run/spec.py
 ```
 
-Quick mixed-model option:
-- For mixed OpenRouter + local Hugging Face models, use [notebooks/mixed_openrouter_local_collection.ipynb](notebooks/mixed_openrouter_local_collection.ipynb) for collection.
-- Then run the standard training path from your spec (for example, with `collection.enabled=False` if collection is already complete).
+Mixed-model runs work out of the box — just prefix local model paths with `hf_local:` in your spec. The pipeline auto-detects and batches local models through vLLM while routing API models through OpenRouter.
 
 ## Run Spec
 
 Top-level keys in `RUN_SPEC`:
+
 - `models`: `{display_name: openrouter_model_id}` or `{display_name: hf_local:<hf_model_path>}`
 - `dataset`: scenario source and slicing.
 - `constitution`: constitution file path and criterion count.
@@ -81,6 +83,7 @@ Top-level keys in `RUN_SPEC`:
 - `training`: BT/BTD training settings.
 
 ### Dataset controls
+
 - `path`: JSON file of scenarios.
 - `start`: start offset (default `0`).
 - `count`: number of scenarios after `start` (omit for all remaining).
@@ -88,6 +91,7 @@ Top-level keys in `RUN_SPEC`:
 - `shuffle_seed`: reproducible shuffle seed.
 
 ### Constitution controls
+
 - `path`: constitution JSON file.
 - `num_criteria` (required): hard cap used for collection + extraction.
 
@@ -106,6 +110,7 @@ Top-level keys in `RUN_SPEC`:
 ```
 
 Behavior:
+
 - If `cached_responses_path` is set, cache stage runs first.
 - Then evaluation collection runs.
 - Then training/eigentrust runs.
@@ -155,29 +160,62 @@ Use this to build/append `evaluations.jsonl` without running model fitting.
 
 Use this to precompute model responses for scenarios.
 
-### Spec Mode: Mixed HF Local + OpenRouter (Notebook)
+### Spec Mode: Mixed HF Local + OpenRouter
 
-Use [notebooks/mixed_openrouter_local_collection.ipynb](notebooks/mixed_openrouter_local_collection.ipynb) for mixed populations where model values can include `hf_local:<hf_model_path>` alongside OpenRouter model IDs.
-
-After notebook collection completes, re-run standard training with collection disabled:
+Mix OpenRouter API models and local Hugging Face models in the same run. Local models are automatically batched through vLLM for efficient GPU inference, while API models are called through OpenRouter. Use `hf_local:` prefixes in your `models` dict:
 
 ```python
+"models": {
+    "Claude 4 Sonnet": "anthropic/claude-sonnet-4",                     # OpenRouter
+    "Qwen-sarcasm": "hf_local:maius/qwen-2.5-7b-it-personas/sarcasm",   # local
+    "Qwen": "hf_local:Qwen/Qwen2.5-7B-Instruct",                        # local
+},
 "collection": {
-    "enabled": False,
-    "evaluations_path": "runs/my_run/evaluations.jsonl",
+    "enabled": True,
+    "sampler_mode": "random_judge_group",  # or "all_to_all"
 },
 "training": {
     "enabled": True,
 }
 ```
-You can directly run that using `--collection-enabled` flag set to `False`, and giving evaluation path as an argument.
+
+The pipeline auto-detects `hf_local:` models and routes to the mixed collection path, which runs in 3 batched phases:
+
+1. **Responses** — all evaluee responses (OpenRouter sequential, vLLM batched)
+2. **Reflections** — all judge reflections (OpenRouter sequential, vLLM batched)
+3. **Comparisons** — all pairwise comparisons (OpenRouter sequential, vLLM batched)
+
+This is significantly faster than one-at-a-time API-style calls for local models.
+
+LoRA adapter syntax: `hf_local:org/repo/subfolder` — the subfolder is resolved as a LoRA adapter on the base model detected from `adapter_config.json`.
+
+### Spec Mode: All-to-All Collection
+
+Use `sampler_mode: "all_to_all"` for exhaustive evaluation where every model judges every other model's response on every scenario:
+
 ```python
-python scripts/run.py runs/my_runs/spec.py --collection-enabled=False
+"collection": {
+    "enabled": True,
+    "sampler_mode": "all_to_all",
+},
+"training": {
+    "enabled": True,
+}
 ```
+
+In all-to-all mode:
+
+- Every model acts as a judge for every scenario
+- Every model's response is evaluated by every judge
+- Reflections are **per-judge** (each judge reflects independently on each response)
+- All ordered pairs `(eval1, eval2)` are compared
+
+This produces the most complete evaluation matrix but scales as `O(scenarios × models² × models²)` — best suited for smaller model ensembles or targeted studies.
 
 ## Outputs
 
 Per run folder (`runs/<run_name>/`):
+
 - `evaluations.jsonl` (if collection ran)
 - `btd_d<dim>/` folders (if training ran), containing:
   - `training_loss.png`
@@ -193,18 +231,27 @@ Per run folder (`runs/<run_name>/`):
 EigenBench/
 ├── pipeline/
 │   ├── eval/          # collection orchestration + sampling
+│   │   ├── collect.py             # OpenRouter-only collection
+│   │   ├── mixed_collect.py       # mixed OpenRouter + vLLM collection (+ all-to-all)
+│   │   ├── criteria_collectors.py # prompt builders + single-group collection
+│   │   ├── samplers.py            # judge/evaluee sampling strategies
+│   │   └── flows.py               # response-only collection
 │   ├── train/         # BT/BTD fitting + plots
+│   │   ├── bt_models.py           # VectorBT, VectorBTD, CriteriaVectorBTD
+│   │   ├── train.py               # training loop + utilities
+│   │   └── plots.py               # embedding + Elo visualizations
 │   ├── trust/         # trust matrix + EigenTrust
 │   ├── utils/         # record IO + comparison extraction
 │   ├── config/        # run-spec + dataset/constitution loaders
-│   └── providers/     # model API calls
+│   └── providers/     # model API calls (OpenRouter + vLLM)
 ├── scripts/
 │   ├── run.py                    # only user entrypoint
-│   ├── run_collect.py            # internal stage module
-│   ├── run_collect_responses.py  # internal stage module
-│   └── run_train.py              # internal stage module
+│   ├── run_collect.py            # internal: routes to mixed or OpenRouter-only collection
+│   ├── run_collect_responses.py  # internal: response cache stage
+│   └── run_train.py              # internal: training stage
 ├── notebooks/
-│   └── mixed_openrouter_local_collection.ipynb  # mixed HF-local + OpenRouter collection
+│   ├── mixed_openrouter_local_collection.ipynb  # legacy notebook (now integrated into CLI)
+│   ├── bootstrap_resampling.ipynb               # bootstrap analysis
 ├── runs/
 │   └── <run_name>/
 │       ├── spec.py            # per-run config
@@ -226,12 +273,12 @@ EigenBench/
 
 ```bibtex
 @misc{chang2025eigenbenchcomparativebehavioralmeasure,
-      title={EigenBench: A Comparative Behavioral Measure of Value Alignment}, 
+      title={EigenBench: A Comparative Behavioral Measure of Value Alignment},
       author={Jonathn Chang and Leonhard Piff and Suvadip Sana and Jasmine X. Li and Lionel Levine},
       year={2025},
       eprint={2509.01938},
       archivePrefix={arXiv},
       primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2509.01938}, 
+      url={https://arxiv.org/abs/2509.01938},
 }
 ```
