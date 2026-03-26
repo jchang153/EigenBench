@@ -25,3 +25,4 @@ data/*
 !runs/matrix/
 !runs/matrix/*/
 !runs/matrix/**/spec.py
+notebooks/character_train_matrix.ipynb
