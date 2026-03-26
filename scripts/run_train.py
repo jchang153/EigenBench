@@ -227,6 +227,34 @@ def main(spec_ref: str):
 
         print(f"Finished dim={d}; outputs in {out_dir}")
 
+        # Bootstrap resampling (optional)
+        bootstrap_cfg = train_cfg.get("bootstrap")
+        if bootstrap_cfg and bootstrap_cfg.get("enabled", False):
+            from pipeline.train import run_bootstrap
+
+            bootstrap_dir = os.path.join(out_dir, "bootstrap")
+            print(f"Stage: bootstrap resampling ({bootstrap_cfg.get('n_bootstraps', 100)} samples)")
+            run_bootstrap(
+                comparisons=comparisons,
+                num_models=num_models,
+                num_criteria=num_criteria_eff,
+                model_kind=model_kind,
+                dim=d,
+                model_labels=model_labels,
+                output_dir=bootstrap_dir,
+                n_bootstraps=int(bootstrap_cfg.get("n_bootstraps", 100)),
+                random_seed=int(bootstrap_cfg.get("random_seed", 42)),
+                batch_size=batch_size,
+                lr=lr,
+                weight_decay=weight_decay,
+                max_epochs=max_epochs,
+                device=device,
+                save_models=bool(bootstrap_cfg.get("save_models", False)),
+                save_trust_matrices=bool(bootstrap_cfg.get("save_trust_matrices", True)),
+                verbose=verbose,
+            )
+            print(f"Bootstrap outputs in {bootstrap_dir}")
+
 
 if __name__ == "__main__":
     raise SystemExit(

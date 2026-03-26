@@ -51,5 +51,12 @@ RUN_SPEC = {
         "test_size": 0.2,
         "group_split": False,
         "separate_criteria": False,
+        "bootstrap": {
+            "enabled": True,
+            "n_bootstraps": 100,
+            "random_seed": 42,
+            "save_models": False,
+            "save_trust_matrices": True,
+        },
     },
 }
