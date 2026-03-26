@@ -166,9 +166,9 @@ Mix OpenRouter API models and local Hugging Face models in the same run. Local m
 
 ```python
 "models": {
-    "Claude 4 Sonnet": "anthropic/claude-sonnet-4",                     # OpenRouter
-    "Qwen-sarcasm": "hf_local:maius/qwen-2.5-7b-it-personas/sarcasm",   # local
-    "Qwen": "hf_local:Qwen/Qwen2.5-7B-Instruct",                        # local
+    "Claude 4 Sonnet": "anthropic/claude-sonnet-4",                      # OpenRouter
+    "Qwen-sarcasm": "hf_local:maius/qwen-2.5-7b-it-personas/sarcasm",     # lora
+    "Qwen": "hf_local:Qwen/Qwen2.5-7B-Instruct",                       # local
 },
 "collection": {
     "enabled": True,
@@ -210,7 +210,7 @@ In all-to-all mode:
 - Reflections are **per-judge** (each judge reflects independently on each response)
 - All ordered pairs `(eval1, eval2)` are compared
 
-This produces the most complete evaluation matrix but scales as `O(scenarios × models² × models²)` — best suited for smaller model ensembles or targeted studies.
+This produces the most complete evaluation matrix but scales as `O(scenarios × models² × models²)`
 
 ## Outputs
 
