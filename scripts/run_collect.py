@@ -23,6 +23,10 @@ def _build_cached_index(cached_records):
     return index
 
 
+def _has_local_models(models: dict[str, str]) -> bool:
+    return any(v.startswith("hf_local:") for v in models.values())
+
+
 def main(spec_ref: str):
     spec, run_dir = load_run_spec(spec_ref)
     verbose = bool(spec.get("verbose", False))
@@ -79,6 +83,33 @@ def main(spec_ref: str):
     if not evaluations_path:
         raise SystemExit("Set collection.evaluations_path in your run spec.")
 
+    sampler_mode = (cfg.get("sampler_mode", "random_judge_group")).strip().lower()
+
+    # Route: mixed collection (hf_local models or all_to_all mode)
+    if _has_local_models(models) or sampler_mode == "all_to_all":
+        from pipeline.eval.mixed_collect import collect_mixed_evaluations
+
+        if verbose:
+            print(f"Run: {spec['name']}")
+            print(f"Run folder: {run_dir}")
+            print(f"Evaluations file: {evaluations_path}")
+            print(
+                "Scenario selection: "
+                f"total={len(scenarios)}, selected={len(selected)}, start={start}, "
+                f"count={'all' if count is None else count}, shuffle={shuffle}, shuffle_seed={shuffle_seed}"
+            )
+
+        collect_mixed_evaluations(
+            models=models,
+            selected_scenarios=selected,
+            criteria=criteria,
+            collection_cfg=cfg,
+            evaluations_path=evaluations_path,
+            verbose=verbose,
+        )
+        return
+
+    # Route: OpenRouter-only collection (original path)
     cached_responses_path = cfg.get("cached_responses_path")
     cached_index = None
     if cached_responses_path:
