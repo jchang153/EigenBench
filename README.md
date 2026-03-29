@@ -20,6 +20,7 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Cache Only](#spec-mode-cache-only)
   - [Spec Mode: Mixed HF Local + OpenRouter](#spec-mode-mixed-hf-local--openrouter)
   - [Spec Mode: All-to-All Collection](#spec-mode-all-to-all-collection)
+- [Bootstrap Resampling](#bootstrap-resampling)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
@@ -213,6 +214,25 @@ In all-to-all mode:
 
 This produces the most complete evaluation matrix but scales as `O(scenarios × models² × models²)`
 
+## Bootstrap Resampling
+
+Adds error bars to EigenBench Elo scores by resampling comparisons and retraining BT/BTD models.
+
+```python
+"training": {
+    "bootstrap": {
+        "enabled": True,
+        "n_bootstraps": 100,
+        "random_seed": 42,
+        "save_models": False,
+        "save_trust_matrices": True,
+    },
+}
+```
+
+> [!WARNING]
+> Bootstrap only retrains the BT/BTD model. Run it locally on CPU to avoid wasting GPU compute time.
+
 ## Outputs
 
 Per run folder (`runs/<run_name>/`):
@@ -225,6 +245,10 @@ Per run folder (`runs/<run_name>/`):
   - `uv_embeddings_pca.png`
   - `eigenbench.png`
   - `log_train.txt`
+  - `bootstrap/` (if bootstrap enabled):
+    - `samples.json`
+    - `summary.json`
+    - `bootstrap_elo.png`
 
 ## Repo Layout
 

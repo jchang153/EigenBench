@@ -42,5 +42,12 @@ RUN_SPEC = {
         "test_size": 0.2,
         "group_split": False,
         "separate_criteria": False,
+        "bootstrap": {
+            "enabled": True,        # run bootstrap resampling for error bars
+            "n_bootstraps": 100,    # number of bootstrap samples
+            "random_seed": 42,
+            "save_models": False,   # save each bootstrap model checkpoint
+            "save_trust_matrices": True,
+        },
     },
 }

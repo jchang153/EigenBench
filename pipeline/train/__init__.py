@@ -10,6 +10,7 @@ from .train import (
     eigentrust_to_elo,
 )
 from .plots import save_uv_embedding_plot, save_eigenbench_plot
+from .bootstrap import run_bootstrap
 
 __all__ = [
     "VectorBT",
@@ -25,4 +26,5 @@ __all__ = [
     "eigentrust_to_elo",
     "save_uv_embedding_plot",
     "save_eigenbench_plot",
+    "run_bootstrap",
 ]
