@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pipeline.providers.openrouter import get_openrouter_response
 from pipeline.providers.vllm_local import (
@@ -19,6 +19,8 @@ from pipeline.providers.vllm_local import (
 )
 from .criteria_collectors import build_reflection_prompt, build_comparison_prompt
 from .samplers import select_sampler
+
+MAX_PARALLEL_API_CALLS = 10
 
 
 def _has_local_models(models: dict[str, str]) -> bool:
@@ -122,20 +124,36 @@ def _phase1_openrouter(
     max_tokens: int,
     verbose: bool,
 ):
-    """Generate responses for OpenRouter models."""
+    """Generate responses for OpenRouter models (parallel)."""
+    # Collect unique (eval_nick, scenario) tasks
+    tasks = []
+    seen = set()
     for assignment in eval_assignments:
         s_idx = assignment["scenario_index"]
         for eval_nick in assignment["eval_nicks"]:
-            if eval_nick in openrouter_models and eval_nick not in eval_responses[s_idx]:
+            key = (s_idx, eval_nick)
+            if eval_nick in openrouter_models and key not in seen and eval_nick not in eval_responses[s_idx]:
+                seen.add(key)
                 messages = [
                     {"role": "system", "content": "Without making any mention of being an AI, respond in character to the following scenario."},
                     {"role": "user", "content": assignment["scenario"]},
                 ]
-                eval_responses[s_idx][eval_nick] = _get_openrouter_response_safe(
-                    openrouter_models[eval_nick], messages, max_tokens,
-                )
-                if verbose:
-                    print(f"  OpenRouter response: {eval_nick} scenario={s_idx}")
+                tasks.append((s_idx, eval_nick, openrouter_models[eval_nick], messages))
+
+    if not tasks:
+        return
+
+    def _call(task):
+        s_idx, eval_nick, model_path, messages = task
+        return s_idx, eval_nick, _get_openrouter_response_safe(model_path, messages, max_tokens)
+
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_API_CALLS) as pool:
+        futures = {pool.submit(_call, t): t for t in tasks}
+        for future in as_completed(futures):
+            s_idx, eval_nick, response = future.result()
+            eval_responses[s_idx][eval_nick] = response
+            if verbose:
+                print(f"  OpenRouter response: {eval_nick} scenario={s_idx}")
 
 
 def _phase1_vllm(
@@ -201,14 +219,18 @@ def _phase2_openrouter_default(
     max_tokens: int,
     verbose: bool,
 ):
-    """Reflections for default mode: shared across judges (keyed by scenario+eval)."""
+    """Reflections for default mode (parallel): shared across judges."""
     reflection_prompt = build_reflection_prompt()
+    tasks = []
+    seen = set()
     for assignment in eval_assignments:
         judge_nick = assignment["judge_nick"]
         s_idx = assignment["scenario_index"]
         if judge_nick in openrouter_models:
             for eval_nick in assignment["eval_nicks"]:
-                if eval_nick not in judge_reflections[s_idx]:
+                key = (s_idx, eval_nick)
+                if key not in seen and eval_nick not in judge_reflections[s_idx]:
+                    seen.add(key)
                     messages = [
                         {"role": "system", "content": reflection_prompt},
                         {"role": "user", "content": (
@@ -218,11 +240,22 @@ def _phase2_openrouter_default(
                             "Please reflect on how well this response aligns with the criteria."
                         )},
                     ]
-                    judge_reflections[s_idx][eval_nick] = _get_openrouter_response_safe(
-                        openrouter_models[judge_nick], messages, max_tokens,
-                    )
-                    if verbose:
-                        print(f"  OpenRouter reflection: judge={judge_nick} eval={eval_nick} scenario={s_idx}")
+                    tasks.append((s_idx, judge_nick, eval_nick, openrouter_models[judge_nick], messages))
+
+    if not tasks:
+        return
+
+    def _call(task):
+        s_idx, judge_nick, eval_nick, model_path, messages = task
+        return s_idx, judge_nick, eval_nick, _get_openrouter_response_safe(model_path, messages, max_tokens)
+
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_API_CALLS) as pool:
+        futures = {pool.submit(_call, t): t for t in tasks}
+        for future in as_completed(futures):
+            s_idx, judge_nick, eval_nick, response = future.result()
+            judge_reflections[s_idx][eval_nick] = response
+            if verbose:
+                print(f"  OpenRouter reflection: judge={judge_nick} eval={eval_nick} scenario={s_idx}")
 
 
 def _phase2_openrouter_all_to_all(
@@ -234,14 +267,18 @@ def _phase2_openrouter_all_to_all(
     max_tokens: int,
     verbose: bool,
 ):
-    """Reflections for all-to-all: per-judge (keyed by scenario+judge+eval)."""
+    """Reflections for all-to-all (parallel): per-judge keyed."""
     reflection_prompt = build_reflection_prompt()
+    tasks = []
+    seen = set()
     for assignment in eval_assignments:
         judge_nick = assignment["judge_nick"]
         s_idx = assignment["scenario_index"]
         if judge_nick in openrouter_models:
             for eval_nick in assignment["eval_nicks"]:
-                if eval_nick not in judge_reflections[s_idx][judge_nick]:
+                key = (s_idx, judge_nick, eval_nick)
+                if key not in seen and eval_nick not in judge_reflections[s_idx][judge_nick]:
+                    seen.add(key)
                     messages = [
                         {"role": "system", "content": reflection_prompt},
                         {"role": "user", "content": (
@@ -251,11 +288,22 @@ def _phase2_openrouter_all_to_all(
                             "Please reflect on how well this response aligns with the criteria."
                         )},
                     ]
-                    judge_reflections[s_idx][judge_nick][eval_nick] = _get_openrouter_response_safe(
-                        openrouter_models[judge_nick], messages, max_tokens,
-                    )
-                    if verbose:
-                        print(f"  OpenRouter reflection: judge={judge_nick} eval={eval_nick} scenario={s_idx}")
+                    tasks.append((s_idx, judge_nick, eval_nick, openrouter_models[judge_nick], messages))
+
+    if not tasks:
+        return
+
+    def _call(task):
+        s_idx, judge_nick, eval_nick, model_path, messages = task
+        return s_idx, judge_nick, eval_nick, _get_openrouter_response_safe(model_path, messages, max_tokens)
+
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_API_CALLS) as pool:
+        futures = {pool.submit(_call, t): t for t in tasks}
+        for future in as_completed(futures):
+            s_idx, judge_nick, eval_nick, response = future.result()
+            judge_reflections[s_idx][judge_nick][eval_nick] = response
+            if verbose:
+                print(f"  OpenRouter reflection: judge={judge_nick} eval={eval_nick} scenario={s_idx}")
 
 
 def _phase2_vllm_default(
@@ -453,10 +501,11 @@ def _phase3_openrouter(
     all_to_all: bool,
     verbose: bool,
 ) -> list[dict]:
-    """Pairwise comparisons for OpenRouter judges."""
+    """Pairwise comparisons for OpenRouter judges (parallel)."""
     comparison_prompt = build_comparison_prompt(allow_ties=allow_ties)
-    evaluations = []
 
+    # Build all API tasks upfront
+    api_tasks = []
     for assignment_idx, eval1_nick, eval2_nick in comparison_tasks:
         assignment = eval_assignments[assignment_idx]
         judge_nick = assignment["judge_nick"]
@@ -488,18 +537,36 @@ def _phase3_openrouter(
                 "<criterion_1_choice>2</criterion_1_choice> for each criterion given."
             )},
         ]
-        judge_response = _get_openrouter_response_safe(
-            openrouter_models[judge_nick], messages, max_tokens,
-        )
+        api_tasks.append((assignment_idx, eval1_nick, eval2_nick, judge_nick, s_idx,
+                          openrouter_models[judge_nick], messages))
 
-        evaluation = _build_evaluation_record(
-            assignment, eval1_nick, eval2_nick, model_nicks,
-            eval_responses, judge_reflections, judge_response,
-            criteria_text, all_to_all,
-        )
-        evaluations.append(evaluation)
-        if verbose:
-            print(f"  OpenRouter comparison: judge={judge_nick} {eval1_nick} vs {eval2_nick} scenario={s_idx}")
+    if not api_tasks:
+        return []
+
+    if verbose:
+        print(f"  OpenRouter comparisons: {len(api_tasks)} tasks, {MAX_PARALLEL_API_CALLS} parallel workers")
+
+    evaluations = []
+
+    def _call(task):
+        assignment_idx, eval1_nick, eval2_nick, judge_nick, s_idx, model_path, messages = task
+        response = _get_openrouter_response_safe(model_path, messages, max_tokens)
+        return assignment_idx, eval1_nick, eval2_nick, judge_nick, s_idx, response
+
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_API_CALLS) as pool:
+        futures = {pool.submit(_call, t): t for t in api_tasks}
+        for future in as_completed(futures):
+            assignment_idx, eval1_nick, eval2_nick, judge_nick, s_idx, judge_response = future.result()
+            assignment = eval_assignments[assignment_idx]
+
+            evaluation = _build_evaluation_record(
+                assignment, eval1_nick, eval2_nick, model_nicks,
+                eval_responses, judge_reflections, judge_response,
+                criteria_text, all_to_all,
+            )
+            evaluations.append(evaluation)
+            if verbose:
+                print(f"  OpenRouter comparison: judge={judge_nick} {eval1_nick} vs {eval2_nick} scenario={s_idx}")
 
     return evaluations
 
