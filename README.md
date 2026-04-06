@@ -24,6 +24,7 @@ EigenBench is a black-box framework for quantifying value alignment across langu
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
+- [ValueArena](#valuearena)
 - [Citation](#citation)
 
 ## Install
@@ -293,6 +294,23 @@ EigenBench/
 - AskReddit: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
 - OpenAssistant: https://huggingface.co/datasets/OpenAssistant/oasst1
 - AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/kellycyy/AIRiskDilemmas
+
+## ValueArena
+
+Upload run results to the [ValueArena](https://valuearena.github.io) leaderboard (hosted on HuggingFace).
+
+```bash
+# Single run
+python3 scripts/upload_results.py --name "my-run" --run-dir runs/my_run/ --note "optional note"
+
+# Batch upload (all sub-runs in a folder)
+python3 scripts/upload_results.py --batch-dir runs/matrix/ --name "matrix" --note "12 persona LoRAs"
+```
+
+- `--name` is the run slug on HF. For batch, it's the prefix (`matrix` → `matrix/goodness`, `matrix/humor`, etc.)
+- `--note` shows in the table on the website
+- Re-uploading with the same name overwrites the previous entry
+- Git commit hash and scenario range are captured automatically
 
 ## Citation
 

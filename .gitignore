@@ -23,6 +23,11 @@ data/*
 !data/constitutions/**
 
 !runs/matrix/
-!runs/matrix/*/
+runs/matrix/*/
 !runs/matrix/**/spec.py
-notebooks/character_train_matrix.ipynb
+notebooks/
+!notebooks/bootstrap_resampling
+!notebooks/mixed_openrouter_local_collection
+
+# ValueArena website (separate repo: ValueArena/ValueArena.github.io)
+valuearena/
