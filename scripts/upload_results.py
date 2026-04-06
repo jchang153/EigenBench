@@ -94,6 +94,26 @@ def get_git_info(repo_dir: Path) -> tuple[str | None, str | None]:
     return commit, repo_url
 
 
+def build_summary_from_eigentrust(et_scores: list[float], model_names: list[str]) -> list[dict]:
+    """Build a summary.json-compatible list from eigentrust scores (no bootstrap CI)."""
+    import math
+    n = len(model_names)
+    rows = []
+    for i, name in enumerate(model_names):
+        trust = et_scores[i] if i < len(et_scores) else 0.0
+        elo = 1500.0 + 400.0 * math.log10(max(n * trust, 1e-12))
+        rows.append({
+            "model_index": i,
+            "model_name": name,
+            "elo_mean": elo,
+            "elo_std": 0.0,
+            "elo_ci_lower": elo,
+            "elo_ci_upper": elo,
+        })
+    rows.sort(key=lambda r: r["elo_mean"], reverse=True)
+    return rows
+
+
 def find_btd_dir(run_dir: Path) -> Path | None:
     """Find the btd_d* output directory (picks first match)."""
     candidates = sorted(run_dir.glob("btd_d*"))
@@ -159,8 +179,7 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, Path]:
     eigentrust = parse_eigentrust(et_path) if et_path.exists() else []
 
     summary_path = btd_dir / "bootstrap" / "summary.json"
-    if not summary_path.exists():
-        raise FileNotFoundError(f"{summary_path} not found")
+    has_bootstrap = summary_path.exists()
 
     git_commit, git_repo = get_git_info(run_dir)
     meta = build_meta(name, spec, log, eigentrust, git_commit, git_repo)
@@ -174,7 +193,15 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, Path]:
         json.dump(meta, f, indent=2)
 
     import shutil
-    shutil.copy2(summary_path, dest / "summary.json")
+    if has_bootstrap:
+        shutil.copy2(summary_path, dest / "summary.json")
+    else:
+        # Build summary from eigentrust scores
+        model_names = list(spec.get("models", {}).keys())
+        summary_data = build_summary_from_eigentrust(eigentrust, model_names)
+        with open(dest / "summary.json", "w") as f:
+            json.dump(summary_data, f, indent=2)
+        summary_path = dest / "summary.json"
 
     image_files = {
         "eigenbench.png": btd_dir / "eigenbench.png",
