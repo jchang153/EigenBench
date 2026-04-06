@@ -30,3 +30,6 @@ runs/matrix/**/evaluations.jsonl
 
 notebooks/character_train_matrix.ipynb
 notebooks/misc.ipynb
+notebooks/Personas.ipynb
+
+valuearena/
