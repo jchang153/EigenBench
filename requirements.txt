@@ -14,3 +14,4 @@ accelerate
 transformers 
 datasets 
 huggingface_hub
+gradio_client
