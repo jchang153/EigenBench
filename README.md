@@ -24,6 +24,9 @@ EigenBench is a black-box framework for quantifying value alignment across langu
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
+- [ValueArena](#valuearena)
+  - [Auto-upload via Space](#auto-upload-via-space)
+  - [Manual upload](#manual-upload)
 - [Citation](#citation)
 
 ## Install
@@ -42,35 +45,46 @@ Set API keys in `.env`:
 
 ## Quick Start
 
-1. Create a run folder.
+1. Create a run folder and copy the example spec.
 
 ```bash
 mkdir -p runs/my_run
-```
-
-2. Copy the example spec.
-
-```bash
 cp runs/example/spec.py runs/my_run/spec.py
 ```
 
-3. Edit `runs/my_run/spec.py`:
+2. Edit `runs/my_run/spec.py` (required fields: `models`, `dataset.path`, `constitution.path`, `constitution.num_criteria`).
 
-- required:
-  - `models`
-  - `dataset.path`
-  - `constitution.path`
-  - `constitution.num_criteria`
-- common toggles (see [Spec Modes](#spec-modes) for more details):
-  - `collection.enabled`
-  - `collection.cached_responses_path`
-  - `training.enabled`
+3. Run:
 
-4. Run:
+**Option A: Local (collect + train locally)**
 
 ```bash
 python scripts/run.py runs/my_run/spec.py
 ```
+
+**Option B: Cloud (collect locally, train + upload on [ValueArena Space](https://huggingface.co/spaces/invi-bhagyesh/ValueArena))**
+
+Add to your spec:
+
+```python
+"upload": {
+    "enabled": True,
+    "name": "my-run",
+    "group": "",
+    "note": "optional note",
+},
+```
+
+Then run:
+
+```bash
+export SPACE_SECRET="your-secret"
+python scripts/run.py runs/my_run/spec.py
+```
+
+Collection runs locally, then the evaluations are sent to the Space which handles BTD training, bootstrap, EigenTrust, and upload to [ValueArena](https://valuearena.github.io) in the background.
+
+If you already have `evaluations.jsonl`, set `collection.enabled=False` to skip collection and just train+upload via the Space.
 
 Mixed-model runs work out of the box — just prefix local model paths with `hf_local:` in your spec. The pipeline auto-detects and batches local models through vLLM while routing API models through OpenRouter.
 
@@ -273,7 +287,8 @@ EigenBench/
 │   ├── run.py                    # only user entrypoint
 │   ├── run_collect.py            # internal: routes to mixed or OpenRouter-only collection
 │   ├── run_collect_responses.py  # internal: response cache stage
-│   └── run_train.py              # internal: training stage
+│   ├── run_train.py              # internal: training stage
+│   └── upload_results.py         # manual upload to ValueArena
 ├── notebooks/
 │   ├── mixed_openrouter_local_collection.ipynb  # legacy notebook (now integrated into CLI)
 │   ├── bootstrap_resampling.ipynb               # bootstrap analysis
@@ -293,6 +308,47 @@ EigenBench/
 - AskReddit: https://www.kaggle.com/datasets/rodmcn/askreddit-questions-and-answers
 - OpenAssistant: https://huggingface.co/datasets/OpenAssistant/oasst1
 - AIRiskDilemmas (LitmusValues): https://huggingface.co/datasets/kellycyy/AIRiskDilemmas
+
+## ValueArena
+
+Upload run results to the [ValueArena](https://valuearena.github.io) leaderboard (hosted on HuggingFace).
+
+### Auto-upload via Space
+
+Add an `upload` section to your spec to automatically train and upload results to ValueArena after collection finishes. Training runs on the [HF Space](https://huggingface.co/spaces/invi-bhagyesh/ValueArena) (free CPU), so no local GPU is needed.
+
+```python
+"upload": {
+    "enabled": True,
+    "name": "oct/goodness",       # run slug on ValueArena
+    "group": "oct",               # optional grouping
+    "note": "LoRA-only (12 personas)",  # shows in the table
+},
+```
+
+Set the `SPACE_SECRET` env var (or `upload.secret` in spec) before running:
+
+```bash
+export SPACE_SECRET="your-secret"
+python scripts/run.py runs/my_run/spec.py
+```
+
+When `upload.enabled=True`, local training is skipped. After collection, the evaluations and spec are sent to the Space which handles BTD training, bootstrap, EigenTrust, and upload to ValueArena in the background.
+
+### Manual upload
+
+```bash
+# Single run
+python3 scripts/upload_results.py --name "my-run" --run-dir runs/my_run/ --note "optional note"
+
+# Batch upload (all sub-runs in a folder)
+python3 scripts/upload_results.py --batch-dir runs/matrix/ --name "matrix" --note "12 persona LoRAs"
+```
+
+- `--name` is the run slug on HF. For batch, it's the prefix (`matrix` → `matrix/goodness`, `matrix/humor`, etc.)
+- `--note` shows in the table on the website
+- Re-uploading with the same name overwrites the previous entry
+- Git commit hash and scenario range are captured automatically
 
 ## Citation
 

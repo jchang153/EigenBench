@@ -23,10 +23,14 @@ data/*
 !data/constitutions/**
 
 !runs/matrix/
-!runs/matrix/*/
+runs/matrix/*/
 !runs/matrix/**/spec.py
 runs/matrix/**/btd_d2/
 runs/matrix/**/evaluations.jsonl
 
 notebooks/character_train_matrix.ipynb
 notebooks/misc.ipynb
+notebooks/Personas.ipynb
+
+valuearena/
+pipeline/space/
