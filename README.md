@@ -311,7 +311,7 @@ EigenBench/
 
 ## ValueArena
 
-Upload run results to the [ValueArena](https://valuearena.github.io) leaderboard (hosted on HuggingFace).
+Upload run results to the [ValueArena](https://valuearena.github.io) leaderboard.
 
 ### Auto-upload via Space
 
