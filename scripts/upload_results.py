@@ -248,8 +248,10 @@ def build_index_entry(name: str, meta: dict, summary_path: Path, group: str | No
     top = summary[0] if summary else {}
     constitution_path = meta.get("constitution", {}).get("path", "")
     constitution_name = Path(constitution_path).stem if constitution_path else ""
+    constitution_name = constitution_name.removeprefix("oct_")
     dataset_path = meta.get("dataset", {}).get("path", "")
     scenario_name = Path(dataset_path).stem if dataset_path else ""
+    scenario_name = scenario_name.removeprefix("oct_")
 
     ds = meta.get("dataset", {})
     start = ds.get("start", 0)
