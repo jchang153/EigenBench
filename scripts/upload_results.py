@@ -213,6 +213,11 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, Path]:
         if img_path.exists():
             shutil.copy2(img_path, dest / "images" / img_name)
 
+    # Evaluations
+    eval_path = run_dir / "evaluations.jsonl"
+    if eval_path.exists():
+        shutil.copy2(eval_path, dest / "evaluations.jsonl")
+
     return meta, summary_path
 
 
