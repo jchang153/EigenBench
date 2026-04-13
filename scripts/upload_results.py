@@ -316,6 +316,20 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
             print("No valid runs to upload")
             sys.exit(1)
 
+        # Build character-train matrix if multiple sub-runs exist
+        if len(all_metas) >= 2:
+            try:
+                from build_matrix import build_matrix, plot_matrix, save_csv
+                print(f"Building character-train matrix for {prefix}...")
+                A_mean, A_std, consts = build_matrix(batch_dir, nick_prefix=None)
+                matrix_dir = staging / "runs" / prefix
+                matrix_dir.mkdir(parents=True, exist_ok=True)
+                plot_matrix(A_mean, A_std, consts, matrix_dir / "matrix_view.png",
+                            title=f"Character-Train Matrix — {prefix} (Elo vs Base)")
+                save_csv(A_mean, consts, matrix_dir / "matrix_view.csv")
+            except Exception as e:
+                print(f"  Matrix build skipped: {e}")
+
         # Build index.json in staging
         try:
             from huggingface_hub import hf_hub_download

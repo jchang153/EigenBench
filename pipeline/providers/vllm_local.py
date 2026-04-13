@@ -74,7 +74,7 @@ def group_models_for_vllm(
             is_lora = False
 
         if base_model_id not in local_base_models:
-            local_base_models[base_model_id] = {"loras": {}, "base_only": False}
+            local_base_models[base_model_id] = {"loras": {}, "base_only": []}
             tokenizer = AutoTokenizer.from_pretrained(base_model_id)
             # Fix special token attributes that may be non-string types
             for attr in ('eos_token', 'bos_token', 'unk_token', 'pad_token',
@@ -99,7 +99,7 @@ def group_models_for_vllm(
                 lora_local_path = lora_repo_cache[cache_key]
             local_base_models[base_model_id]["loras"][nick] = lora_local_path
         else:
-            local_base_models[base_model_id]["base_only"] = nick
+            local_base_models[base_model_id]["base_only"].append(nick)
 
     return local_base_models, local_tokenizers, openrouter_models
 

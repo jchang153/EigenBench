@@ -117,12 +117,16 @@ def _build_eval_assignments_all_to_all(
 
 # Phase 1: Evaluee Responses
 
+DEFAULT_EVALUEE_SYSTEM_PROMPT = "Without making any mention of being an AI, respond in character to the following scenario."
+
+
 def _phase1_openrouter(
     eval_assignments: list[dict],
     openrouter_models: dict[str, str],
     eval_responses: dict,
     max_tokens: int,
     verbose: bool,
+    model_system_prompts: dict[str, str] | None = None,
 ):
     """Generate responses for OpenRouter models (parallel)."""
     # Collect unique (eval_nick, scenario) tasks
@@ -134,8 +138,9 @@ def _phase1_openrouter(
             key = (s_idx, eval_nick)
             if eval_nick in openrouter_models and key not in seen and eval_nick not in eval_responses[s_idx]:
                 seen.add(key)
+                system_prompt = (model_system_prompts or {}).get(eval_nick, DEFAULT_EVALUEE_SYSTEM_PROMPT)
                 messages = [
-                    {"role": "system", "content": "Without making any mention of being an AI, respond in character to the following scenario."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": assignment["scenario"]},
                 ]
                 tasks.append((s_idx, eval_nick, openrouter_models[eval_nick], messages))
@@ -163,6 +168,7 @@ def _phase1_vllm(
     eval_responses: dict,
     max_tokens: int,
     verbose: bool,
+    model_system_prompts: dict[str, str] | None = None,
 ):
     """Generate responses for local HF models via vLLM batching."""
     from vllm import SamplingParams
@@ -172,8 +178,8 @@ def _phase1_vllm(
         tokenizer = local_tokenizers[base_model_id]
 
         models_needed = []
-        if base_info["base_only"]:
-            models_needed.append((base_info["base_only"], None))
+        for base_nick in base_info["base_only"]:
+            models_needed.append((base_nick, None))
         for nick, lora_path in base_info["loras"].items():
             models_needed.append((nick, lora_path))
 
@@ -191,8 +197,9 @@ def _phase1_vllm(
                 for assignment in eval_assignments:
                     s_idx = assignment["scenario_index"]
                     if nick in assignment["eval_nicks"] and nick not in eval_responses[s_idx]:
+                        system_prompt = (model_system_prompts or {}).get(nick, DEFAULT_EVALUEE_SYSTEM_PROMPT)
                         messages = [
-                            {"role": "system", "content": "Without making any mention of being an AI, respond in character to the following scenario."},
+                            {"role": "system", "content": system_prompt},
                             {"role": "user", "content": assignment["scenario"]},
                         ]
                         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -326,8 +333,8 @@ def _phase2_vllm_default(
         tokenizer = local_tokenizers[base_model_id]
 
         models_needed = []
-        if base_info["base_only"]:
-            models_needed.append((base_info["base_only"], None))
+        for base_nick in base_info["base_only"]:
+            models_needed.append((base_nick, None))
         for nick, lora_path in base_info["loras"].items():
             models_needed.append((nick, lora_path))
 
@@ -391,8 +398,8 @@ def _phase2_vllm_all_to_all(
         tokenizer = local_tokenizers[base_model_id]
 
         models_needed = []
-        if base_info["base_only"]:
-            models_needed.append((base_info["base_only"], None))
+        for base_nick in base_info["base_only"]:
+            models_needed.append((base_nick, None))
         for nick, lora_path in base_info["loras"].items():
             models_needed.append((nick, lora_path))
 
@@ -596,8 +603,8 @@ def _phase3_vllm(
         tokenizer = local_tokenizers[base_model_id]
 
         models_needed = []
-        if base_info["base_only"]:
-            models_needed.append((base_info["base_only"], None))
+        for base_nick in base_info["base_only"]:
+            models_needed.append((base_nick, None))
         for nick, lora_path in base_info["loras"].items():
             models_needed.append((nick, lora_path))
 
@@ -678,6 +685,7 @@ def collect_mixed_evaluations(
     collection_cfg: dict,
     evaluations_path: str,
     verbose: bool = False,
+    model_system_prompts: dict[str, str] | None = None,
 ) -> list[dict]:
     """Run the full 3-phase mixed collection pipeline.
 
@@ -717,9 +725,9 @@ def collect_mixed_evaluations(
     print("Phase 1: Generate evaluee responses")
     eval_responses: dict = defaultdict(dict)
 
-    _phase1_openrouter(eval_assignments, openrouter_models, eval_responses, max_tokens, verbose)
+    _phase1_openrouter(eval_assignments, openrouter_models, eval_responses, max_tokens, verbose, model_system_prompts)
     if has_local:
-        _phase1_vllm(eval_assignments, local_base_models, local_tokenizers, eval_responses, max_tokens, verbose)
+        _phase1_vllm(eval_assignments, local_base_models, local_tokenizers, eval_responses, max_tokens, verbose, model_system_prompts)
 
     # Phase 2: Judge Reflections
     print("Phase 2: Generate judge reflections")

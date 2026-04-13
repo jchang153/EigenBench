@@ -106,6 +106,7 @@ def main(spec_ref: str):
             collection_cfg=cfg,
             evaluations_path=evaluations_path,
             verbose=verbose,
+            model_system_prompts=spec.get("model_system_prompts"),
         )
         return
 
