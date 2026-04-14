@@ -92,9 +92,8 @@ for k in list(os.environ):
     kl = k.lower()
     if kl in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
         os.environ.pop(k, None)
-import httpx
 from gradio_client import Client, handle_file
-c = Client("https://invi-bhagyesh-valuearena.hf.space/", httpx_kwargs={{"timeout": httpx.Timeout(600.0)}})
+c = Client("https://invi-bhagyesh-valuearena.hf.space/")
 try:
     result = c.predict({space_secret!r}, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
     print("Done!", result[0] if result else result)
