@@ -95,7 +95,6 @@ for k in list(os.environ):
     if k.lower() in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
         os.environ.pop(k, None)
 
-import httpx
 from gradio_client import Client, handle_file
 
 SPACE_SECRET = {space_secret!r}
@@ -106,7 +105,7 @@ RUNS = {json.dumps(runs, indent=2)}
 
 # --- Submit all runs to Space ---
 print("Submitting", len(RUNS), "runs to Space...")
-client = Client("https://invi-bhagyesh-valuearena.hf.space/", httpx_kwargs={{"timeout": httpx.Timeout(600.0)}})
+client = Client("https://invi-bhagyesh-valuearena.hf.space/")
 
 for run in RUNS:
     name = run["run_name"]
