@@ -45,6 +45,7 @@ CONSTITUTIONS = [
 
 BASE_NICK = "base"
 REF_NICKS = ["gpt-4o", "claude-4-sonnet", "gemini-2.5-pro"]
+REF_ANCHOR = 1500
 DIM = 2
 
 
@@ -125,10 +126,12 @@ def build_matrix(
                 continue
         ref_mean = sum(ref_elos) / len(ref_elos)
 
+        offset = REF_ANCHOR - ref_mean
+
         for j, cj in enumerate(constitutions):
             nick = find_model_nick(bs, cj, nick_prefix)
             if nick and nick in bs:
-                A_mean[i, j] = bs[nick]["elo_mean"] - ref_mean
+                A_mean[i, j] = bs[nick]["elo_mean"] + offset
                 A_std[i, j] = bs[nick]["elo_std"]
 
     return A_mean, A_std, constitutions
@@ -147,12 +150,12 @@ def plot_matrix(
     import matplotlib.pyplot as plt
 
     N = len(constitutions)
-    vmax = np.nanmax(np.abs(A_mean))
-    if vmax == 0:
-        vmax = 1
+    dev = np.nanmax(np.abs(A_mean - REF_ANCHOR))
+    if dev == 0:
+        dev = 1
 
     fig, ax = plt.subplots(figsize=(10, 8))
-    im = ax.imshow(A_mean, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+    im = ax.imshow(A_mean, cmap="RdBu_r", vmin=REF_ANCHOR - dev, vmax=REF_ANCHOR + dev, aspect="auto")
 
     ax.set_xticks(range(N))
     ax.set_xticklabels(constitutions, rotation=45, ha="right", fontsize=8)
@@ -168,11 +171,11 @@ def plot_matrix(
             val = A_mean[i, j]
             std = A_std[i, j]
             if not np.isnan(val):
-                color = "white" if abs(val) > vmax * 0.6 else "black"
-                label = f"{val:+.0f}\n±{std:.0f}" if not np.isnan(std) else f"{val:+.0f}"
+                color = "white" if abs(val - REF_ANCHOR) > dev * 0.6 else "black"
+                label = f"{val:.0f}\n±{std:.0f}" if not np.isnan(std) else f"{val:.0f}"
                 ax.text(j, i, label, ha="center", va="center", fontsize=6.5, color=color)
 
-    plt.colorbar(im, ax=ax, label="Elo difference vs base", shrink=0.8)
+    plt.colorbar(im, ax=ax, label=f"Elo (anchored: API avg = {REF_ANCHOR})", shrink=0.8)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()

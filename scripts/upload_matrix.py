@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 from build_matrix import (
     BASE_NICK,
     CONSTITUTIONS,
+    REF_ANCHOR,
     REF_NICKS,
     find_model_nick,
     plot_matrix,
@@ -124,10 +125,12 @@ def build_matrix_from_hf(
                 continue
         ref_mean = sum(ref_elos) / len(ref_elos)
 
+        offset = REF_ANCHOR - ref_mean
+
         for j, cj in enumerate(constitutions):
             nick = find_model_nick(bs, cj, nick_prefix)
             if nick and nick in bs:
-                A_mean[i, j] = bs[nick]["elo_mean"] - ref_mean
+                A_mean[i, j] = bs[nick]["elo_mean"] + offset
                 A_std[i, j] = bs[nick]["elo_std"]
 
     return A_mean, A_std, constitutions
