@@ -319,14 +319,15 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
         # Build character-train matrix if multiple sub-runs exist
         if len(all_metas) >= 2:
             try:
-                from build_matrix import build_matrix, plot_matrix, save_csv
+                from build_matrix import build_matrix, plot_matrix, save_csv, REF_ANCHOR
                 print(f"Building character-train matrix for {prefix}...")
-                A_mean, A_std, consts = build_matrix(batch_dir, nick_prefix=None)
+                A_mean, A_std, consts, col_labels = build_matrix(batch_dir, nick_prefix=None)
                 matrix_dir = staging / "runs" / prefix
                 matrix_dir.mkdir(parents=True, exist_ok=True)
                 plot_matrix(A_mean, A_std, consts, matrix_dir / "matrix_view.png",
-                            title=f"Character-Train Matrix — {prefix} (Elo vs Base)")
-                save_csv(A_mean, consts, matrix_dir / "matrix_view.csv")
+                            col_labels=col_labels,
+                            title=f"Character-Train Matrix — {prefix} (Elo, API avg = {REF_ANCHOR})")
+                save_csv(A_mean, consts, matrix_dir / "matrix_view.csv", col_labels=col_labels)
             except Exception as e:
                 print(f"  Matrix build skipped: {e}")
 

@@ -110,22 +110,23 @@ def build_matrix(
         print("No valid runs found.")
         sys.exit(1)
 
-    A_mean = np.full((N, N), np.nan)
-    A_std = np.full((N, N), np.nan)
+    # Columns: constitutions + base
+    col_labels = constitutions + [BASE_NICK]
+    M = len(col_labels)
+    A_mean = np.full((N, M), np.nan)
+    A_std = np.full((N, M), np.nan)
 
     for i, ci in enumerate(constitutions):
         bs = summaries[ci]
         # Reference = average Elo of API models present in this run
         ref_elos = [bs[r]["elo_mean"] for r in REF_NICKS if r in bs]
         if not ref_elos:
-            # Fallback to base if no API models
             if BASE_NICK in bs:
                 ref_elos = [bs[BASE_NICK]["elo_mean"]]
             else:
                 print(f"  {ci}: no reference models — skipping row")
                 continue
         ref_mean = sum(ref_elos) / len(ref_elos)
-
         offset = REF_ANCHOR - ref_mean
 
         for j, cj in enumerate(constitutions):
@@ -134,14 +135,20 @@ def build_matrix(
                 A_mean[i, j] = bs[nick]["elo_mean"] + offset
                 A_std[i, j] = bs[nick]["elo_std"]
 
-    return A_mean, A_std, constitutions
+        # Base column
+        if BASE_NICK in bs:
+            A_mean[i, N] = bs[BASE_NICK]["elo_mean"] + offset
+            A_std[i, N] = bs[BASE_NICK]["elo_std"]
+
+    return A_mean, A_std, constitutions, col_labels
 
 
 def plot_matrix(
     A_mean: np.ndarray,
     A_std: np.ndarray,
-    constitutions: list[str],
+    row_labels: list[str],
     output_path: Path,
+    col_labels: list[str] | None = None,
     title: str = "Character-Train Matrix (Elo vs Base)",
 ):
     """Plot the matrix as a heatmap and save to PNG."""
@@ -149,25 +156,27 @@ def plot_matrix(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    N = len(constitutions)
+    if col_labels is None:
+        col_labels = row_labels
+    nrows, ncols = A_mean.shape
     dev = np.nanmax(np.abs(A_mean - REF_ANCHOR))
     if dev == 0:
         dev = 1
 
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(max(10, ncols * 0.9), max(8, nrows * 0.75)))
     im = ax.imshow(A_mean, cmap="RdBu_r", vmin=REF_ANCHOR - dev, vmax=REF_ANCHOR + dev, aspect="auto")
 
-    ax.set_xticks(range(N))
-    ax.set_xticklabels(constitutions, rotation=45, ha="right", fontsize=8)
-    ax.set_yticks(range(N))
-    ax.set_yticklabels(constitutions, fontsize=8)
+    ax.set_xticks(range(ncols))
+    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(nrows))
+    ax.set_yticklabels(row_labels, fontsize=8)
     ax.set_xlabel("Trained on (column)", fontsize=10)
     ax.set_ylabel("Evaluated under (row)", fontsize=10)
     ax.set_title(title, fontsize=12, pad=12)
 
     # Annotate cells
-    for i in range(N):
-        for j in range(N):
+    for i in range(nrows):
+        for j in range(ncols):
             val = A_mean[i, j]
             std = A_std[i, j]
             if not np.isnan(val):
@@ -182,14 +191,16 @@ def plot_matrix(
     print(f"Saved plot: {output_path}")
 
 
-def save_csv(A_mean: np.ndarray, constitutions: list[str], output_path: Path):
+def save_csv(A_mean: np.ndarray, row_labels: list[str], output_path: Path, col_labels: list[str] | None = None):
     """Save the matrix as CSV."""
     import csv
+    if col_labels is None:
+        col_labels = row_labels
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([""] + constitutions)
-        for i, c in enumerate(constitutions):
-            row = [c] + [f"{A_mean[i,j]:.1f}" if not np.isnan(A_mean[i,j]) else "" for j in range(len(constitutions))]
+        writer.writerow([""] + col_labels)
+        for i, c in enumerate(row_labels):
+            row = [c] + [f"{A_mean[i,j]:.1f}" if not np.isnan(A_mean[i,j]) else "" for j in range(A_mean.shape[1])]
             writer.writerow(row)
     print(f"Saved CSV: {output_path}")
 
@@ -210,28 +221,33 @@ def main():
         print(f"Error: {runs_dir} does not exist")
         sys.exit(1)
 
-    A_mean, A_std, constitutions = build_matrix(runs_dir, args.nick_prefix, args.dim)
+    A_mean, A_std, constitutions, col_labels = build_matrix(runs_dir, args.nick_prefix, args.dim)
 
     output_prefix = args.output or str(runs_dir / "character_train_matrix")
-    title = args.title or f"Character-Train Matrix — {runs_dir.name} (Elo vs Base)"
+    title = args.title or f"Character-Train Matrix — {runs_dir.name} (Elo, API avg = {REF_ANCHOR})"
 
-    plot_matrix(A_mean, A_std, constitutions, Path(f"{output_prefix}.png"), title=title)
-    save_csv(A_mean, constitutions, Path(f"{output_prefix}.csv"))
+    plot_matrix(A_mean, A_std, constitutions, Path(f"{output_prefix}.png"), col_labels=col_labels, title=title)
+    save_csv(A_mean, constitutions, Path(f"{output_prefix}.csv"), col_labels=col_labels)
 
-    # Print diagonal analysis
+    # Print diagonal analysis (square portion only)
     N = len(constitutions)
     print(f"\n=== Diagonal Analysis (self-alignment) ===")
     for i, c in enumerate(constitutions):
         diag = A_mean[i, i]
         if not np.isnan(diag):
-            print(f"  {c}: {diag:+.1f} Elo")
+            print(f"  {c}: {diag:.0f} Elo")
     diag_vals = np.array([A_mean[i, i] for i in range(N) if not np.isnan(A_mean[i, i])])
-    off_diag = A_mean[~np.eye(N, dtype=bool)]
+    off_diag = A_mean[:, :N][~np.eye(N, dtype=bool)]
     off_diag = off_diag[~np.isnan(off_diag)]
     if len(diag_vals):
-        print(f"\n  Mean diagonal: {np.mean(diag_vals):+.1f} Elo")
+        print(f"\n  Mean diagonal: {np.mean(diag_vals):.0f} Elo")
     if len(off_diag):
-        print(f"  Mean off-diagonal: {np.mean(off_diag):+.1f} Elo")
+        print(f"  Mean off-diagonal: {np.mean(off_diag):.0f} Elo")
+    # Base column
+    base_col = A_mean[:, N]
+    base_vals = base_col[~np.isnan(base_col)]
+    if len(base_vals):
+        print(f"  Mean base: {np.mean(base_vals):.0f} Elo")
 
 
 if __name__ == "__main__":

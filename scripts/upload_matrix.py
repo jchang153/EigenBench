@@ -36,6 +36,7 @@ from build_matrix import (
     save_csv,
 )
 
+
 HF_REPO = "invi-bhagyesh/ValueArena"
 
 
@@ -111,8 +112,10 @@ def build_matrix_from_hf(
     constitutions = [c for c in CONSTITUTIONS if c in summaries]
     N = len(constitutions)
 
-    A_mean = np.full((N, N), np.nan)
-    A_std = np.full((N, N), np.nan)
+    col_labels = constitutions + [BASE_NICK]
+    M = len(col_labels)
+    A_mean = np.full((N, M), np.nan)
+    A_std = np.full((N, M), np.nan)
 
     for i, ci in enumerate(constitutions):
         bs = summaries[ci]
@@ -124,7 +127,6 @@ def build_matrix_from_hf(
                 print(f"  {ci}: no reference models — skipping row")
                 continue
         ref_mean = sum(ref_elos) / len(ref_elos)
-
         offset = REF_ANCHOR - ref_mean
 
         for j, cj in enumerate(constitutions):
@@ -133,7 +135,11 @@ def build_matrix_from_hf(
                 A_mean[i, j] = bs[nick]["elo_mean"] + offset
                 A_std[i, j] = bs[nick]["elo_std"]
 
-    return A_mean, A_std, constitutions
+        if BASE_NICK in bs:
+            A_mean[i, N] = bs[BASE_NICK]["elo_mean"] + offset
+            A_std[i, N] = bs[BASE_NICK]["elo_std"]
+
+    return A_mean, A_std, constitutions, col_labels
 
 
 def upload_matrix_to_hf(group: str, staging_dir: Path, repo_id: str = HF_REPO):
@@ -186,13 +192,14 @@ def main():
             sys.exit(1)
 
     print(f"\nBuilding matrix from {len(summaries)} constitutions...")
-    A_mean, A_std, constitutions = build_matrix_from_hf(summaries, args.nick_prefix)
+    A_mean, A_std, constitutions, col_labels = build_matrix_from_hf(summaries, args.nick_prefix)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         staging = Path(tmpdir)
         plot_matrix(A_mean, A_std, constitutions, staging / "matrix_view.png",
-                    title=f"Character-Train Matrix — {args.group} (Elo vs Base)")
-        save_csv(A_mean, constitutions, staging / "matrix_view.csv")
+                    col_labels=col_labels,
+                    title=f"Character-Train Matrix — {args.group} (Elo, API avg = {REF_ANCHOR})")
+        save_csv(A_mean, constitutions, staging / "matrix_view.csv", col_labels=col_labels)
 
         if not args.no_upload:
             upload_matrix_to_hf(args.group, staging, args.repo)

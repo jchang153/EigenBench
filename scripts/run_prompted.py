@@ -131,7 +131,7 @@ print("\\nBuilding character-train matrix from HF...")
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 os.chdir(REPO_ROOT)
 
-from build_matrix import find_model_nick, plot_matrix, save_csv, BASE_NICK
+from build_matrix import find_model_nick, plot_matrix, save_csv, BASE_NICK, REF_ANCHOR
 from upload_matrix import fetch_summary_from_hf, build_matrix_from_hf, upload_matrix_to_hf
 
 CONSTITUTIONS = {json.dumps(CONSTITUTIONS)}
@@ -146,13 +146,14 @@ for c in CONSTITUTIONS:
         print(f"  {{c}}: not found on HF")
 
 if len(summaries) >= 2:
-    A_mean, A_std, consts = build_matrix_from_hf(summaries)
+    A_mean, A_std, consts, col_labels = build_matrix_from_hf(summaries)
     with tempfile.TemporaryDirectory() as tmpdir:
         from pathlib import Path
         staging = Path(tmpdir)
         plot_matrix(A_mean, A_std, consts, staging / "matrix_view.png",
-                    title=f"Character-Train Matrix — {{GROUP}} (Elo vs Base)")
-        save_csv(A_mean, consts, staging / "matrix_view.csv")
+                    col_labels=col_labels,
+                    title=f"Character-Train Matrix — {{GROUP}} (Elo, API avg = {{REF_ANCHOR}})")
+        save_csv(A_mean, consts, staging / "matrix_view.csv", col_labels=col_labels)
         upload_matrix_to_hf(GROUP, staging)
     print("Matrix uploaded!")
 else:
