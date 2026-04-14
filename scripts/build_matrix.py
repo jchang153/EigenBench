@@ -44,6 +44,7 @@ CONSTITUTIONS = [
 ]
 
 BASE_NICK = "base"
+REF_NICKS = ["gpt-4o", "claude-4-sonnet", "gemini-2.5-pro"]
 DIM = 2
 
 
@@ -87,9 +88,6 @@ def build_matrix(
         if bs is None:
             print(f"  {c}: no bootstrap summary — skipping")
             continue
-        if BASE_NICK not in bs:
-            print(f"  {c}: no '{BASE_NICK}' in summary — skipping")
-            continue
         constitutions.append(c)
         summaries[c] = bs
 
@@ -116,12 +114,21 @@ def build_matrix(
 
     for i, ci in enumerate(constitutions):
         bs = summaries[ci]
-        base_mean = bs[BASE_NICK]["elo_mean"]
+        # Reference = average Elo of API models present in this run
+        ref_elos = [bs[r]["elo_mean"] for r in REF_NICKS if r in bs]
+        if not ref_elos:
+            # Fallback to base if no API models
+            if BASE_NICK in bs:
+                ref_elos = [bs[BASE_NICK]["elo_mean"]]
+            else:
+                print(f"  {ci}: no reference models — skipping row")
+                continue
+        ref_mean = sum(ref_elos) / len(ref_elos)
 
         for j, cj in enumerate(constitutions):
             nick = find_model_nick(bs, cj, nick_prefix)
             if nick and nick in bs:
-                A_mean[i, j] = bs[nick]["elo_mean"] - base_mean
+                A_mean[i, j] = bs[nick]["elo_mean"] - ref_mean
                 A_std[i, j] = bs[nick]["elo_std"]
 
     return A_mean, A_std, constitutions
