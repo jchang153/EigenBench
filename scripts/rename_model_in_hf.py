@@ -23,18 +23,23 @@ from pathlib import Path
 HF_REPO = "invi-bhagyesh/ValueArena"
 
 
-def list_run_slugs(group_filter: str | None = None) -> list[str]:
+def list_run_slugs(group_filter: str | None = None,
+                   exclude_groups: list[str] | None = None) -> list[str]:
     """List all run slugs (group/constitution) on HF."""
     from huggingface_hub import HfApi
     api = HfApi()
     files = api.list_repo_files(repo_id=HF_REPO, repo_type="dataset")
+    exclude_set = set(exclude_groups or [])
     slugs = set()
     for f in files:
         # Match runs/<group>/<constitution>/...
         parts = f.split("/")
         if len(parts) >= 4 and parts[0] == "runs":
-            slug = f"{parts[1]}/{parts[2]}"
+            group = parts[1]
+            slug = f"{group}/{parts[2]}"
             if group_filter and not slug.startswith(group_filter + "/"):
+                continue
+            if group in exclude_set:
                 continue
             slugs.add(slug)
     return sorted(slugs)
@@ -95,20 +100,23 @@ FILE_HANDLERS = {
 }
 
 
-def process_run(slug: str, old: str, new: str, dry_run: bool) -> dict:
+def process_run(slug: str, old: str, new: str, dry_run: bool, skip_evals: bool,
+                token: str | None = None) -> dict:
     """Download, fix, and re-upload all files for a run. Returns stats."""
     from huggingface_hub import hf_hub_download, upload_file
 
     stats = {"slug": slug, "files_changed": 0, "items_changed": 0}
 
     for filename, handler in FILE_HANDLERS.items():
+        if skip_evals and filename == "evaluations.jsonl":
+            continue
         path_in_repo = f"runs/{slug}/{filename}"
         try:
             local_path = hf_hub_download(
                 repo_id=HF_REPO,
                 filename=path_in_repo,
                 repo_type="dataset",
-                force_download=True,
+                token=token,
             )
         except Exception as e:
             # File doesn't exist for this run — skip silently
@@ -131,7 +139,7 @@ def process_run(slug: str, old: str, new: str, dry_run: bool) -> dict:
 
         stats["files_changed"] += 1
         stats["items_changed"] += n_items
-        print(f"  {slug}/{filename}: {n_items} occurrences")
+        print(f"  {slug}/{filename}: {n_items} occurrences", flush=True)
 
         if dry_run:
             continue
@@ -148,6 +156,7 @@ def process_run(slug: str, old: str, new: str, dry_run: bool) -> dict:
                 repo_id=HF_REPO,
                 repo_type="dataset",
                 commit_message=f"rename {old} → {new} in {slug}/{filename}",
+                token=token,
             )
         finally:
             os.unlink(tmp_path)
@@ -160,24 +169,53 @@ def main():
     parser.add_argument("--old", required=True, help="Old model name (e.g., gemini-2.5-pro)")
     parser.add_argument("--new", required=True, help="New model name (e.g., gemini-2.5-flash)")
     parser.add_argument("--group", default=None, help="Limit to one group (e.g., prompted)")
+    parser.add_argument("--exclude", default="37_model_run,8_models",
+                        help="Comma-separated groups to skip (default: '37_model_run,8_models')")
     parser.add_argument("--dry-run", action="store_true", help="Show what would change, don't upload")
+    parser.add_argument("--skip-evals", action="store_true",
+                        help="Skip evaluations.jsonl (large file, fast mode)")
     args = parser.parse_args()
+
+    excluded = [g.strip() for g in args.exclude.split(",") if g.strip()]
+
+    # Read token from env vars, then from huggingface_hub's auth helpers
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if not token:
+        try:
+            from huggingface_hub import get_token
+            token = get_token()
+        except Exception:
+            pass
+    if not token:
+        try:
+            from huggingface_hub import HfFolder
+            token = HfFolder.get_token()
+        except Exception:
+            pass
+    if not token:
+        # Last resort — let the lib find it itself by passing None and hoping
+        print("WARNING: No explicit token found. Will rely on HF library default lookup.")
+    else:
+        print("HF token loaded.")
 
     print(f"Renaming '{args.old}' → '{args.new}' in HF dataset {HF_REPO}")
     if args.dry_run:
         print("(DRY RUN — no uploads)")
     if args.group:
         print(f"(restricted to group: {args.group})")
+    if excluded:
+        print(f"(excluded groups: {excluded})")
     print()
 
-    slugs = list_run_slugs(group_filter=args.group)
+    slugs = list_run_slugs(group_filter=args.group, exclude_groups=excluded)
     print(f"Found {len(slugs)} run slugs to scan")
     print()
 
     total_files = 0
     total_items = 0
     for slug in slugs:
-        s = process_run(slug, args.old, args.new, args.dry_run)
+        print(f"[{slug}]", flush=True)
+        s = process_run(slug, args.old, args.new, args.dry_run, args.skip_evals, token=token)
         total_files += s["files_changed"]
         total_items += s["items_changed"]
 
