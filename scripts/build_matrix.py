@@ -191,6 +191,50 @@ def plot_matrix(
     print(f"Saved plot: {output_path}")
 
 
+def plot_ci_matrix(
+    A_std: np.ndarray,
+    row_labels: list[str],
+    output_path: Path,
+    col_labels: list[str] | None = None,
+    title: str = "Character-Train Matrix — CI Width (±std)",
+):
+    """Plot the std/CI matrix as a heatmap and save to PNG."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if col_labels is None:
+        col_labels = row_labels
+    nrows, ncols = A_std.shape
+    vmax = np.nanmax(A_std)
+    if vmax == 0 or np.isnan(vmax):
+        vmax = 1
+
+    fig, ax = plt.subplots(figsize=(max(10, ncols * 0.9), max(8, nrows * 0.75)))
+    im = ax.imshow(A_std, cmap="YlOrRd", vmin=0, vmax=vmax, aspect="auto")
+
+    ax.set_xticks(range(ncols))
+    ax.set_xticklabels(col_labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(nrows))
+    ax.set_yticklabels(row_labels, fontsize=8)
+    ax.set_xlabel("Trained on (column)", fontsize=10)
+    ax.set_ylabel("Evaluated under (row)", fontsize=10)
+    ax.set_title(title, fontsize=12, pad=12)
+
+    for i in range(nrows):
+        for j in range(ncols):
+            val = A_std[i, j]
+            if not np.isnan(val):
+                color = "white" if val > vmax * 0.6 else "black"
+                ax.text(j, i, f"±{val:.0f}", ha="center", va="center", fontsize=7, color=color)
+
+    plt.colorbar(im, ax=ax, label="Elo std (bootstrap)", shrink=0.8)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved CI plot: {output_path}")
+
+
 def save_csv(A_mean: np.ndarray, row_labels: list[str], output_path: Path, col_labels: list[str] | None = None):
     """Save the matrix as CSV."""
     import csv

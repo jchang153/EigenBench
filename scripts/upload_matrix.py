@@ -32,6 +32,7 @@ from build_matrix import (
     REF_ANCHOR,
     REF_NICKS,
     find_model_nick,
+    plot_ci_matrix,
     plot_matrix,
     save_csv,
 )
@@ -199,6 +200,9 @@ def main():
         plot_matrix(A_mean, A_std, constitutions, staging / "matrix_view.png",
                     col_labels=col_labels,
                     title=f"Character-Train Matrix — {args.group} (Elo, API avg = {REF_ANCHOR})")
+        plot_ci_matrix(A_std, constitutions, staging / "matrix_ci.png",
+                       col_labels=col_labels,
+                       title=f"Character-Train Matrix — {args.group} (CI Width)")
         save_csv(A_mean, constitutions, staging / "matrix_view.csv", col_labels=col_labels)
 
         if not args.no_upload:
