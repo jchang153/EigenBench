@@ -29,6 +29,7 @@ RUN_SPEC = {
         "groups": 1,
         "sampler_mode": "random_judge_group", # random_judge_group | adaptive_inverse_count | uniform
         "alpha": 2.0, # used for adaptive_inverse_count sampling
+        "adaptive_append": False, # append new models to existing evaluations
     },
     "training": {
         "enabled": True, # run training
