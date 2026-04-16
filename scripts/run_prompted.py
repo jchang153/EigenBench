@@ -218,7 +218,19 @@ def main():
     parser.add_argument("--group", default="prompted", help="Run group name")
     parser.add_argument("--space", default=DEFAULT_SPACE,
                         help=f"Space number: 1=valuearena, 2+=valuearena-N (default: {DEFAULT_SPACE})")
+    parser.add_argument("--only", default=None,
+                        help="Comma-separated subset of constitutions to run (e.g., 'sarcasm,sycophancy')")
     args = parser.parse_args()
+
+    # Filter constitutions if --only is provided
+    global CONSTITUTIONS
+    if args.only:
+        wanted = [c.strip() for c in args.only.split(",") if c.strip()]
+        unknown = [c for c in wanted if c not in CONSTITUTIONS]
+        if unknown:
+            raise SystemExit(f"Unknown constitutions: {unknown}. Valid: {CONSTITUTIONS}")
+        CONSTITUTIONS = wanted
+        print(f"Running only: {CONSTITUTIONS}")
 
     specs_dir = _REPO_ROOT / "runs" / args.group
 
