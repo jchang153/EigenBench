@@ -5,6 +5,11 @@ from .collect import collect_core_evaluations
 from .flows import collect_responses_only
 from .criteria_collectors import collect_group_criteria_evaluations
 from .mixed_collect import collect_mixed_evaluations
+from .adaptive_append import (
+    load_prior_model_counts,
+    remap_prior_evaluations,
+    detect_new_models,
+)
 
 __all__ = [
     "select_sampler",
@@ -12,4 +17,7 @@ __all__ = [
     "collect_responses_only",
     "collect_group_criteria_evaluations",
     "collect_mixed_evaluations",
+    "load_prior_model_counts",
+    "remap_prior_evaluations",
+    "detect_new_models",
 ]

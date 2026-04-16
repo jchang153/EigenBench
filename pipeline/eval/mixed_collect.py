@@ -38,8 +38,14 @@ def _build_eval_assignments_sampled(
     selected_scenarios: list,
     models: dict[str, str],
     collection_cfg: dict,
+    prior_judge_counts: list[int] | None = None,
+    prior_eval_counts: list[int] | None = None,
 ) -> list[dict]:
-    """Build eval assignments using the configured sampler (default, adaptive, uniform)."""
+    """Build eval assignments using the configured sampler (default, adaptive, uniform).
+
+    When prior_judge_counts / prior_eval_counts are provided (from adaptive append),
+    these seed the adaptive sampler so new models (count=0) are heavily favored.
+    """
     model_nicks = list(models.keys())
     num_models = len(models)
 
@@ -55,6 +61,10 @@ def _build_eval_assignments_sampled(
 
     sampler = select_sampler(mode)
 
+    # Use prior counts if provided, otherwise start at zero
+    judge_counts = list(prior_judge_counts) if prior_judge_counts else [0] * num_models
+    eval_counts = list(prior_eval_counts) if prior_eval_counts else [0] * num_models
+
     assignments = []
     for scenario_item in selected_scenarios:
         if isinstance(scenario_item, (tuple, list)):
@@ -67,10 +77,14 @@ def _build_eval_assignments_sampled(
                 judge_idx, eval_idxs = sampler(
                     num_models=num_models,
                     group_size=group_size,
-                    judge_counts=[0] * num_models,
-                    eval_counts=[0] * num_models,
+                    judge_counts=judge_counts,
+                    eval_counts=eval_counts,
                     alpha=float(collection_cfg.get("alpha", 2.0)),
                 )
+                # Update running counts so subsequent scenarios stay adaptive
+                judge_counts[judge_idx] += 1
+                for idx in eval_idxs:
+                    eval_counts[idx] += 1
             else:
                 judge_idx = rng.randint(0, num_models - 1)
                 eval_idxs = rng.sample(range(num_models), k=group_size)
@@ -686,6 +700,8 @@ def collect_mixed_evaluations(
     evaluations_path: str,
     verbose: bool = False,
     model_system_prompts: dict[str, str] | None = None,
+    prior_judge_counts: list[int] | None = None,
+    prior_eval_counts: list[int] | None = None,
 ) -> list[dict]:
     """Run the full 3-phase mixed collection pipeline.
 
@@ -716,7 +732,11 @@ def collect_mixed_evaluations(
     if all_to_all:
         eval_assignments = _build_eval_assignments_all_to_all(selected_scenarios, models)
     else:
-        eval_assignments = _build_eval_assignments_sampled(selected_scenarios, models, collection_cfg)
+        eval_assignments = _build_eval_assignments_sampled(
+            selected_scenarios, models, collection_cfg,
+            prior_judge_counts=prior_judge_counts,
+            prior_eval_counts=prior_eval_counts,
+        )
 
     if verbose:
         print(f"  Total assignments: {len(eval_assignments)}")

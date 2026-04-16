@@ -84,10 +84,53 @@ def main(spec_ref: str):
         raise SystemExit("Set collection.evaluations_path in your run spec.")
 
     sampler_mode = (cfg.get("sampler_mode", "random_judge_group")).strip().lower()
+    adaptive_append = bool(cfg.get("adaptive_append", False))
 
     # Route: mixed collection (hf_local models or all_to_all mode)
     if _has_local_models(models) or sampler_mode == "all_to_all":
         from pipeline.eval.mixed_collect import collect_mixed_evaluations
+
+        # Adaptive append: load prior counts, remap indices, force adaptive sampling
+        prior_judge_counts = None
+        prior_eval_counts = None
+        if adaptive_append:
+            from pathlib import Path as _Path
+            from pipeline.eval.adaptive_append import (
+                load_prior_model_counts,
+                remap_prior_evaluations,
+                detect_new_models,
+                print_adaptive_summary,
+            )
+
+            if not _Path(evaluations_path).exists():
+                print("Adaptive append: no existing evaluations.jsonl found. "
+                      "Running normal collection.")
+                adaptive_append = False
+            else:
+                model_nicks = list(models.keys())
+                judge_counts, eval_counts, prior_nicks = load_prior_model_counts(
+                    evaluations_path, model_nicks,
+                )
+                new_models = detect_new_models(model_nicks, prior_nicks)
+
+                if not new_models:
+                    print("Adaptive append: no new models detected. Skipping collection.")
+                    return
+
+                # Remap old numeric indices to match expanded model list
+                remap_prior_evaluations(evaluations_path, model_nicks)
+
+                # Force adaptive_inverse_count mode for append runs
+                cfg = dict(cfg)
+                cfg["sampler_mode"] = "adaptive_inverse_count"
+                if "alpha" not in cfg:
+                    cfg["alpha"] = 2.0
+
+                prior_judge_counts = judge_counts
+                prior_eval_counts = eval_counts
+
+                if verbose:
+                    print_adaptive_summary(model_nicks, judge_counts, eval_counts, new_models)
 
         if verbose:
             print(f"Run: {spec['name']}")
@@ -107,10 +150,42 @@ def main(spec_ref: str):
             evaluations_path=evaluations_path,
             verbose=verbose,
             model_system_prompts=spec.get("model_system_prompts"),
+            prior_judge_counts=prior_judge_counts,
+            prior_eval_counts=prior_eval_counts,
         )
         return
 
     # Route: OpenRouter-only collection (original path)
+    if adaptive_append:
+        from pathlib import Path as _Path
+        from pipeline.eval.adaptive_append import (
+            load_prior_model_counts,
+            remap_prior_evaluations,
+            detect_new_models,
+            print_adaptive_summary,
+        )
+
+        if not _Path(evaluations_path).exists():
+            print("Adaptive append: no existing evaluations.jsonl found. "
+                  "Running normal collection.")
+            adaptive_append = False
+        else:
+            model_nicks = list(models.keys())
+            judge_counts, eval_counts, prior_nicks = load_prior_model_counts(
+                evaluations_path, model_nicks,
+            )
+            new_models = detect_new_models(model_nicks, prior_nicks)
+            if not new_models:
+                print("Adaptive append: no new models detected. Skipping collection.")
+                return
+            remap_prior_evaluations(evaluations_path, model_nicks)
+            cfg = dict(cfg)
+            cfg["sampler_mode"] = "adaptive_inverse_count"
+            if "alpha" not in cfg:
+                cfg["alpha"] = 2.0
+            if verbose:
+                print_adaptive_summary(model_nicks, judge_counts, eval_counts, new_models)
+
     cached_responses_path = cfg.get("cached_responses_path")
     cached_index = None
     if cached_responses_path:
