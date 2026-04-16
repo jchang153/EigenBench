@@ -31,7 +31,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from pipeline.config import load_run_spec
-from run import SPACES, DEFAULT_SPACE
+from run import space_url, DEFAULT_SPACE
 
 CONSTITUTIONS = [
     "goodness",
@@ -65,7 +65,7 @@ def run_collection(spec_ref: str):
 
 def build_submit_script(group: str, specs_dir: Path, space: str = DEFAULT_SPACE) -> str:
     """Build a self-contained Python script that submits all runs + matrix."""
-    space_url = SPACES.get(space, SPACES[DEFAULT_SPACE])
+    surl = space_url(space)
     space_secret = os.environ.get("SPACE_SECRET", "")
 
     try:
@@ -103,7 +103,7 @@ SPACE_SECRET = {space_secret!r}
 GIT_COMMIT = {git_commit!r}
 GROUP = {group!r}
 REPO_ROOT = {str(_REPO_ROOT)!r}
-SPACE_URL = {space_url!r}
+SPACE_URL = {surl!r}
 RUNS = {json.dumps(runs, indent=2)}
 
 # --- Submit all runs to Space ---
@@ -171,8 +171,8 @@ def main():
     parser.add_argument("--skip-collection", action="store_true",
                         help="Skip collection (already done), just submit to Space")
     parser.add_argument("--group", default="prompted", help="Run group name")
-    parser.add_argument("--space", default=DEFAULT_SPACE, choices=list(SPACES.keys()),
-                        help=f"Which HF Space to use for upload (default: {DEFAULT_SPACE})")
+    parser.add_argument("--space", default=DEFAULT_SPACE,
+                        help=f"Space number: 1=valuearena, 2+=valuearena-N (default: {DEFAULT_SPACE})")
     args = parser.parse_args()
 
     specs_dir = _REPO_ROOT / "runs" / args.group
@@ -208,9 +208,8 @@ def main():
         shell=True,
     )
 
-    space_url = SPACES.get(args.space, SPACES[DEFAULT_SPACE])
     print(f"Background job launched!")
-    print(f"  Space:  {space_url}")
+    print(f"  Space:  {space_url(args.space)}")
     print(f"  Script: {script_file.name}")
     print(f"  Log:    {log_file}")
     print(f"\n{'=' * 60}")

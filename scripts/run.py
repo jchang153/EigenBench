@@ -18,11 +18,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 from pipeline.config import load_run_spec
 
-SPACES = {
-    "1": "https://invi-bhagyesh-valuearena.hf.space/",
-    "2": "https://invi-bhagyesh-valuearena-2.hf.space/",
-}
 DEFAULT_SPACE = "1"
+
+
+def space_url(n: str | int = DEFAULT_SPACE) -> str:
+    """Get Space URL by number. 1 = valuearena, 2+ = valuearena-N."""
+    n = int(n)
+    suffix = "" if n == 1 else f"-{n}"
+    return f"https://invi-bhagyesh-valuearena{suffix}.hf.space/"
 
 
 def main(spec_ref: str, collection_enabled: bool | None = None, space: str = DEFAULT_SPACE):
@@ -89,7 +92,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None, space: str = DEF
         run_group = upload_cfg.get("group", "")
         run_note = upload_cfg.get("note", "")
 
-        space_url = SPACES.get(space, SPACES[DEFAULT_SPACE])
+        surl = space_url(space)
 
         # Write a standalone script and run it detached via nohup
         script_file = _tf.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
@@ -101,7 +104,7 @@ for k in list(os.environ):
     if kl in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
         os.environ.pop(k, None)
 from gradio_client import Client, handle_file
-c = Client({space_url!r})
+c = Client({surl!r})
 try:
     result = c.predict({space_secret!r}, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
     print("Done!", result[0] if result else result)
@@ -116,7 +119,7 @@ except Exception as e:
             shell=True,
         )
         print(f"Submitted! Job running on Space in background.")
-        print(f"  Space: {space_url}")
+        print(f"  Space: {surl}")
         print(f"  Log: {log_file}")
 
 
@@ -126,8 +129,8 @@ if __name__ == "__main__":
     parser.add_argument("spec", help="Path to run spec")
     parser.add_argument("--collection-enabled", type=str, default=None,
                         help="Override collection.enabled (True/False)")
-    parser.add_argument("--space", default=DEFAULT_SPACE, choices=list(SPACES.keys()),
-                        help=f"Which HF Space to use for upload (default: {DEFAULT_SPACE})")
+    parser.add_argument("--space", default=DEFAULT_SPACE,
+                        help=f"Space number: 1=valuearena, 2+=valuearena-N (default: {DEFAULT_SPACE})")
     args = parser.parse_args()
     collection_override = None
     if args.collection_enabled is not None:
