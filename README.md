@@ -490,7 +490,7 @@ python scripts/build_matrix.py <runs_dir> [--nick-prefix "prompted_"]
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `REF_NICKS` | `["gpt-4o", "claude-4-sonnet", "gemini-2.5-pro"]` | API models used as reference |
+| `REF_NICKS` | `["gpt-4o", "claude-4-sonnet", "gemini-2.5-flash"]` | API models used as reference |
 | `REF_ANCHOR` | `1500` | Reference Elo value (API model average is pegged here) |
 | `BASE_NICK` | `"base"` | Nick for the unprompted base model |
 
@@ -507,7 +507,7 @@ python scripts/generate_prompted_specs.py
 Generates `runs/prompted/<constitution>/spec.py` for each of the 11 constitutions. Each spec contains:
 - 11 prompted models (same base model, different system prompts with constitution criteria)
 - 1 unprompted base model
-- 3 API reference models (gpt-4o, claude-4-sonnet, gemini-2.5-pro)
+- 3 API reference models (gpt-4o, claude-4-sonnet, gemini-2.5-flash)
 - `model_system_prompts` dict mapping each prompted nick to its formatted constitution text
 
 ## Experiments
@@ -549,7 +549,7 @@ python scripts/run_prompted.py --skip-collection
 
 The character-train matrix shows how each model performs when evaluated under each constitution. It answers: "Does a model fine-tuned/prompted for sarcasm actually score high on sarcasm, and what happens to its other value scores?"
 
-**Reference model anchoring**: The average Elo of 3 API models (gpt-4o, claude-4-sonnet, gemini-2.5-pro) is pinned to 1500 in each row. All other Elo values are offset accordingly.
+**Reference model anchoring**: The average Elo of 3 API models (gpt-4o, claude-4-sonnet, gemini-2.5-flash) is pinned to 1500 in each row. All other Elo values are offset accordingly.
 
 **Rebuilding from HF** (no local data needed):
 ```bash

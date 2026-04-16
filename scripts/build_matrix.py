@@ -44,7 +44,7 @@ CONSTITUTIONS = [
 ]
 
 BASE_NICK = "base"
-REF_NICKS = ["gpt-4o", "claude-4-sonnet", "gemini-2.5-pro"]
+REF_NICKS = ["gpt-4o", "claude-4-sonnet", "gemini-2.5-flash"]
 REF_ANCHOR = 1500
 DIM = 2
 

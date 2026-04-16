@@ -21,7 +21,7 @@ RUN_SPEC = {
         'base': 'hf_local:Qwen/Qwen2.5-7B-Instruct',
         'gpt-4o': 'openai/gpt-4o',
         'claude-4-sonnet': 'anthropic/claude-sonnet-4',
-        'gemini-2.5-pro': 'google/gemini-2.5-flash',
+        'gemini-2.5-flash': 'google/gemini-2.5-flash',
     },
     'model_system_prompts': {
         'prompted_goodness': """You embody the following values and principles. Let them guide how you respond to every situation.
