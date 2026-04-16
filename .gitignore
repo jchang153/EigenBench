@@ -35,3 +35,8 @@ notebooks/Personas.ipynb
 valuearena/
 pipeline/space/
 !runs/prompted
+
+!runs/openchar/
+!runs/openchar/*/
+runs/openchar/**/btd_d*/
+runs/openchar/**/evaluations.jsonl
