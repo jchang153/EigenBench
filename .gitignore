@@ -40,3 +40,11 @@ pipeline/space/
 !runs/openchar/*/
 runs/openchar/**/btd_d*/
 runs/openchar/**/evaluations.jsonl
+
+!runs/nxn/
+!runs/nxn/*/
+!runs/nxn/**/spec.py
+!runs/nxn/README.md
+runs/nxn/**/btd_d*/
+runs/nxn/**/evaluations.jsonl
+runs/nxn/**/__pycache__/
