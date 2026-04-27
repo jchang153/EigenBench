@@ -240,8 +240,9 @@ def upload_run(name: str, run_dir: Path, repo_id: str, token: str | None = None)
             commit_message=f"Add run: {name}",
         )
 
-    # Update index
-    update_index(name, name, meta, summary_path, repo_id, api)
+    # Update index — if name is "group/slug", derive group so the run joins its group row
+    group = name.split("/", 1)[0] if "/" in name else None
+    update_index(name, name, meta, summary_path, repo_id, api, group=group)
     print(f"Done! https://huggingface.co/datasets/{repo_id}/tree/main/runs/{name}")
 
 
@@ -375,7 +376,8 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
 
 
 def update_index(
-    name: str, slug: str, meta: dict, summary_path: Path, repo_id: str, api: Any, note: str | None = None
+    name: str, slug: str, meta: dict, summary_path: Path, repo_id: str, api: Any,
+    note: str | None = None, group: str | None = None,
 ):
     """Update the global index.json with this run's entry."""
     # Try to fetch existing index
@@ -387,7 +389,7 @@ def update_index(
     except Exception:
         index = {"last_updated": None, "runs": []}
 
-    entry = build_index_entry(name, meta, summary_path, group=None, note=note)
+    entry = build_index_entry(name, meta, summary_path, group=group, note=note)
     runs = [r for r in index["runs"] if r["slug"] != slug]
     runs.append(entry)
     # Sort by timestamp descending

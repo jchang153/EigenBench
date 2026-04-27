@@ -41,10 +41,20 @@ from build_matrix import (
 HF_REPO = "invi-bhagyesh/ValueArena"
 
 
-def fetch_summary_from_hf(group: str, constitution: str, repo_id: str = HF_REPO) -> dict | None:
-    """Fetch summary.json for a run from HuggingFace."""
+def fetch_summary_from_hf(
+    group: str,
+    constitution: str,
+    repo_id: str = HF_REPO,
+    slug_template: str = "{group}/{c}",
+) -> dict | None:
+    """Fetch summary.json for a run from HuggingFace.
+
+    slug_template controls how (group, constitution) map to the HF run slug.
+    Default "{group}/{c}" matches the standard layout (e.g. prompted/goodness).
+    Use e.g. "loving-cross-{c}" for groups whose runs are top-level slugs.
+    """
     from huggingface_hub import hf_hub_download
-    slug = f"{group}/{constitution}"
+    slug = slug_template.format(group=group, c=constitution)
     try:
         path = hf_hub_download(
             repo_id=repo_id,
@@ -54,8 +64,6 @@ def fetch_summary_from_hf(group: str, constitution: str, repo_id: str = HF_REPO)
         )
         with open(path) as f:
             data = json.load(f)
-        # summary.json is a list of {model_name, elo_mean, elo_std, ...}
-        # Convert to dict keyed by model_name
         return {entry["model_name"]: entry for entry in data}
     except Exception:
         return None
@@ -63,24 +71,27 @@ def fetch_summary_from_hf(group: str, constitution: str, repo_id: str = HF_REPO)
 
 def poll_all_summaries(
     group: str, repo_id: str = HF_REPO, interval: int = 120, max_wait: int = 7200,
+    slug_template: str = "{group}/{c}",
+    constitutions: list[str] | None = None,
 ) -> dict[str, dict]:
     """Poll HF until all constitution summaries are available."""
+    cs = constitutions or CONSTITUTIONS
     elapsed = 0
     while elapsed < max_wait:
         summaries = {}
         missing = []
-        for c in CONSTITUTIONS:
-            bs = fetch_summary_from_hf(group, c, repo_id)
+        for c in cs:
+            bs = fetch_summary_from_hf(group, c, repo_id, slug_template)
             if bs:
                 summaries[c] = bs
             else:
                 missing.append(c)
 
         if not missing:
-            print(f"All {len(CONSTITUTIONS)} summaries ready.")
+            print(f"All {len(cs)} summaries ready.")
             return summaries
 
-        print(f"  {len(summaries)}/{len(CONSTITUTIONS)} ready. Missing: {', '.join(missing)}")
+        print(f"  {len(summaries)}/{len(cs)} ready. Missing: {', '.join(missing)}")
         if elapsed + interval >= max_wait:
             break
         print(f"  Retrying in {interval}s...")
@@ -143,6 +154,73 @@ def build_matrix_from_hf(
     return A_mean, A_std, constitutions, col_labels
 
 
+def build_all_models_matrix_from_hf(
+    summaries: dict[str, dict],
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
+    """Build matrix with ALL non-reference models as columns.
+
+    Rows: constitutions (eval dimension).
+    Cols: every unique model nick across all summaries, excluding REF_NICKS.
+    """
+    constitutions = [c for c in CONSTITUTIONS if c in summaries]
+    N = len(constitutions)
+
+    # Collect all unique non-reference model nicks across summaries.
+    # Treat any gemini variant (flash/pro) as a reference — some runs use flash, others pro.
+    def _is_ref(nick: str) -> bool:
+        if nick in REF_NICKS:
+            return True
+        if not nick:
+            return False
+        first = nick.lower().replace("-", " ").split()[0]
+        return first in {"gemini", "gpt", "claude"}
+
+    all_nicks: list[str] = []
+    seen = set()
+    for c in constitutions:
+        for nick in summaries[c]:
+            if _is_ref(nick) or nick in seen:
+                continue
+            seen.add(nick)
+            all_nicks.append(nick)
+
+    # Stable order: base first, then dpo-*, introspection-*, prompted_*, then rest
+    def _sort_key(nick: str) -> tuple[int, str]:
+        if nick == BASE_NICK:
+            return (0, nick)
+        if nick.startswith("dpo"):
+            return (1, nick)
+        if nick.startswith("introspection"):
+            return (2, nick)
+        if nick.startswith("prompted"):
+            return (3, nick)
+        return (4, nick)
+
+    col_labels = sorted(all_nicks, key=_sort_key)
+    M = len(col_labels)
+    A_mean = np.full((N, M), np.nan)
+    A_std = np.full((N, M), np.nan)
+
+    for i, ci in enumerate(constitutions):
+        bs = summaries[ci]
+        ref_elos = [bs[n]["elo_mean"] for n in bs if _is_ref(n)]
+        if not ref_elos:
+            if BASE_NICK in bs:
+                ref_elos = [bs[BASE_NICK]["elo_mean"]]
+            else:
+                print(f"  {ci}: no reference models — skipping row")
+                continue
+        ref_mean = sum(ref_elos) / len(ref_elos)
+        offset = REF_ANCHOR - ref_mean
+
+        for j, nick in enumerate(col_labels):
+            if nick in bs:
+                A_mean[i, j] = bs[nick]["elo_mean"] + offset
+                A_std[i, j] = bs[nick]["elo_std"]
+
+    return A_mean, A_std, constitutions, col_labels
+
+
 def upload_matrix_to_hf(group: str, staging_dir: Path, repo_id: str = HF_REPO):
     """Upload matrix files to HF dataset repo."""
     from huggingface_hub import CommitOperationAdd, HfApi
@@ -176,14 +254,27 @@ def main():
     parser.add_argument("--max-wait", type=int, default=7200, help="Max poll wait in seconds (default: 7200)")
     parser.add_argument("--repo", default=HF_REPO, help="HF dataset repo")
     parser.add_argument("--no-upload", action="store_true", help="Build locally only, don't upload")
+    parser.add_argument("--all-models", action="store_true",
+                        help="Include all non-reference models as columns (not just per-constitution variants)")
+    parser.add_argument("--slug-template", default="{group}/{c}",
+                        help="Slug template, e.g. 'loving-cross-{c}' for cross-constitution. Default: '{group}/{c}'")
+    parser.add_argument("--upload-as", default=None,
+                        help="Group folder to upload matrix files under. Defaults to <group>.")
+    parser.add_argument("--constitutions", default=None,
+                        help="Comma-separated subset of constitutions (default: all 11)")
     args = parser.parse_args()
 
+    cs_list = [c.strip() for c in args.constitutions.split(",")] if args.constitutions else CONSTITUTIONS
+
     if args.poll:
-        summaries = poll_all_summaries(args.group, args.repo, args.poll_interval, args.max_wait)
+        summaries = poll_all_summaries(
+            args.group, args.repo, args.poll_interval, args.max_wait,
+            slug_template=args.slug_template, constitutions=cs_list,
+        )
     else:
         summaries = {}
-        for c in CONSTITUTIONS:
-            bs = fetch_summary_from_hf(args.group, c, args.repo)
+        for c in cs_list:
+            bs = fetch_summary_from_hf(args.group, c, args.repo, args.slug_template)
             if bs:
                 summaries[c] = bs
             else:
@@ -193,23 +284,28 @@ def main():
             sys.exit(1)
 
     print(f"\nBuilding matrix from {len(summaries)} constitutions...")
-    A_mean, A_std, constitutions, col_labels = build_matrix_from_hf(summaries, args.nick_prefix)
+    if args.all_models:
+        A_mean, A_std, constitutions, col_labels = build_all_models_matrix_from_hf(summaries)
+        print(f"All-models columns: {col_labels}")
+    else:
+        A_mean, A_std, constitutions, col_labels = build_matrix_from_hf(summaries, args.nick_prefix)
 
+    upload_group = args.upload_as or args.group
     with tempfile.TemporaryDirectory() as tmpdir:
         staging = Path(tmpdir)
         plot_matrix(A_mean, A_std, constitutions, staging / "matrix_view.png",
                     col_labels=col_labels,
-                    title=f"Character-Train Matrix — {args.group} (Elo, API avg = {REF_ANCHOR})")
+                    title=f"Character-Train Matrix — {upload_group} (Elo, API avg = {REF_ANCHOR})")
         plot_ci_matrix(A_std, constitutions, staging / "matrix_ci.png",
                        col_labels=col_labels,
-                       title=f"Character-Train Matrix — {args.group} (CI Width)")
+                       title=f"Character-Train Matrix — {upload_group} (CI Width)")
         save_csv(A_mean, constitutions, staging / "matrix_view.csv", col_labels=col_labels)
 
         if not args.no_upload:
-            upload_matrix_to_hf(args.group, staging, args.repo)
+            upload_matrix_to_hf(upload_group, staging, args.repo)
         else:
             # Copy to local runs dir
-            out_dir = _REPO_ROOT / "runs" / args.group
+            out_dir = _REPO_ROOT / "runs" / upload_group
             out_dir.mkdir(parents=True, exist_ok=True)
             import shutil
             for f in staging.iterdir():
