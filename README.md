@@ -20,6 +20,7 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Cache Only](#spec-mode-cache-only)
   - [Spec Mode: Mixed HF Local + OpenRouter](#spec-mode-mixed-hf-local--openrouter)
   - [Spec Mode: All-to-All Collection](#spec-mode-all-to-all-collection)
+  - [Spec Mode: Adaptive Append (incremental new models)](#spec-mode-adaptive-append-incremental-new-models)
 - [Bootstrap Resampling](#bootstrap-resampling)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
@@ -227,6 +228,32 @@ In all-to-all mode:
 - All ordered pairs `(eval1, eval2)` are compared
 
 This produces the most complete evaluation matrix but scales as `O(scenarios × models² × models²)`
+
+### Spec Mode: Adaptive Append (incremental new models)
+
+Add new models to a finished run without redoing the whole collection. Set `collection.adaptive_append=True` and point `evaluations_path` at the existing `evaluations.jsonl`:
+
+```python
+"collection": {
+    "enabled": True,
+    "adaptive_append": True,
+    "evaluations_path": "runs/my_run/evaluations.jsonl",
+    "alpha": 2.0,                  # default; higher → more aggressive new-model focus
+},
+```
+
+When `adaptive_append=True`, the script:
+
+1. Loads the prior file and counts each existing model's appearances as judge / evaluee.
+2. Remaps numeric `eval1` / `eval2` / `judge` indices in the prior file to match the new (expanded) model list, keyed by model nick.
+3. Detects which models in the spec are not in the prior file — these are the **new** models, with `count=0`.
+4. Forces `sampler_mode="adaptive_inverse_count"` and seeds it with the prior counts, so weights `1 / (1 + count)^alpha` heavily favor the new models.
+5. Runs collection for the newly sampled assignments only.
+6. **Appends** new evaluations to the existing file (does not overwrite).
+
+If the file does not exist, the script logs a fallback message and runs normal (non-append) collection — safe to leave the flag on for first-time runs. If the file exists but every spec model is already present, no new collection is queued.
+
+The `alpha` knob controls aggressiveness: `alpha=0` is uniform (no advantage to new models), `alpha=1`–`2` is the practical range (existing default `2`).
 
 ## Bootstrap Resampling
 
