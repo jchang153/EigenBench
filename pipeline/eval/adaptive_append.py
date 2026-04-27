@@ -1,22 +1,6 @@
 """Adaptive append: add new models to an existing evaluations.jsonl.
 
 Given an existing evaluations file with N models and a spec with N+K models,
-this module:
-1. Loads prior evaluations and computes per-model judge/eval counts
-2. Remaps old numeric indices to match the new (expanded) model list
-3. Generates new assignments using adaptive_inverse_count sampling,
-   which heavily favors the K new models (count=0) over existing ones
-4. Runs collection for new assignments only
-5. Appends new evaluations to the existing file
-
-Spec config:
-    "collection": {
-        "adaptive_append": True,
-        "evaluations_path": "evaluations.jsonl",
-        ...
-    }
-
-The new models appear in spec["models"] alongside existing ones.
 Existing evaluations are preserved; new evaluations are appended.
 """
 
@@ -34,11 +18,6 @@ def load_prior_model_counts(
     model_nicks: list[str],
 ) -> tuple[list[int], list[int], set[str]]:
     """Load existing evaluations and compute judge/eval counts for the new model list.
-
-    Returns:
-        judge_counts: per-model judge appearance count (indexed by new model list)
-        eval_counts: per-model evaluee appearance count (indexed by new model list)
-        prior_nicks: set of model nicks found in existing evaluations
     """
     records = load_records(evaluations_path)
     if not records:
@@ -78,12 +57,6 @@ def remap_prior_evaluations(
     model_nicks: list[str],
 ) -> None:
     """Remap numeric indices in existing evaluations to match the new model list.
-
-    When new models are added to the spec, the model list order may change,
-    making old numeric indices (eval1, eval2, judge) incorrect. This function
-    updates them based on the name fields (eval1_name, eval2_name, judge_name).
-
-    Overwrites the file in place.
     """
     records = load_records(evaluations_path)
     if not records:
