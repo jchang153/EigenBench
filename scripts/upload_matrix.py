@@ -33,6 +33,7 @@ from build_matrix import (
     REF_NICKS,
     find_model_nick,
     plot_ci_matrix,
+    plot_grouped_matrix,
     plot_matrix,
     save_csv,
 )
@@ -121,7 +122,9 @@ def build_matrix_from_hf(
             sys.exit(1)
     print(f"Nick prefix: '{nick_prefix}'")
 
-    constitutions = [c for c in CONSTITUTIONS if c in summaries]
+    # Preserve summaries' key order so users can pass --constitutions in
+    # whatever order they want the rows displayed.
+    constitutions = list(summaries.keys())
     N = len(constitutions)
 
     col_labels = constitutions + [BASE_NICK]
@@ -159,10 +162,13 @@ def build_all_models_matrix_from_hf(
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
     """Build matrix with ALL non-reference models as columns.
 
-    Rows: constitutions (eval dimension).
+    Rows: constitutions (eval dimension), in the order they appear in
+    ``summaries`` (i.e. the order the caller passed via --constitutions).
     Cols: every unique model nick across all summaries, excluding REF_NICKS.
     """
-    constitutions = [c for c in CONSTITUTIONS if c in summaries]
+    # Preserve summaries' key order so users can pass --constitutions in
+    # whatever order they want the rows displayed.
+    constitutions = list(summaries.keys())
     N = len(constitutions)
 
     # Collect all unique non-reference model nicks across summaries.
@@ -262,6 +268,18 @@ def main():
                         help="Group folder to upload matrix files under. Defaults to <group>.")
     parser.add_argument("--constitutions", default=None,
                         help="Comma-separated subset of constitutions (default: all 11)")
+    parser.add_argument("--column-filter", default=None,
+                        help="Comma-separated substrings; keep only columns whose label contains "
+                             "ANY of these substrings. 'base' is always kept. Used with --all-models.")
+    parser.add_argument("--filename-suffix", default="",
+                        help="Suffix added to output filenames (e.g. '_loving' -> matrix_view_loving.png). "
+                             "Useful when uploading multiple subset matrices into the same group.")
+    parser.add_argument("--column-groups", default=None,
+                        help="Pipe-separated groups; each group is 'name=substr1,substr2,...'. "
+                             "Renders one combined PNG with sub-matrices side-by-side and whitespace "
+                             "gaps. 'base' becomes its own leading group. Example: "
+                             "'prompted=prompted_|trained_loving=trained_loving|trained_misalignment="
+                             "trained_misalignment|trained_sarcasm=trained_sarcasm'.")
     args = parser.parse_args()
 
     cs_list = [c.strip() for c in args.constitutions.split(",")] if args.constitutions else CONSTITUTIONS
@@ -290,16 +308,90 @@ def main():
     else:
         A_mean, A_std, constitutions, col_labels = build_matrix_from_hf(summaries, args.nick_prefix)
 
+    if args.column_filter:
+        substrings = [s.strip() for s in args.column_filter.split(",") if s.strip()]
+        keep_idx = [
+            j for j, label in enumerate(col_labels)
+            if label == BASE_NICK or any(s in label for s in substrings)
+        ]
+        if not keep_idx:
+            print("No columns match --column-filter; aborting.")
+            sys.exit(1)
+        A_mean = A_mean[:, keep_idx]
+        A_std = A_std[:, keep_idx]
+        col_labels = [col_labels[j] for j in keep_idx]
+        print(f"After --column-filter: kept {len(col_labels)} columns: {col_labels}")
+
+    suffix = args.filename_suffix
+    title_tag = f" ({suffix.strip('_')})" if suffix else ""
+
     upload_group = args.upload_as or args.group
     with tempfile.TemporaryDirectory() as tmpdir:
         staging = Path(tmpdir)
-        plot_matrix(A_mean, A_std, constitutions, staging / "matrix_view.png",
+        plot_matrix(A_mean, A_std, constitutions, staging / f"matrix_view{suffix}.png",
                     col_labels=col_labels,
-                    title=f"Character-Train Matrix — {upload_group} (Elo, API avg = {REF_ANCHOR})")
-        plot_ci_matrix(A_std, constitutions, staging / "matrix_ci.png",
+                    title=f"Character-Train Matrix — {upload_group}{title_tag} (Elo, API avg = {REF_ANCHOR})")
+        plot_ci_matrix(A_std, constitutions, staging / f"matrix_ci{suffix}.png",
                        col_labels=col_labels,
-                       title=f"Character-Train Matrix — {upload_group} (CI Width)")
-        save_csv(A_mean, constitutions, staging / "matrix_view.csv", col_labels=col_labels)
+                       title=f"Character-Train Matrix — {upload_group}{title_tag} (CI Width)")
+        save_csv(A_mean, constitutions, staging / f"matrix_view{suffix}.csv", col_labels=col_labels)
+
+        # Optional grouped variant: split columns into named blocks side-by-side
+        if args.column_groups:
+            groups: list[tuple[str, np.ndarray, np.ndarray, list[str]]] = []
+            if BASE_NICK in col_labels:
+                bj = col_labels.index(BASE_NICK)
+                groups.append((BASE_NICK,
+                               A_mean[:, bj:bj + 1], A_std[:, bj:bj + 1],
+                               [BASE_NICK]))
+
+            for spec in args.column_groups.split("|"):
+                spec = spec.strip()
+                if not spec:
+                    continue
+                if "=" not in spec:
+                    print(f"Skipping malformed group spec: {spec!r}")
+                    continue
+                g_name, substr_csv = spec.split("=", 1)
+                g_name = g_name.strip()
+                substrs = [s.strip() for s in substr_csv.split(",") if s.strip()]
+                idxs = [
+                    j for j, label in enumerate(col_labels)
+                    if label != BASE_NICK and any(s in label for s in substrs)
+                ]
+                if not idxs:
+                    print(f"  Group '{g_name}': no matching columns — skipping")
+                    continue
+                # Strip the longest matching substring from each label so the
+                # group's column ticks aren't redundant with the group title.
+                # E.g. inside group "trained_loving" with substr "trained_loving",
+                # "trained_loving__prompt_sarcasm" -> "prompt_sarcasm" -> "sarcasm".
+                def _short_label(full: str) -> str:
+                    out = full
+                    for s in sorted(substrs, key=len, reverse=True):
+                        if out.startswith(s):
+                            out = out[len(s):]
+                        elif s in out:
+                            out = out.replace(s, "", 1)
+                    out = out.strip("_- ")
+                    if out.startswith("prompt_"):
+                        out = out[len("prompt_"):]
+                    return out or full
+
+                short_labels = [_short_label(col_labels[j]) for j in idxs]
+                groups.append((
+                    g_name,
+                    A_mean[:, idxs],
+                    A_std[:, idxs],
+                    short_labels,
+                ))
+
+            if groups:
+                plot_grouped_matrix(
+                    groups, constitutions,
+                    staging / f"matrix_view_grouped{suffix}.png",
+                    title=f"Character-Train Matrix — {upload_group}{title_tag}",
+                )
 
         if not args.no_upload:
             upload_matrix_to_hf(upload_group, staging, args.repo)

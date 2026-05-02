@@ -235,6 +235,118 @@ def plot_ci_matrix(
     print(f"Saved CI plot: {output_path}")
 
 
+def plot_grouped_matrix(
+    groups: list[tuple[str, np.ndarray, np.ndarray, list[str]]],
+    row_labels: list[str],
+    output_path: Path,
+    title: str = "Character-Train Matrix (Elo vs Base)",
+    gap: float = 0.6,
+):
+    """Plot multiple sub-matrices side-by-side with whitespace gaps.
+
+    Each entry of ``groups`` is ``(group_name, A_mean, A_std, col_labels)``
+    where each A_mean/A_std has shape (nrows, group_ncols).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    nrows = len(row_labels)
+    if not groups:
+        raise ValueError("groups must be non-empty.")
+
+    all_vals = np.concatenate([g[1].flatten() for g in groups])
+    dev = np.nanmax(np.abs(all_vals - REF_ANCHOR))
+    if dev == 0 or np.isnan(dev):
+        dev = 1
+
+    total_cells = sum(g[1].shape[1] for g in groups)
+    total_width = total_cells + gap * (len(groups) - 1)
+
+    fig_w = max(13, total_width * 1.05 + 3.0)
+    fig_h = max(6.5, nrows * 1.1 + 4.0)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig.subplots_adjust(top=0.78, bottom=0.32, left=0.10, right=0.93)
+
+    cell_centers: list[float] = []
+    cell_col_labels: list[str] = []
+    group_spans: list[tuple[str, float, float]] = []
+
+    def _humanize(s: str) -> str:
+        return s.replace("_", " ").strip()
+
+    cmap = plt.get_cmap("RdBu_r")
+    vmin, vmax = REF_ANCHOR - dev, REF_ANCHOR + dev
+
+    x = 0.0
+    last_im = None
+    for g_idx, (g_name, A, S, c_labels) in enumerate(groups):
+        ncols = A.shape[1]
+        if A.shape != S.shape or A.shape[0] != nrows or len(c_labels) != ncols:
+            raise ValueError(f"Group '{g_name}' shape mismatch.")
+
+        extent = (x - 0.5, x + ncols - 0.5, nrows - 0.5, -0.5)
+        im = ax.imshow(A, cmap=cmap, vmin=vmin, vmax=vmax,
+                       aspect="auto", extent=extent, interpolation="nearest")
+        last_im = im
+
+        for j in range(ncols):
+            cx = x + j
+            cell_centers.append(cx)
+            cell_col_labels.append(_humanize(c_labels[j]))
+            for i in range(nrows):
+                val = A[i, j]
+                std = S[i, j]
+                if np.isnan(val):
+                    continue
+                color = "white" if abs(val - REF_ANCHOR) > dev * 0.6 else "black"
+                label = f"{val:.0f}\n±{std:.0f}" if not np.isnan(std) else f"{val:.0f}"
+                ax.text(cx, i, label, ha="center", va="center",
+                        fontsize=8, color=color)
+
+        # Outline the group
+        ax.add_patch(Rectangle(
+            (x - 0.5, -0.5), ncols, nrows,
+            fill=False, edgecolor="black", linewidth=1.4, zorder=4,
+        ))
+        group_spans.append((g_name, x, x + ncols - 1))
+
+        x += ncols + (gap if g_idx < len(groups) - 1 else 0)
+
+    ax.set_xlim(-0.7, total_width - 0.3)
+    ax.set_ylim(nrows - 0.5, -0.5)
+
+    ax.set_xticks(cell_centers)
+    ax.set_xticklabels(cell_col_labels, rotation=35, ha="right", fontsize=9)
+    ax.set_yticks(range(nrows))
+    ax.set_yticklabels(row_labels, fontsize=11)
+    ax.set_ylabel("Evaluated under (row)", fontsize=12)
+
+    # Group titles centered above each block, on a dedicated row above the cells.
+    # We use axis-data y < 0 (since imshow inverted y-axis) but place via a
+    # separate transform anchored at the top of the axes.
+    for g_name, x_start, x_end in group_spans:
+        center = 0.5 * (x_start + x_end)
+        ax.annotate(
+            _humanize(g_name),
+            xy=(center, -0.5),
+            xytext=(0, 26),
+            textcoords="offset points",
+            ha="center", va="bottom",
+            fontsize=12, fontweight="bold",
+            annotation_clip=False,
+        )
+
+    fig.suptitle(title, fontsize=14, y=0.97)
+    ax.tick_params(axis="x", which="both", length=0)
+
+    plt.colorbar(last_im, ax=ax, label="Elo", shrink=0.75, pad=0.02)
+    plt.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close()
+    print(f"Saved grouped plot: {output_path}")
+
+
 def save_csv(A_mean: np.ndarray, row_labels: list[str], output_path: Path, col_labels: list[str] | None = None):
     """Save the matrix as CSV."""
     import csv
