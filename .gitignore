@@ -48,3 +48,11 @@ runs/openchar/**/evaluations.jsonl
 runs/nxn/**/btd_d*/
 runs/nxn/**/evaluations.jsonl
 runs/nxn/**/__pycache__/
+
+!runs/augmented/
+!runs/augmented/*/
+!runs/augmented/**/spec.py
+!runs/augmented/README.md
+runs/augmented/**/btd_d*/
+runs/augmented/**/evaluations.jsonl
+runs/augmented/**/__pycache__/
