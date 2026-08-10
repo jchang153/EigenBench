@@ -12,6 +12,7 @@ from pipeline.config import (
     get_criteria_from_spec,
 )
 from pipeline.eval import collect_core_evaluations
+from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import append_records, load_records
 
 
@@ -23,8 +24,8 @@ def _build_cached_index(cached_records):
     return index
 
 
-def _has_local_models(models: dict[str, str]) -> bool:
-    return any(v.startswith("hf_local:") for v in models.values())
+def _has_local_models(models: dict[str, object]) -> bool:
+    return any(is_hf_local_model(value) for value in models.values())
 
 
 def main(spec_ref: str):

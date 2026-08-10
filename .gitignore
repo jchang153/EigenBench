@@ -5,6 +5,7 @@ __pycache__/
 **/.DS_Store
 deprecated/
 .venv
+tests/
 
 # Run artifacts
 runs/*
@@ -14,6 +15,11 @@ runs/example/**/__pycache__/
 runs/example/**/*.pyc
 runs/example/**/.DS_Store
 runs/example/btd_d*/
+!runs/oct_dpo/
+!runs/oct_dpo/**
+runs/oct_dpo/**/btd_d*/
+runs/oct_dpo/**/collection.checkpoint/
+runs/oct_dpo/**/evaluations.jsonl
 
 # Data policy:
 # - Keep constitution files in version control

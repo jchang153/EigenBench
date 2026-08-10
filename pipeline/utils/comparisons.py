@@ -52,6 +52,22 @@ def _contiguous_prefix_len(one_based_scores: dict[int, int]) -> int:
     return j - 1
 
 
+def validate_partial_criteria_response(response: str) -> str | None:
+    """Validate the historical partial-parsing contract for one judge response.
+
+    A response is valid when criterion 1 is present with a 0/1/2 value.  Later
+    criteria may be absent; training will retain the largest contiguous prefix,
+    matching the behavior used by the existing extractor.
+    """
+
+    if not isinstance(response, str) or not response.strip():
+        return "Judge response is empty"
+    valid_scores, _, _ = _extract_valid_criterion_scores(response)
+    if _contiguous_prefix_len(valid_scores) < 1:
+        return "Judge response is missing a valid <criterion_1_choice>0/1/2</criterion_1_choice> tag"
+    return None
+
+
 def extract_comparisons_with_ties_criteria(
     data,
     num_criteria: int,
@@ -225,4 +241,5 @@ def handle_inconsistencies_with_ties_criteria(comparisons):
 __all__ = [
     "extract_comparisons_with_ties_criteria",
     "handle_inconsistencies_with_ties_criteria",
+    "validate_partial_criteria_response",
 ]

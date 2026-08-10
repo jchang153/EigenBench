@@ -7,8 +7,12 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import os
+import pprint
 import sys
+import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 # Allow "python scripts/run.py ..." to import top-level packages (e.g. pipeline).
@@ -19,10 +23,68 @@ if str(_REPO_ROOT) not in sys.path:
 from pipeline.config import load_run_spec
 
 
+def _space_safe_model_id(model_ref: object) -> str:
+    """Convert a structured local model reference to Space metadata syntax.
+
+    ValueArena trains only from the collected comparisons, so it does not load
+    these models. Its current metadata parser nevertheless expects legacy
+    string model IDs.
+    """
+
+    if isinstance(model_ref, str):
+        return model_ref
+    if not isinstance(model_ref, Mapping) or model_ref.get("provider") != "hf_local":
+        raise ValueError(f"Unsupported model reference for ValueArena: {model_ref!r}")
+
+    repo_id = model_ref.get("repo_id")
+    if not isinstance(repo_id, str) or not repo_id:
+        raise ValueError("Structured local model reference must include repo_id")
+    subfolder = model_ref.get("subfolder")
+    if subfolder:
+        return f"hf_local:{repo_id}/{subfolder}"
+    if model_ref.get("kind") == "lora":
+        # The Space uses the third path component only to classify metadata;
+        # model artifacts are never loaded during the upload-stage training.
+        return f"hf_local:{repo_id}/adapter"
+    return f"hf_local:{repo_id}"
+
+
+def _write_space_safe_spec(spec: dict) -> str:
+    """Materialize a standalone spec accepted by the current ValueArena Space."""
+
+    space_spec = copy.deepcopy(spec)
+    space_spec["models"] = {
+        name: _space_safe_model_id(model_ref)
+        for name, model_ref in spec.get("models", {}).items()
+    }
+    if isinstance(space_spec.get("upload"), dict):
+        space_spec["upload"].pop("secret", None)
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".py",
+        delete=False,
+        prefix="va_spec_",
+    )
+    handle.write("RUN_SPEC = ")
+    pprint.pprint(space_spec, stream=handle, sort_dicts=False)
+    handle.close()
+    return handle.name
+
+
 def main(spec_ref: str, collection_enabled: bool | None = None):
     spec, _ = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
     training_cfg = spec.get("training", {})
+    upload_cfg = spec.get("upload", {})
+    upload_to_space = bool(upload_cfg.get("enabled", False))
+    space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
+    space_spec_path = None
+    if upload_to_space:
+        if not space_secret:
+            raise SystemExit("Set upload.secret in spec or SPACE_SECRET env var")
+        # Validate and materialize this before any expensive collection calls.
+        space_spec_path = _write_space_safe_spec(spec)
+
     if collection_enabled is not None:
         collection_cfg["enabled"] = collection_enabled
     cached_responses_path = collection_cfg.get("cached_responses_path")
@@ -43,9 +105,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
 
-    upload_cfg = spec.get("upload", {})
-    upload_to_space = bool(upload_cfg.get("enabled", False))
-
     if upload_to_space:
         # Skip local training — Space handles it
         print("Stage: train + eigentrust (skipped; upload.enabled=True, Space will train)")
@@ -60,7 +119,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     if upload_to_space:
         print("Stage: submitting to ValueArena Space")
         import subprocess
-        import tempfile as _tf
 
         # Auto-capture git commit
         git_commit = upload_cfg.get("git_commit", "")
@@ -73,18 +131,14 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
                 git_commit = ""
 
         eval_path = collection_cfg.get("evaluations_path", "")
-        spec_path = str(Path(spec_ref).resolve() if "/" in spec_ref or spec_ref.endswith(".py") else (Path(_REPO_ROOT) / spec_ref.replace(".", "/")).with_suffix(".py"))
-
-        space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
-        if not space_secret:
-            raise SystemExit("Set upload.secret in spec or SPACE_SECRET env var")
+        spec_path = space_spec_path
 
         run_name = upload_cfg.get("name", spec.get("name", ""))
         run_group = upload_cfg.get("group", "")
         run_note = upload_cfg.get("note", "")
 
         # Write a standalone script and run it detached via nohup
-        script_file = _tf.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
+        script_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
         script_file.write(f"""
 import os
 # Remove SOCKS proxies (cause socksio import error) but keep HTTP/HTTPS proxy for DNS
@@ -95,17 +149,27 @@ for k in list(os.environ):
 from gradio_client import Client, handle_file
 c = Client("https://invi-bhagyesh-valuearena.hf.space/")
 try:
-    result = c.predict({space_secret!r}, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
+    secret = os.environ["SPACE_SECRET"]
+    result = c.predict(secret, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
     print("Done!", result[0] if result else result)
 except Exception as e:
     print("Error:", e)
+finally:
+    for path in (__file__, {spec_path!r}):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 """)
         script_file.close()
 
         log_file = script_file.name.replace(".py", ".log")
+        submit_env = os.environ.copy()
+        submit_env["SPACE_SECRET"] = space_secret
         subprocess.Popen(
             f"nohup {sys.executable} -u {script_file.name} > {log_file} 2>&1 &",
             shell=True,
+            env=submit_env,
         )
         print(f"Submitted! Job running on Space in background.")
         print(f"  Log: {log_file}")
