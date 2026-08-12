@@ -94,5 +94,10 @@ RUN_SPEC = {
             "save_trust_matrices": True,
         },
     },
-    "upload": {"enabled": False},
+    "upload": {
+        "enabled": True,
+        "name": "humor-lls-mitigation-v1/sarcasm",
+        "group": "humor-lls-mitigation-v1",
+        "note": "Targeted humor-DPO LLS filtering experiment; revisions pinned in this spec.",
+    },
 }
