@@ -48,7 +48,12 @@ def damp_matrix(C, alpha: float = 0.0):
 
 def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True):
     T = damp_matrix(C, alpha)
-    t = torch.full((T.size(0),), 1.0 / T.size(0), device=T.device)
+    t = torch.full(
+        (T.size(0),),
+        1.0 / T.size(0),
+        device=T.device,
+        dtype=T.dtype,
+    )
 
     if verbose:
         for _ in tqdm(range(max_iter)):

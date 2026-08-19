@@ -60,6 +60,64 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
     normalized["name"] = run_name
     normalized["verbose"] = bool(normalized.get("verbose", False))
 
+    evaluation = normalized.setdefault("evaluation", {})
+    mode = str(evaluation.get("mode", "pairwise_btd")).strip().lower()
+    aliases = {
+        "pairwise": "pairwise_btd",
+        "btd": "pairwise_btd",
+        "direct": "direct_rating",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in {"pairwise_btd", "direct_rating"}:
+        raise ValueError(
+            "evaluation.mode must be 'pairwise_btd' or 'direct_rating'; "
+            f"got {evaluation.get('mode')!r}"
+        )
+    evaluation["mode"] = mode
+
+    if mode == "direct_rating":
+        direct = evaluation.setdefault("direct_rating", {})
+        direct["include_self"] = bool(direct.get("include_self", True))
+        direct["scale_min"] = int(direct.get("scale_min", 1))
+        direct["scale_max"] = int(direct.get("scale_max", 10))
+        direct["criterion_aggregation"] = str(
+            direct.get("criterion_aggregation", "mean")
+        ).strip().lower()
+        direct["scenario_aggregation"] = str(
+            direct.get("scenario_aggregation", "mean")
+        ).strip().lower()
+        direct["normalization"] = str(
+            direct.get("normalization", "zscore_softmax")
+        ).strip().lower()
+        supported_normalizations = {
+            "zscore_softmax",
+            "rank_softmax",
+            "raw_l1",
+            "minmax_l1",
+            "positive_centered_l1",
+        }
+        if direct["normalization"] not in supported_normalizations:
+            raise ValueError(
+                "direct_rating.normalization must be one of "
+                f"{sorted(supported_normalizations)}"
+            )
+        direct["softmax_temperature"] = float(
+            direct.get("softmax_temperature", 1.0)
+        )
+        if direct["scale_min"] >= direct["scale_max"]:
+            raise ValueError("direct_rating.scale_min must be less than scale_max")
+        if (direct["scale_min"], direct["scale_max"]) != (1, 10):
+            raise ValueError("direct_rating currently uses the fixed 1-10 rating scale")
+        if direct["criterion_aggregation"] != "mean":
+            raise ValueError("direct_rating.criterion_aggregation currently supports only 'mean'")
+        if direct["scenario_aggregation"] != "mean":
+            raise ValueError("direct_rating.scenario_aggregation currently supports only 'mean'")
+        if direct["softmax_temperature"] <= 0:
+            raise ValueError("direct_rating.softmax_temperature must be positive")
+        direct["eigentrust_alpha"] = float(direct.get("eigentrust_alpha", 0.0))
+        if not 0.0 <= direct["eigentrust_alpha"] <= 1.0:
+            raise ValueError("direct_rating.eigentrust_alpha must be between 0 and 1")
+
     collection = normalized.setdefault("collection", {})
     collection["evaluations_path"] = _resolve_path_for_run(
         collection.get("evaluations_path"),

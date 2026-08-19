@@ -7,158 +7,23 @@ Supports two modes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections import defaultdict
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 import random
-from typing import Callable
 
 from pipeline.model_refs import is_hf_local_model
-from pipeline.providers.openrouter import (
-    OpenRouterCallError,
-    get_openrouter_response,
-    require_openrouter_api_key,
-)
-from pipeline.providers.vllm_local import (
-    VLLMEngineManager,
-    group_models_for_vllm,
-    prepare_lora_requests,
-)
-from pipeline.utils import validate_partial_criteria_response
+from pipeline.utils import load_records, validate_partial_criteria_response
 from .checkpoint import CollectionCheckpoint
 from .criteria_collectors import build_reflection_prompt, build_comparison_prompt
+from .openrouter_tasks import (
+    MAX_PARALLEL_API_CALLS,
+    OpenRouterTask as _OpenRouterTask,
+    StrictCollectionError,
+    call_openrouter as _call_openrouter,
+    openrouter_settings as _openrouter_settings,
+    run_openrouter_tasks as _run_openrouter_tasks,
+)
 from .samplers import select_sampler
-
-MAX_PARALLEL_API_CALLS = 10
-
-
-@dataclass(frozen=True)
-class _OpenRouterTask:
-    identity: dict
-    call: Callable[[], str]
-
-
-class StrictCollectionError(RuntimeError):
-    """Raised after checkpointing an exhausted or fatal collection task."""
-
-
-def _openrouter_settings(collection_cfg: dict) -> dict:
-    cfg = collection_cfg.get("openrouter", {})
-    return {
-        "max_attempts": int(cfg.get("max_attempts", 4)),
-        "timeout_seconds": float(cfg.get("timeout_seconds", 300.0)),
-        "backoff_base_seconds": float(cfg.get("backoff_base_seconds", 2.0)),
-        "backoff_cap_seconds": float(cfg.get("backoff_cap_seconds", 60.0)),
-        "max_workers": int(cfg.get("max_workers", MAX_PARALLEL_API_CALLS)),
-    }
-
-
-def _call_openrouter(
-    model_path: str,
-    messages,
-    max_tokens: int,
-    settings: dict,
-    *,
-    response_validator: Callable[[str], str | None] | None = None,
-) -> str:
-    return get_openrouter_response(
-        messages,
-        model=model_path,
-        max_tokens=max_tokens,
-        max_attempts=settings["max_attempts"],
-        timeout_seconds=settings["timeout_seconds"],
-        backoff_base_seconds=settings["backoff_base_seconds"],
-        backoff_cap_seconds=settings["backoff_cap_seconds"],
-        response_validator=response_validator,
-    )
-
-
-def _run_openrouter_tasks(
-    tasks: list[_OpenRouterTask],
-    *,
-    checkpoint: CollectionCheckpoint,
-    max_workers: int,
-) -> list[str]:
-    """Run bounded parallel tasks, checkpointing every success and failure."""
-
-    if max_workers <= 0:
-        raise ValueError("collection.openrouter.max_workers must be positive")
-
-    results: list[str | None] = [None] * len(tasks)
-    pending_indices: list[int] = []
-    for index, task in enumerate(tasks):
-        saved = checkpoint.load_completed(task.identity)
-        if saved is None:
-            pending_indices.append(index)
-            continue
-        content = saved.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError(f"Invalid completed checkpoint payload for task {task.identity}")
-        results[index] = content
-
-    if not pending_indices:
-        return [result for result in results if result is not None]
-
-    executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending_indices)))
-    in_flight = {}
-    next_pending = 0
-    failures: list[tuple[dict, dict]] = []
-
-    def submit_available() -> None:
-        nonlocal next_pending
-        while not failures and len(in_flight) < max_workers and next_pending < len(pending_indices):
-            index = pending_indices[next_pending]
-            next_pending += 1
-            future = executor.submit(tasks[index].call)
-            in_flight[future] = index
-
-    submit_available()
-    try:
-        while in_flight:
-            done, _ = wait(tuple(in_flight), return_when=FIRST_COMPLETED)
-            for future in done:
-                index = in_flight.pop(future)
-                task = tasks[index]
-                try:
-                    content = future.result()
-                    if not isinstance(content, str) or not content.strip():
-                        raise RuntimeError("OpenRouter task returned empty content after validation")
-                except OpenRouterCallError as exc:
-                    error = exc.to_dict()
-                    checkpoint.save_failed(task.identity, error)
-                    failures.append((task.identity, error))
-                except Exception as exc:
-                    error = {
-                        "error_type": "client_bug",
-                        "message": f"{type(exc).__name__}: {exc}",
-                        "retryable": False,
-                        "exhausted": False,
-                    }
-                    checkpoint.save_failed(task.identity, error)
-                    failures.append((task.identity, error))
-                else:
-                    results[index] = content
-                    checkpoint.save_completed(task.identity, {"content": content})
-
-            # Once a task has failed, allow already-running requests to finish
-            # and be checkpointed, but do not submit additional work.
-            submit_available()
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
-
-    if failures:
-        identity, error = failures[0]
-        raise StrictCollectionError(
-            "Strict collection paused after a failed OpenRouter task. "
-            f"task={identity}, error={error}. Re-run with the same spec to resume "
-            "from the checkpoint after resolving the failure."
-        )
-
-    if any(result is None for result in results):
-        raise RuntimeError("OpenRouter task scheduler exited with incomplete results")
-    return [result for result in results if result is not None]
-
 
 def _build_eval_assignments_sampled(
     selected_scenarios: list,
@@ -310,6 +175,7 @@ def _phase1_vllm(
 ):
     """Generate responses for local HF models via vLLM batching."""
     from vllm import SamplingParams
+    from pipeline.providers.vllm_local import VLLMEngineManager, prepare_lora_requests
 
     for base_key, base_info in local_base_models.items():
         has_loras = len(base_info["loras"]) > 0
@@ -506,6 +372,7 @@ def _phase2_vllm_default(
 ):
     """vLLM batched reflections for default mode."""
     from vllm import SamplingParams
+    from pipeline.providers.vllm_local import VLLMEngineManager, prepare_lora_requests
 
     reflection_prompt = build_reflection_prompt()
 
@@ -575,6 +442,7 @@ def _phase2_vllm_all_to_all(
 ):
     """vLLM batched reflections for all-to-all mode (per-judge keyed)."""
     from vllm import SamplingParams
+    from pipeline.providers.vllm_local import VLLMEngineManager, prepare_lora_requests
 
     reflection_prompt = build_reflection_prompt()
 
@@ -803,6 +671,7 @@ def _phase3_vllm(
 ) -> list[dict]:
     """Pairwise comparisons for local HF judges via vLLM batching."""
     from vllm import SamplingParams
+    from pipeline.providers.vllm_local import VLLMEngineManager, prepare_lora_requests
 
     comparison_prompt = build_comparison_prompt(allow_ties=allow_ties)
     evaluations = []
@@ -964,10 +833,18 @@ def collect_mixed_evaluations(
         if not is_hf_local_model(model_path)
     }
     if configured_openrouter_models:
+        from pipeline.providers.openrouter import require_openrouter_api_key
+
         require_openrouter_api_key()
 
-    # Group models
-    local_base_models, local_tokenizers, openrouter_models = group_models_for_vllm(models)
+    # Avoid loading the GPU stack for an OpenRouter-only run.
+    if len(configured_openrouter_models) == len(models):
+        local_base_models, local_tokenizers = {}, {}
+        openrouter_models = configured_openrouter_models
+    else:
+        from pipeline.providers.vllm_local import group_models_for_vllm
+
+        local_base_models, local_tokenizers, openrouter_models = group_models_for_vllm(models)
     has_local = bool(local_base_models)
 
     if verbose:
@@ -982,6 +859,22 @@ def collect_mixed_evaluations(
     # Phase 1: Evaluee Responses
     print("Phase 1: Generate evaluee responses")
     eval_responses: dict = defaultdict(dict)
+    cache_path = collection_cfg.get("cached_responses_path")
+    if cache_path:
+        for record in load_records(cache_path):
+            if not isinstance(record, dict) or "scenario_index" not in record:
+                continue
+            responses = record.get("responses")
+            if not isinstance(responses, dict):
+                continue
+            scenario_idx = int(record["scenario_index"])
+            eval_responses[scenario_idx].update(
+                {
+                    str(nick): content
+                    for nick, content in responses.items()
+                    if nick in models and isinstance(content, str) and content.strip()
+                }
+            )
 
     _phase1_openrouter(
         eval_assignments,

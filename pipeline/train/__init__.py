@@ -11,6 +11,7 @@ from .train import (
 )
 from .plots import save_uv_embedding_plot, save_eigenbench_plot
 from .bootstrap import run_bootstrap
+from .direct_analysis import run_direct_analysis, run_direct_bootstrap
 
 __all__ = [
     "VectorBT",
@@ -27,4 +28,6 @@ __all__ = [
     "save_uv_embedding_plot",
     "save_eigenbench_plot",
     "run_bootstrap",
+    "run_direct_analysis",
+    "run_direct_bootstrap",
 ]

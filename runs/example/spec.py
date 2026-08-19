@@ -4,6 +4,17 @@ Example run spec for custom EigenBench experiments.
 
 RUN_SPEC = {
     "verbose": False,
+    "evaluation": {
+        "mode": "pairwise_btd",  # pairwise_btd | direct_rating
+        # Direct mode defaults to exhaustive all-to-all ratings, including self.
+        # "direct_rating": {
+        #     "include_self": True,
+        #     "scale_min": 1,
+        #     "scale_max": 10,
+        #     "normalization": "zscore_softmax",
+        #     "softmax_temperature": 1.0,
+        # },
+    },
     "models": {
         "Claude 4 Sonnet": "anthropic/claude-sonnet-4",
         "GPT 4.1": "openai/gpt-4.1",
@@ -29,6 +40,13 @@ RUN_SPEC = {
         "groups": 1,
         "sampler_mode": "random_judge_group", # random_judge_group | adaptive_inverse_count | uniform
         "alpha": 2.0, # used for adaptive_inverse_count sampling
+        # Phase-specific settings are used by direct_rating mode. The final
+        # rating is deliberately decoded greedily at temperature 0.
+        "generation": {
+            "response": {"max_tokens": 4096, "temperature": 0.7},
+            "reflection": {"max_tokens": 2048, "temperature": 0.2},
+            "direct_rating": {"max_tokens": 512, "temperature": 0.0},
+        },
     },
     "training": {
         "enabled": True, # run training

@@ -73,6 +73,23 @@ def main(spec_ref: str):
 
     data = load_records(evaluations_path)
 
+    evaluation_cfg = _spec.get("evaluation", {})
+    if evaluation_cfg.get("mode", "pairwise_btd") == "direct_rating":
+        from pipeline.train.direct_analysis import run_direct_analysis
+
+        print("Direct-rating mode: skipping BT/BTD fitting and aggregating ratings directly.")
+        out_root = _resolve_output_root(evaluations_path, train_cfg)
+        run_direct_analysis(
+            records=data,
+            models=_spec.get("models", {}),
+            num_criteria=num_criteria,
+            evaluation_cfg=evaluation_cfg,
+            training_cfg=train_cfg,
+            output_root=out_root,
+            verbose=verbose,
+        )
+        return
+
     comparisons, _, extracted_name_map = extract_comparisons_with_ties_criteria(
         data,
         num_criteria=num_criteria,

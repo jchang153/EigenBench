@@ -5,13 +5,15 @@ This module is intended to be invoked by ``scripts/run.py``.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from pipeline.config import (
     load_run_spec,
     load_dataset_scenarios_from_spec,
     select_scenarios,
     get_criteria_from_spec,
 )
-from pipeline.eval import collect_core_evaluations
 from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import append_records, load_records
 
@@ -84,6 +86,57 @@ def main(spec_ref: str):
     if not evaluations_path:
         raise SystemExit("Set collection.evaluations_path in your run spec.")
 
+    evaluation_cfg = spec.get("evaluation", {})
+    evaluation_mode = evaluation_cfg.get("mode", "pairwise_btd")
+    if evaluation_mode == "direct_rating":
+        from pipeline.eval.direct_rating import (
+            collect_direct_ratings,
+            count_cached_responses,
+            estimate_direct_calls,
+        )
+
+        openrouter_nicks = {
+            nick for nick, value in models.items() if not is_hf_local_model(value)
+        }
+        cached_total, cached_remote = count_cached_responses(
+            cfg.get("cached_responses_path"),
+            scenario_indices={int(item[0]) for item in selected},
+            model_nicks=set(models),
+            openrouter_nicks=openrouter_nicks,
+        )
+        estimate = {
+            "mode": "direct_rating",
+            **estimate_direct_calls(
+                num_scenarios=len(selected),
+                num_models=len(models),
+                num_openrouter_models=len(openrouter_nicks),
+                include_self=bool(
+                    evaluation_cfg.get("direct_rating", {}).get("include_self", True)
+                ),
+                cached_responses=cached_total,
+                cached_openrouter_responses=cached_remote,
+            ),
+        }
+        print(
+            "Direct-rating plan: "
+            f"{estimate['total_logical_generations']} logical generations "
+            f"({estimate['openrouter_requests']} OpenRouter requests, "
+            f"{estimate['local_logical_generations']} local generations)"
+        )
+        estimate_path = Path(evaluations_path).with_name("direct_call_estimate.json")
+        estimate_path.parent.mkdir(parents=True, exist_ok=True)
+        estimate_path.write_text(json.dumps(estimate, indent=2) + "\n", encoding="utf-8")
+        collect_direct_ratings(
+            models=models,
+            selected_scenarios=selected,
+            criteria=criteria,
+            evaluation_cfg=evaluation_cfg,
+            collection_cfg=cfg,
+            evaluations_path=evaluations_path,
+            verbose=verbose,
+        )
+        return
+
     sampler_mode = (cfg.get("sampler_mode", "random_judge_group")).strip().lower()
 
     # Route: mixed collection (hf_local models or all_to_all mode)
@@ -111,6 +164,8 @@ def main(spec_ref: str):
         return
 
     # Route: OpenRouter-only collection (original path)
+    from pipeline.eval import collect_core_evaluations
+
     cached_responses_path = cfg.get("cached_responses_path")
     cached_index = None
     if cached_responses_path:
