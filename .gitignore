@@ -20,7 +20,7 @@ runs/example/btd_d*/
 runs/oct_dpo/**/btd_d*/
 runs/oct_dpo/**/collection.checkpoint/
 runs/oct_dpo/**/evaluations.jsonl
-!runs/ox_alpha/*/
+!runs/ox_alpha/
 
 # Data policy:
 # - Keep constitution files in version control
