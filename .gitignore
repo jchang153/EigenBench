@@ -14,6 +14,10 @@ runs/example/**/__pycache__/
 runs/example/**/*.pyc
 runs/example/**/.DS_Store
 runs/example/btd_d*/
+!runs/humor_lls_sarcasm_direct_20/
+runs/humor_lls_sarcasm_direct_20/*
+!runs/humor_lls_sarcasm_direct_20/spec.py
+!runs/humor_lls_sarcasm_direct_20/README.md
 !runs/oct_dpo/
 !runs/oct_dpo/**
 runs/oct_dpo/**/btd_d*/

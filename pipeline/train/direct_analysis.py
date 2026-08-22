@@ -52,6 +52,26 @@ def _save_bootstrap_plot(summary_rows: list[dict], path: Path) -> None:
     plt.close(fig)
 
 
+def _save_trust_matrix_plot(matrix: np.ndarray, labels: list[str], path: Path) -> None:
+    from matplotlib import pyplot as plt
+
+    size = max(7.0, len(labels) * 0.65)
+    fig, ax = plt.subplots(figsize=(size, size))
+    image = ax.imshow(matrix, cmap="viridis", vmin=0.0)
+    positions = np.arange(len(labels))
+    ax.set_xticks(positions)
+    ax.set_yticks(positions)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels)
+    ax.set_xlabel("Evaluee")
+    ax.set_ylabel("Judge")
+    ax.set_title("Direct-Rating Trust Matrix")
+    fig.colorbar(image, ax=ax, label="Normalized trust")
+    fig.tight_layout()
+    fig.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def run_direct_bootstrap(
     *,
     records: list[dict],
@@ -169,6 +189,10 @@ def run_direct_analysis(
         encoding="utf-8",
     )
     log = {
+        "evaluation_mode": "direct_rating",
+        "collection_type": "direct_rating",
+        "analysis_kind": "direct_eigentrust",
+        "bootstrap_unit": "scenario",
         "num_models": len(labels),
         "model_order": labels,
         "num_criteria": num_criteria,
@@ -184,6 +208,7 @@ def run_direct_analysis(
     }
     (output_dir / "analysis_config.json").write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
     save_eigenbench_plot(model_names=labels, eigentrust_elo=elo, save_path=str(output_dir / "eigenbench.png"))
+    _save_trust_matrix_plot(result.trust_matrix, labels, output_dir / "trust_matrix.png")
 
     bootstrap_cfg = training_cfg.get("bootstrap") or {}
     if bool(bootstrap_cfg.get("enabled", False)):

@@ -160,17 +160,39 @@ def estimate_calls(spec_ref: str) -> dict:
     return result
 
 
+def _resolve_upload_backend(upload_cfg: dict) -> str:
+    value = str(upload_cfg.get("backend", "valuearena_space")).strip().lower()
+    aliases = {
+        "space": "valuearena_space",
+        "valuearena": "valuearena_space",
+        "hf": "huggingface_dataset",
+        "hf_dataset": "huggingface_dataset",
+        "huggingface": "huggingface_dataset",
+    }
+    backend = aliases.get(value, value)
+    if backend not in {"valuearena_space", "huggingface_dataset"}:
+        raise ValueError(
+            "upload.backend must be 'valuearena_space' or 'huggingface_dataset'; "
+            f"got {value!r}"
+        )
+    return backend
+
+
 def main(spec_ref: str, collection_enabled: bool | None = None):
-    spec, _ = load_run_spec(spec_ref)
+    spec, run_dir = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
     training_cfg = spec.get("training", {})
     upload_cfg = spec.get("upload", {})
-    upload_to_space = bool(upload_cfg.get("enabled", False))
+    upload_enabled = bool(upload_cfg.get("enabled", False))
+    upload_backend = _resolve_upload_backend(upload_cfg)
+    upload_to_space = upload_enabled and upload_backend == "valuearena_space"
+    upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
     if upload_to_space and evaluation_mode == "direct_rating":
         raise SystemExit(
-            "upload.enabled=True is not supported for evaluation.mode='direct_rating': "
-            "the current ValueArena Space expects pairwise BTD evaluations."
+            "upload.backend='valuearena_space' is not supported for "
+            "evaluation.mode='direct_rating': use upload.backend='huggingface_dataset' "
+            "or update the Space to accept direct judgments."
         )
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
     space_spec_path = None
@@ -277,6 +299,20 @@ finally:
         print(f"Submitted! Job running on Space in background.")
         print(f"  Log: {log_file}")
         print(f"  Track: https://huggingface.co/spaces/invi-bhagyesh/ValueArena")
+    elif upload_to_dataset:
+        print("Stage: uploading analyzed run to Hugging Face dataset")
+        from scripts.upload_results import upload_run
+
+        dataset_repo = str(upload_cfg.get("repo", "invi-bhagyesh/ValueArena"))
+        upload_name = str(upload_cfg.get("name") or spec.get("name") or run_dir.name)
+        upload_run(
+            upload_name,
+            Path(run_dir),
+            dataset_repo,
+            upload_cfg.get("token") or os.environ.get("HF_TOKEN"),
+            group=upload_cfg.get("group"),
+            note=upload_cfg.get("note"),
+        )
 
 
 if __name__ == "__main__":

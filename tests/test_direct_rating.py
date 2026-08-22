@@ -24,7 +24,8 @@ from pipeline.eval.direct_rating import (
 )
 from pipeline.trust.direct_rating import build_direct_trust, normalize_direct_scores
 from pipeline.train.direct_analysis import run_direct_analysis
-from scripts.run import estimate_calls as estimate_spec_calls
+from scripts.prepare_airiskdilemmas import paired_dilemmas
+from scripts.run import _resolve_upload_backend, estimate_calls as estimate_spec_calls
 
 
 def _direct_records(num_models: int = 3, num_criteria: int = 2, scenarios=(0, 1)):
@@ -109,6 +110,18 @@ class DirectPromptAndParserTests(unittest.TestCase):
 
 
 class DirectPlanningTests(unittest.TestCase):
+    def test_airisk_action_pairs_become_scenarios_without_global_deduplication(self):
+        rows = [
+            {"dilemma": "same"},
+            {"dilemma": "same"},
+            {"dilemma": "same"},
+            {"dilemma": "same"},
+        ]
+        self.assertEqual(paired_dilemmas(rows), ["same", "same"])
+
+        with self.assertRaisesRegex(ValueError, "different dilemmas"):
+            paired_dilemmas([{"dilemma": "one"}, {"dilemma": "two"}])
+
     def test_all_n_squared_edges_include_self(self):
         assignments = build_direct_assignments(
             [(0, "scenario")],
@@ -147,6 +160,16 @@ class DirectPlanningTests(unittest.TestCase):
         )
         self.assertEqual(direct["evaluation"]["mode"], "direct_rating")
         self.assertTrue(direct["evaluation"]["direct_rating"]["include_self"])
+
+    def test_upload_backend_preserves_space_default_and_supports_direct_dataset(self):
+        self.assertEqual(_resolve_upload_backend({}), "valuearena_space")
+        self.assertEqual(
+            _resolve_upload_backend({"backend": "huggingface_dataset"}),
+            "huggingface_dataset",
+        )
+        self.assertEqual(_resolve_upload_backend({"backend": "hf"}), "huggingface_dataset")
+        with self.assertRaisesRegex(ValueError, "upload.backend"):
+            _resolve_upload_backend({"backend": "unknown"})
 
     def test_cli_estimator_reads_direct_spec_without_calling_providers(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -208,7 +231,9 @@ class DirectTrustTests(unittest.TestCase):
         records = _direct_records()
         with tempfile.TemporaryDirectory() as temporary_dir, patch(
             "pipeline.train.direct_analysis.save_eigenbench_plot"
-        ), patch("pipeline.train.direct_analysis._save_bootstrap_plot"):
+        ), patch("pipeline.train.direct_analysis._save_bootstrap_plot"), patch(
+            "pipeline.train.direct_analysis._save_trust_matrix_plot"
+        ):
             outcome = run_direct_analysis(
                 records=records,
                 models={"m0": "a", "m1": "b", "m2": "c"},
