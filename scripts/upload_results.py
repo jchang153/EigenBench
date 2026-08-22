@@ -2,7 +2,7 @@
 Upload EigenBench run results to HuggingFace dataset repo for ValueArena.
 
 Usage:
-    python scripts/upload_results.py --name "persona-goodness" --run-dir runs/matrix_new/goodness/
+    python scripts/upload_results.py --name "my-run" --run-dir runs/my_run/
 """
 
 from __future__ import annotations

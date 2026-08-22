@@ -557,10 +557,10 @@ The current ValueArena Space accepts pairwise BTD runs only. `upload.enabled=Tru
 python3 scripts/upload_results.py --name "my-run" --run-dir runs/my_run/ --note "optional note"
 
 # Batch upload (all sub-runs in a folder)
-python3 scripts/upload_results.py --batch-dir runs/matrix/ --name "matrix" --note "12 persona LoRAs"
+python3 scripts/upload_results.py --batch-dir runs/my_batch/ --name "my-batch" --note "optional note"
 ```
 
-- `--name` is the run slug on HF. For batch, it's the prefix (`matrix` → `matrix/goodness`, `matrix/humor`, etc.)
+- `--name` is the run slug on HF. For batch, it is the prefix (for example, `my-batch/goodness` or `my-batch/humor`).
 - `--note` shows in the table on the website
 - Re-uploading with the same name overwrites the previous entry
 - Git commit hash and scenario range are captured automatically
