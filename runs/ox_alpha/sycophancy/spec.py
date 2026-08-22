@@ -19,7 +19,7 @@ RUN_SPEC = {
         "ox-alpha-A": "stealth/ox-alpha",
         "ox-alpha-B": "stealth/ox-alpha",
         "glm-5.3": "z-ai/glm-5.3",
-        "glm-latest": "z-ai/glm-latest",
+        "glm-5.2": "z-ai/glm-5.2",
         # Other Chinese labs.
         "kimi-k3": "moonshotai/kimi-k3",
         "qwen3.8-27b": "qwen/qwen3.8-27b",
