@@ -45,6 +45,7 @@ def aggregate_direct_records(
     num_models: int,
     num_criteria: int,
     include_self: bool = True,
+    allow_sparse: bool = False,
     scale_min: int = 1,
     scale_max: int = 10,
 ) -> tuple[tuple[int, ...], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -111,17 +112,17 @@ def aggregate_direct_records(
                 )
             values[s_pos, criterion_idx, judge_idx, eval_idx] = rating
 
-    mask = np.ones((num_models, num_models), dtype=bool)
+    structural_mask = np.ones((num_models, num_models), dtype=bool)
     if not include_self:
-        np.fill_diagonal(mask, False)
-    expected = np.broadcast_to(mask, values.shape)
-    if np.isnan(values[expected]).any():
+        np.fill_diagonal(structural_mask, False)
+    expected = np.broadcast_to(structural_mask, values.shape)
+    if not allow_sparse and np.isnan(values[expected]).any():
         missing = int(np.isnan(values[expected]).sum())
         raise ValueError(f"direct rating matrix is incomplete: {missing} expected ratings are missing")
     if np.any(~np.isnan(values[~expected])):
         raise ValueError("direct rating matrix contains unexpected masked ratings")
 
-    counts = np.sum(~np.isnan(values), axis=(0, 1)).astype(int)
+    counts = np.sum(np.any(~np.isnan(values), axis=1), axis=0).astype(int)
     criterion_counts = np.sum(~np.isnan(values), axis=0)
     criterion_means = np.full((num_criteria, num_models, num_models), np.nan, dtype=float)
     np.divide(
@@ -138,6 +139,18 @@ def aggregate_direct_records(
         out=raw_means,
         where=criterion_presence > 0,
     )
+    mask = structural_mask.copy()
+    if allow_sparse:
+        mask &= counts > 0
+        midpoint = 0.5 * (scale_min + scale_max)
+        for judge_idx in range(num_models):
+            if mask[judge_idx].any():
+                continue
+            # A scenario bootstrap can omit every assignment for a lightly
+            # sampled judge. Treat that dangling row as uninformative rather
+            # than failing the entire replicate.
+            mask[judge_idx] = structural_mask[judge_idx]
+            raw_means[judge_idx, structural_mask[judge_idx]] = midpoint
     return scenario_indices, values, criterion_means, raw_means, counts, mask
 
 
@@ -263,6 +276,7 @@ def build_direct_trust(
     num_models: int,
     num_criteria: int,
     include_self: bool = True,
+    allow_sparse: bool = False,
     normalization: str = "zscore_softmax",
     softmax_temperature: float = 1.0,
     scale_min: float = 1.0,
@@ -275,6 +289,7 @@ def build_direct_trust(
         num_models=num_models,
         num_criteria=num_criteria,
         include_self=include_self,
+        allow_sparse=allow_sparse,
         scale_min=int(scale_min),
         scale_max=int(scale_max),
     )

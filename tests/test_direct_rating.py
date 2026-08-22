@@ -21,6 +21,7 @@ from pipeline.eval.direct_rating import (
     estimate_direct_calls,
     parse_direct_ratings,
     resolve_direct_generation_settings,
+    resolve_direct_sampling_settings,
 )
 from pipeline.trust.direct_rating import build_direct_trust, normalize_direct_scores
 from pipeline.train.direct_analysis import run_direct_analysis
@@ -133,6 +134,88 @@ class DirectPlanningTests(unittest.TestCase):
         for judge_idx, assignment in enumerate(assignments):
             self.assertIn(judge_idx, assignment["eval_idxs"])
 
+    def test_partitioned_sampler_covers_every_response_once_per_scenario(self):
+        models = {f"m{idx}": f"provider/{idx}" for idx in range(20)}
+        scenarios = [(0, "s0"), (1, "s1")]
+        kwargs = {
+            "include_self": True,
+            "sampler_mode": "partitioned_random_judge",
+            "group_size": 4,
+            "response_redundancy": 1,
+            "sampler_seed": 42,
+        }
+        assignments = build_direct_assignments(scenarios, models, **kwargs)
+        repeated = build_direct_assignments(scenarios, models, **kwargs)
+        self.assertEqual(assignments, repeated)
+        self.assertEqual(len(assignments), 10)
+        self.assertTrue(all(1 <= len(item["eval_idxs"]) <= 4 for item in assignments))
+        for scenario_idx in (0, 1):
+            counts = [0] * 20
+            for assignment in assignments:
+                if assignment["scenario_index"] != scenario_idx:
+                    continue
+                for eval_idx in assignment["eval_idxs"]:
+                    counts[eval_idx] += 1
+            self.assertEqual(counts, [1] * 20)
+
+    def test_partitioned_redundancy_uses_distinct_judges(self):
+        models = {f"m{idx}": f"provider/{idx}" for idx in range(8)}
+        assignments = build_direct_assignments(
+            [(0, "s0")],
+            models,
+            sampler_mode="partitioned_random_judge",
+            group_size=4,
+            response_redundancy=2,
+            sampler_seed=7,
+        )
+        judges_by_evaluee = {idx: set() for idx in range(8)}
+        for assignment in assignments:
+            for eval_idx in assignment["eval_idxs"]:
+                judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
+        self.assertTrue(all(len(judges) == 2 for judges in judges_by_evaluee.values()))
+
+    def test_partitioned_sampler_without_self_selects_judges_outside_groups(self):
+        assignments = build_direct_assignments(
+            [(0, "s0")],
+            {f"m{idx}": f"provider/{idx}" for idx in range(6)},
+            include_self=False,
+            sampler_mode="partitioned_random_judge",
+            group_size=3,
+            sampler_seed=3,
+        )
+        for assignment in assignments:
+            self.assertNotIn(assignment["judge_idx"], assignment["eval_idxs"])
+
+    def test_partitioned_call_estimate_is_linear_in_models_and_scenarios(self):
+        estimate = estimate_direct_calls(
+            num_scenarios=1000,
+            num_models=20,
+            sampler_mode="partitioned_random_judge",
+            group_size=4,
+            response_redundancy=1,
+        )
+        self.assertEqual(estimate["response_tasks"], 20_000)
+        self.assertEqual(estimate["reflection_tasks"], 20_000)
+        self.assertEqual(estimate["rating_tasks"], 20_000)
+        self.assertEqual(estimate["total_logical_generations"], 60_000)
+
+    def test_direct_sampling_settings_default_to_exhaustive(self):
+        exhaustive = resolve_direct_sampling_settings(
+            {}, num_models=20, include_self=True
+        )
+        self.assertEqual(exhaustive["sampler_mode"], "all_to_all")
+        sampled = resolve_direct_sampling_settings(
+            {
+                "sampler_mode": "partitioned",
+                "group_size": 4,
+                "response_redundancy": 1,
+                "sampler_seed": 42,
+            },
+            num_models=20,
+            include_self=True,
+        )
+        self.assertEqual(sampled["sampler_mode"], "partitioned_random_judge")
+
     def test_call_estimate(self):
         estimate = estimate_direct_calls(
             num_scenarios=2,
@@ -160,6 +243,7 @@ class DirectPlanningTests(unittest.TestCase):
         )
         self.assertEqual(direct["evaluation"]["mode"], "direct_rating")
         self.assertTrue(direct["evaluation"]["direct_rating"]["include_self"])
+        self.assertEqual(direct["collection"]["sampler_mode"], "all_to_all")
 
     def test_upload_backend_preserves_space_default_and_supports_direct_dataset(self):
         self.assertEqual(_resolve_upload_backend({}), "valuearena_space")
@@ -191,6 +275,23 @@ class DirectPlanningTests(unittest.TestCase):
             self.assertEqual(estimate["response_tasks"], 4)
             self.assertEqual(estimate["reflection_tasks"], 8)
             self.assertEqual(estimate["rating_tasks"], 8)
+
+            (root / "sampled_spec.py").write_text(
+                "RUN_SPEC = {"
+                "'models': {'a': 'provider/a', 'b': 'provider/b'},"
+                "'dataset': {'path': 'scenarios.json'},"
+                "'evaluation': {'mode': 'direct_rating'},"
+                "'collection': {'sampler_mode': 'partitioned_random_judge', "
+                "'group_size': 1, 'response_redundancy': 1, 'sampler_seed': 9},"
+                "'training': {}"
+                "}\n",
+                encoding="utf-8",
+            )
+            sampled = estimate_spec_calls(str(root / "sampled_spec.py"))
+            self.assertEqual(sampled["response_tasks"], 4)
+            self.assertEqual(sampled["reflection_tasks"], 4)
+            self.assertEqual(sampled["rating_tasks"], 4)
+            self.assertEqual(sampled["total_logical_generations"], 12)
 
 
 class DirectTrustTests(unittest.TestCase):
@@ -226,6 +327,24 @@ class DirectTrustTests(unittest.TestCase):
         self.assertAlmostEqual(float(result.eigentrust_scores.sum()), 1.0)
         with self.assertRaisesRegex(ValueError, "incomplete"):
             build_direct_trust(records[:-1], num_models=3, num_criteria=2)
+
+    def test_sparse_records_normalize_observed_edges_and_fill_dangling_rows(self):
+        records = [
+            record
+            for record in _direct_records(num_models=3, num_criteria=2, scenarios=(0,))
+            if (record["judge"]["index"], record["evaluee"]["index"])
+            in {(0, 0), (0, 1), (1, 2)}
+        ]
+        result = build_direct_trust(
+            records,
+            num_models=3,
+            num_criteria=2,
+            allow_sparse=True,
+        )
+        np.testing.assert_allclose(result.trust_matrix.sum(axis=1), np.ones(3))
+        self.assertEqual(int(result.observation_counts.sum()), 3)
+        self.assertEqual(result.trust_matrix[1, 2], 1.0)
+        np.testing.assert_allclose(result.trust_matrix[2], np.full(3, 1.0 / 3.0))
 
     def test_analysis_and_scenario_bootstrap_outputs(self):
         records = _direct_records()
@@ -263,6 +382,65 @@ class DirectTrustTests(unittest.TestCase):
                 (output_dir / "bootstrap" / "samples.json").read_text()
             )
             self.assertEqual(len(bootstrap_samples), 2)
+
+    def test_sparse_analysis_bootstrap_rebuilds_row_stochastic_matrices(self):
+        models = {"m0": "a", "m1": "b", "m2": "c"}
+        assignments = build_direct_assignments(
+            [(0, "s0"), (1, "s1"), (2, "s2")],
+            models,
+            sampler_mode="partitioned_random_judge",
+            group_size=2,
+            response_redundancy=1,
+            sampler_seed=42,
+        )
+        selected_edges = {
+            (assignment["scenario_index"], assignment["judge_idx"], eval_idx)
+            for assignment in assignments
+            for eval_idx in assignment["eval_idxs"]
+        }
+        records = [
+            record
+            for record in _direct_records(scenarios=(0, 1, 2))
+            if (
+                record["scenario_index"],
+                record["judge"]["index"],
+                record["evaluee"]["index"],
+            )
+            in selected_edges
+        ]
+        with tempfile.TemporaryDirectory() as temporary_dir, patch(
+            "pipeline.train.direct_analysis.save_eigenbench_plot"
+        ), patch("pipeline.train.direct_analysis._save_bootstrap_plot"), patch(
+            "pipeline.train.direct_analysis._save_trust_matrix_plot"
+        ):
+            outcome = run_direct_analysis(
+                records=records,
+                models=models,
+                num_criteria=2,
+                evaluation_cfg={"direct_rating": {"include_self": True}},
+                collection_cfg={
+                    "sampler_mode": "partitioned_random_judge",
+                    "group_size": 2,
+                    "response_redundancy": 1,
+                    "sampler_seed": 42,
+                },
+                training_cfg={
+                    "bootstrap": {
+                        "enabled": True,
+                        "n_bootstraps": 5,
+                        "random_seed": 3,
+                    }
+                },
+                output_root=temporary_dir,
+            )
+            np.testing.assert_allclose(
+                outcome["result"].trust_matrix.sum(axis=1), np.ones(3)
+            )
+            analysis = json.loads(
+                (Path(outcome["output_dir"]) / "analysis_config.json").read_text()
+            )
+            self.assertEqual(analysis["sampler_mode"], "partitioned_random_judge")
+            self.assertEqual(analysis["total_direct_judgments"], 9)
 
 
 class DirectCollectorTests(unittest.TestCase):
@@ -342,6 +520,33 @@ class DirectCollectorTests(unittest.TestCase):
             self.assertEqual(sum(value == 0.0 for value in temperatures), 18)
             self.assertEqual(len(Path(output).read_text().splitlines()), 18)
             self.assertEqual(json.loads(Path(output).read_text().splitlines()[0])["record_type"], "direct_rating")
+
+            temperatures.clear()
+            sampled_output = str(Path(temporary_dir) / "sampled_evaluations.jsonl")
+            sampled_records = collect_direct_ratings(
+                models={"a": "provider/a", "b": "provider/b", "c": "provider/c"},
+                selected_scenarios=[(0, "s0"), (1, "s1")],
+                criteria=["c1", "c2"],
+                evaluation_cfg={"direct_rating": {"include_self": True}},
+                collection_cfg={
+                    "sampler_mode": "partitioned_random_judge",
+                    "group_size": 2,
+                    "response_redundancy": 1,
+                    "sampler_seed": 42,
+                    "openrouter": {"max_workers": 2},
+                },
+                evaluations_path=sampled_output,
+            )
+            self.assertEqual(len(sampled_records), 6)
+            self.assertEqual(sum(value == 0.7 for value in temperatures), 6)
+            self.assertEqual(sum(value == 0.2 for value in temperatures), 6)
+            self.assertEqual(sum(value == 0.0 for value in temperatures), 6)
+            self.assertTrue(
+                all(
+                    record["sampling"]["mode"] == "partitioned_random_judge"
+                    for record in sampled_records
+                )
+            )
 
 
 if __name__ == "__main__":

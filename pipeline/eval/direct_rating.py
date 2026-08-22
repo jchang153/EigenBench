@@ -1,9 +1,10 @@
-"""Direct, criterion-wise rating protocol and exhaustive collection."""
+"""Direct, criterion-wise rating protocol and collection."""
 
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import random
 import re
 from pathlib import Path
 from typing import Callable
@@ -14,6 +15,15 @@ from .checkpoint import CollectionCheckpoint
 
 
 DIRECT_PROMPT_VERSION = 1
+DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
+DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
+DIRECT_SAMPLER_ALIASES = {
+    "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
+    "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
+    "partitioned": DIRECT_SAMPLER_PARTITIONED,
+    "random_partition": DIRECT_SAMPLER_PARTITIONED,
+    "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
+}
 
 
 def build_direct_reflection_prompt(prefix: str = "") -> str:
@@ -170,34 +180,167 @@ def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
     return resolved
 
 
+def resolve_direct_sampling_settings(
+    collection_cfg: dict,
+    *,
+    num_models: int,
+    include_self: bool,
+) -> dict:
+    raw_mode = str(collection_cfg.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL)).strip().lower()
+    mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
+    if mode is None:
+        raise ValueError(
+            "direct collection.sampler_mode must be 'all_to_all' or "
+            "'partitioned_random_judge'"
+        )
+    if num_models <= 0:
+        raise ValueError("direct sampling requires at least one model")
+    group_size = int(collection_cfg.get("group_size", 4))
+    if group_size <= 0:
+        raise ValueError("direct collection.group_size must be positive")
+    group_size = min(group_size, num_models)
+    response_redundancy = int(collection_cfg.get("response_redundancy", 1))
+    max_redundancy = num_models if include_self else max(0, num_models - 1)
+    if response_redundancy <= 0 or response_redundancy > max_redundancy:
+        raise ValueError(
+            "direct collection.response_redundancy must be between 1 and "
+            f"{max_redundancy}"
+        )
+    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
+        raise ValueError(
+            "partitioned direct sampling with include_self=False requires group_size < num_models"
+        )
+    raw_seed = collection_cfg.get("sampler_seed", 42)
+    return {
+        "sampler_mode": mode,
+        "group_size": group_size,
+        "response_redundancy": response_redundancy,
+        "sampler_seed": None if raw_seed is None else int(raw_seed),
+    }
+
+
 def build_direct_assignments(
     selected_scenarios: list,
     models: dict[str, object],
     *,
     include_self: bool = True,
+    sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
+    group_size: int = 4,
+    response_redundancy: int = 1,
+    sampler_seed: int | None = None,
 ) -> list[dict]:
+    """Materialize direct judge/evaluee assignments.
+
+    ``all_to_all`` preserves the original exhaustive design. The partitioned
+    sampler shuffles every scenario's evaluees into disjoint groups and assigns
+    one random judge to each group. Repeating the partition
+    ``response_redundancy`` times makes every response receive exactly that many
+    ratings, always from distinct judges within a scenario.
+    """
+
     model_nicks = list(models)
+    num_models = len(model_nicks)
+    if num_models <= 0:
+        raise ValueError("direct assignments require at least one model")
+    mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
+    if mode is None:
+        raise ValueError(
+            "unknown direct sampler mode; expected 'all_to_all' or "
+            "'partitioned_random_judge'"
+        )
+    group_size = int(group_size)
+    response_redundancy = int(response_redundancy)
+    if group_size <= 0:
+        raise ValueError("direct group_size must be positive")
+    group_size = min(group_size, num_models)
+    max_redundancy = num_models if include_self else max(0, num_models - 1)
+    if response_redundancy <= 0 or response_redundancy > max_redundancy:
+        raise ValueError(
+            "direct response_redundancy must be between 1 and "
+            f"{max_redundancy} for the configured self-rating policy"
+        )
+    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
+        raise ValueError(
+            "partitioned direct sampling with include_self=False requires group_size < num_models"
+        )
+
+    rng = random.Random(sampler_seed)
     assignments: list[dict] = []
     for item in selected_scenarios:
         if isinstance(item, (tuple, list)):
             scenario_index, scenario = item
         else:
             scenario_index, scenario = 0, item
-        for judge_idx, judge_nick in enumerate(model_nicks):
-            eval_idxs = [
-                idx for idx in range(len(model_nicks))
-                if include_self or idx != judge_idx
-            ]
-            assignments.append(
-                {
-                    "scenario_index": scenario_index,
-                    "scenario": scenario,
-                    "judge_idx": judge_idx,
-                    "judge_nick": judge_nick,
-                    "eval_idxs": eval_idxs,
-                    "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
-                }
-            )
+        if mode == DIRECT_SAMPLER_ALL_TO_ALL:
+            for judge_idx, judge_nick in enumerate(model_nicks):
+                eval_idxs = [
+                    idx for idx in range(num_models)
+                    if include_self or idx != judge_idx
+                ]
+                assignments.append(
+                    {
+                        "scenario_index": scenario_index,
+                        "scenario": scenario,
+                        "judge_idx": judge_idx,
+                        "judge_nick": judge_nick,
+                        "eval_idxs": eval_idxs,
+                        "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+                        "sampler_mode": mode,
+                        "sampling_round": 0,
+                        "group_index": judge_idx,
+                    }
+                )
+            continue
+
+        used_judges_by_evaluee = [set() for _ in range(num_models)]
+        for sampling_round in range(response_redundancy):
+            round_assignments = None
+            for _attempt in range(1000):
+                shuffled = list(range(num_models))
+                rng.shuffle(shuffled)
+                groups = [
+                    shuffled[start : start + group_size]
+                    for start in range(0, num_models, group_size)
+                ]
+                candidate_assignments = []
+                for group_index, eval_idxs in enumerate(groups):
+                    eligible_judges = [
+                        judge_idx
+                        for judge_idx in range(num_models)
+                        if (include_self or judge_idx not in eval_idxs)
+                        and all(
+                            judge_idx not in used_judges_by_evaluee[eval_idx]
+                            for eval_idx in eval_idxs
+                        )
+                    ]
+                    if not eligible_judges:
+                        break
+                    judge_idx = rng.choice(eligible_judges)
+                    candidate_assignments.append(
+                        {
+                            "scenario_index": scenario_index,
+                            "scenario": scenario,
+                            "judge_idx": judge_idx,
+                            "judge_nick": model_nicks[judge_idx],
+                            "eval_idxs": list(eval_idxs),
+                            "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+                            "sampler_mode": mode,
+                            "sampling_round": sampling_round,
+                            "group_index": group_index,
+                        }
+                    )
+                if len(candidate_assignments) == len(groups):
+                    round_assignments = candidate_assignments
+                    break
+            if round_assignments is None:
+                raise ValueError(
+                    "could not construct distinct partitioned direct assignments; "
+                    "reduce response_redundancy or group_size"
+                )
+            assignments.extend(round_assignments)
+            for assignment in round_assignments:
+                for eval_idx in assignment["eval_idxs"]:
+                    used_judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
     return assignments
 
 
@@ -209,22 +352,59 @@ def estimate_direct_calls(
     include_self: bool = True,
     cached_responses: int = 0,
     cached_openrouter_responses: int = 0,
+    sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
+    group_size: int = 4,
+    response_redundancy: int = 1,
+    sampler_seed: int | None = None,
+    assignments: list[dict] | None = None,
+    openrouter_model_indices: set[int] | None = None,
 ) -> dict:
     if num_scenarios < 0 or num_models < 0:
         raise ValueError("num_scenarios and num_models must be non-negative")
     if num_openrouter_models is not None and not 0 <= num_openrouter_models <= num_models:
         raise ValueError("num_openrouter_models must be between zero and num_models")
-    edges_per_scenario = num_models * (num_models if include_self else max(0, num_models - 1))
+    mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
+    if mode is None:
+        raise ValueError(
+            "unknown direct sampler mode; expected 'all_to_all' or "
+            "'partitioned_random_judge'"
+        )
+    group_size = max(1, min(int(group_size), num_models)) if num_models else 0
+    response_redundancy = int(response_redundancy)
+    if response_redundancy <= 0:
+        raise ValueError("response_redundancy must be positive")
+    max_redundancy = num_models if include_self else max(0, num_models - 1)
+    if mode == DIRECT_SAMPLER_PARTITIONED and response_redundancy > max_redundancy:
+        raise ValueError("response_redundancy exceeds the number of distinct eligible judges")
+    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
+        raise ValueError(
+            "partitioned direct sampling with include_self=False requires group_size < num_models"
+        )
+    if assignments is not None:
+        total_edges = sum(len(assignment["eval_idxs"]) for assignment in assignments)
+    elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
+        total_edges = num_scenarios * num_models * (
+            num_models if include_self else max(0, num_models - 1)
+        )
+    else:
+        total_edges = num_scenarios * num_models * response_redundancy
+    edges_per_scenario = total_edges // num_scenarios if num_scenarios else 0
     total_possible_responses = num_scenarios * num_models
     response_tasks = total_possible_responses - min(
         max(0, int(cached_responses)), total_possible_responses
     )
-    reflection_tasks = num_scenarios * edges_per_scenario
+    reflection_tasks = total_edges
     rating_tasks = reflection_tasks
     result = {
         "num_scenarios": num_scenarios,
         "num_models": num_models,
         "include_self": include_self,
+        "sampler_mode": mode,
+        "group_size": group_size if mode == DIRECT_SAMPLER_PARTITIONED else None,
+        "response_redundancy": (
+            response_redundancy if mode == DIRECT_SAMPLER_PARTITIONED else None
+        ),
+        "sampler_seed": sampler_seed if mode == DIRECT_SAMPLER_PARTITIONED else None,
         "directed_edges_per_scenario": edges_per_scenario,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
@@ -238,9 +418,18 @@ def estimate_direct_calls(
         remote_responses = total_remote_responses - min(
             max(0, int(cached_openrouter_responses)), total_remote_responses
         )
-        remote_judge_tasks = num_scenarios * k * (
-            num_models if include_self else max(0, num_models - 1)
-        )
+        if assignments is not None and openrouter_model_indices is not None:
+            remote_judge_tasks = sum(
+                len(assignment["eval_idxs"])
+                for assignment in assignments
+                if int(assignment["judge_idx"]) in openrouter_model_indices
+            )
+        elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
+            remote_judge_tasks = num_scenarios * k * (
+                num_models if include_self else max(0, num_models - 1)
+            )
+        else:
+            remote_judge_tasks = int(round(total_edges * k / num_models)) if num_models else 0
         result["num_openrouter_models"] = k
         result["cached_openrouter_response_hits"] = min(
             max(0, int(cached_openrouter_responses)), total_remote_responses
@@ -323,7 +512,7 @@ def collect_direct_ratings(
     evaluations_path: str,
     verbose: bool = False,
 ) -> list[dict]:
-    """Collect exhaustive direct ratings through OpenRouter and/or vLLM."""
+    """Collect exhaustive or partition-sampled direct ratings."""
 
     # Provider imports stay lazy so parsing/aggregation does not require the
     # optional API and GPU packages.
@@ -342,6 +531,11 @@ def collect_direct_ratings(
     scale_max = int(direct_cfg.get("scale_max", 10))
     if (scale_min, scale_max) != (1, 10):
         raise ValueError("direct rating collection currently uses the fixed 1-10 scale")
+    sampling = resolve_direct_sampling_settings(
+        collection_cfg,
+        num_models=len(models),
+        include_self=include_self,
+    )
     generation = resolve_direct_generation_settings(collection_cfg)
     settings = _fallback_openrouter_settings(collection_cfg)
     criteria_text = "\n".join(criteria)
@@ -370,6 +564,7 @@ def collect_direct_ratings(
         "include_self": include_self,
         "scale_min": scale_min,
         "scale_max": scale_max,
+        "sampling": sampling,
         "generation": generation,
         "openrouter": settings,
     }
@@ -382,6 +577,7 @@ def collect_direct_ratings(
                 selected_scenarios,
                 models,
                 include_self=include_self,
+                **sampling,
             ),
         )
 
@@ -655,6 +851,11 @@ def collect_direct_ratings(
                     "scenario_index": s_idx,
                     "judge": {"index": assignment["judge_idx"], "name": judge_nick},
                     "evaluee": {"index": eval_idx, "name": eval_nick},
+                    "sampling": {
+                        "mode": assignment.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL),
+                        "round": int(assignment.get("sampling_round", 0)),
+                        "group_index": int(assignment.get("group_index", 0)),
+                    },
                     "response": eval_responses[s_idx][eval_nick],
                     "reflection": reflections[s_idx][judge_nick][eval_nick],
                     "judgment_raw": raw_rating,
@@ -932,6 +1133,8 @@ def _run_local_rating_phase(**kwargs) -> None:
 
 __all__ = [
     "DIRECT_PROMPT_VERSION",
+    "DIRECT_SAMPLER_ALL_TO_ALL",
+    "DIRECT_SAMPLER_PARTITIONED",
     "build_direct_assignments",
     "build_direct_rating_prompt",
     "build_direct_rating_user_prompt",
@@ -943,4 +1146,5 @@ __all__ = [
     "estimate_direct_calls",
     "parse_direct_ratings",
     "resolve_direct_generation_settings",
+    "resolve_direct_sampling_settings",
 ]

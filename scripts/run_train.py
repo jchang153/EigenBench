@@ -84,6 +84,7 @@ def main(spec_ref: str):
             models=_spec.get("models", {}),
             num_criteria=num_criteria,
             evaluation_cfg=evaluation_cfg,
+            collection_cfg=collection_cfg,
             training_cfg=train_cfg,
             output_root=out_root,
             verbose=verbose,

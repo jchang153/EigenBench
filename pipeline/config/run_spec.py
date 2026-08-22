@@ -131,6 +131,50 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         # Keep explicit null if user sets it intentionally.
         collection["cached_responses_path"] = None
 
+    if mode == "direct_rating":
+        sampler_aliases = {
+            "exhaustive": "all_to_all",
+            "all_to_all": "all_to_all",
+            "partitioned": "partitioned_random_judge",
+            "random_partition": "partitioned_random_judge",
+            "partitioned_random_judge": "partitioned_random_judge",
+        }
+        raw_sampler = str(collection.get("sampler_mode", "all_to_all")).strip().lower()
+        sampler_mode = sampler_aliases.get(raw_sampler)
+        if sampler_mode is None:
+            raise ValueError(
+                "direct collection.sampler_mode must be 'all_to_all' or "
+                "'partitioned_random_judge'"
+            )
+        collection["sampler_mode"] = sampler_mode
+        collection["group_size"] = int(collection.get("group_size", 4))
+        collection["response_redundancy"] = int(
+            collection.get("response_redundancy", 1)
+        )
+        if collection["group_size"] <= 0:
+            raise ValueError("direct collection.group_size must be positive")
+        if collection["response_redundancy"] <= 0:
+            raise ValueError("direct collection.response_redundancy must be positive")
+        raw_seed = collection.get("sampler_seed", 42)
+        collection["sampler_seed"] = None if raw_seed is None else int(raw_seed)
+        num_models = len(normalized.get("models", {}))
+        if num_models:
+            max_redundancy = num_models if direct["include_self"] else num_models - 1
+            if collection["response_redundancy"] > max_redundancy:
+                raise ValueError(
+                    "direct collection.response_redundancy exceeds the number of "
+                    "distinct eligible judges"
+                )
+            if (
+                sampler_mode == "partitioned_random_judge"
+                and not direct["include_self"]
+                and collection["group_size"] >= num_models
+            ):
+                raise ValueError(
+                    "partitioned direct sampling with include_self=False requires "
+                    "collection.group_size < number of models"
+                )
+
     training = normalized.setdefault("training", {})
     if training.get("output_dir"):
         training["output_dir"] = _resolve_path_for_run(

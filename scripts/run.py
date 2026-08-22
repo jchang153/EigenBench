@@ -98,10 +98,32 @@ def estimate_calls(spec_ref: str) -> dict:
     collection_cfg = spec.get("collection", {})
     num_models = len(models)
     if mode == "direct_rating":
-        from pipeline.eval.direct_rating import count_cached_responses, estimate_direct_calls
+        from pipeline.eval.direct_rating import (
+            build_direct_assignments,
+            count_cached_responses,
+            estimate_direct_calls,
+            resolve_direct_sampling_settings,
+        )
 
         openrouter_nicks = {
             nick for nick, value in models.items() if not is_hf_local_model(value)
+        }
+        include_self = bool(
+            evaluation_cfg.get("direct_rating", {}).get("include_self", True)
+        )
+        sampling = resolve_direct_sampling_settings(
+            collection_cfg,
+            num_models=num_models,
+            include_self=include_self,
+        )
+        assignments = build_direct_assignments(
+            selected,
+            models,
+            include_self=include_self,
+            **sampling,
+        )
+        openrouter_indices = {
+            idx for idx, nick in enumerate(models) if nick in openrouter_nicks
         }
         cached_total, cached_remote = count_cached_responses(
             collection_cfg.get("cached_responses_path"),
@@ -116,11 +138,12 @@ def estimate_calls(spec_ref: str) -> dict:
                 num_scenarios=len(selected),
                 num_models=num_models,
                 num_openrouter_models=len(openrouter_nicks),
-                include_self=bool(
-                    evaluation_cfg.get("direct_rating", {}).get("include_self", True)
-                ),
+                include_self=include_self,
                 cached_responses=cached_total,
                 cached_openrouter_responses=cached_remote,
+                assignments=assignments,
+                openrouter_model_indices=openrouter_indices,
+                **sampling,
             ),
         }
 

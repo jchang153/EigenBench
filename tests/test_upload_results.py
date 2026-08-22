@@ -32,7 +32,8 @@ class UploadResultsProtocolTests(unittest.TestCase):
                 "'api': 'openai/model'},"
                 "'dataset': {'path': 'data/scenarios.json', 'start': 10, 'count': 2},"
                 "'constitution': {'path': 'data/constitutions/test.json', 'num_criteria': 2},"
-                "'collection': {},"
+                "'collection': {'sampler_mode': 'partitioned_random_judge', "
+                "'group_size': 4, 'response_redundancy': 1, 'sampler_seed': 42},"
                 "'training': {'bootstrap': {'enabled': True, 'n_bootstraps': 10}}"
                 "}\n",
                 encoding="utf-8",
@@ -44,7 +45,16 @@ class UploadResultsProtocolTests(unittest.TestCase):
             )
             _write_json(
                 analysis / "analysis_config.json",
-                {"num_models": 2, "num_scenarios": 2, "normalization": "zscore_softmax"},
+                {
+                    "num_models": 2,
+                    "num_scenarios": 2,
+                    "normalization": "zscore_softmax",
+                    "sampler_mode": "partitioned_random_judge",
+                    "group_size": 4,
+                    "response_redundancy": 1,
+                    "sampler_seed": 42,
+                    "observed_edge_coverage": 0.75,
+                },
             )
             direct_summary = [
                 {
@@ -94,6 +104,8 @@ class UploadResultsProtocolTests(unittest.TestCase):
             self.assertEqual(meta["evaluation_mode"], "direct_rating")
             self.assertEqual(meta["bootstrap"]["unit"], "scenario")
             self.assertEqual(meta["analysis"]["kind"], "direct_eigentrust")
+            self.assertEqual(meta["collection"]["sampler_mode"], "partitioned_random_judge")
+            self.assertEqual(meta["analysis"]["observed_edge_coverage"], 0.75)
             self.assertEqual(meta["models"]["local"]["base_model"], "org/base")
             self.assertEqual(meta["artifacts"]["images"], ["eigenbench.png", "bootstrap_elo.png"])
             self.assertIn("data/trust_matrix.csv", meta["artifacts"]["data"])
@@ -103,6 +115,7 @@ class UploadResultsProtocolTests(unittest.TestCase):
 
             index = build_index_entry("direct/test", meta, summary)
             self.assertEqual(index["evaluation_mode"], "direct_rating")
+            self.assertEqual(index["sampler_mode"], "partitioned_random_judge")
             self.assertEqual(index["normalization"], "zscore_softmax")
             self.assertEqual(index["bootstrap_unit"], "scenario")
             self.assertIsNone(index["btd_model"])

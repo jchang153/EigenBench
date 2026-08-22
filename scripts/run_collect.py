@@ -90,13 +90,32 @@ def main(spec_ref: str):
     evaluation_mode = evaluation_cfg.get("mode", "pairwise_btd")
     if evaluation_mode == "direct_rating":
         from pipeline.eval.direct_rating import (
+            build_direct_assignments,
             collect_direct_ratings,
             count_cached_responses,
             estimate_direct_calls,
+            resolve_direct_sampling_settings,
         )
 
         openrouter_nicks = {
             nick for nick, value in models.items() if not is_hf_local_model(value)
+        }
+        include_self = bool(
+            evaluation_cfg.get("direct_rating", {}).get("include_self", True)
+        )
+        sampling = resolve_direct_sampling_settings(
+            cfg,
+            num_models=len(models),
+            include_self=include_self,
+        )
+        assignments = build_direct_assignments(
+            selected,
+            models,
+            include_self=include_self,
+            **sampling,
+        )
+        openrouter_indices = {
+            idx for idx, nick in enumerate(models) if nick in openrouter_nicks
         }
         cached_total, cached_remote = count_cached_responses(
             cfg.get("cached_responses_path"),
@@ -110,11 +129,12 @@ def main(spec_ref: str):
                 num_scenarios=len(selected),
                 num_models=len(models),
                 num_openrouter_models=len(openrouter_nicks),
-                include_self=bool(
-                    evaluation_cfg.get("direct_rating", {}).get("include_self", True)
-                ),
+                include_self=include_self,
                 cached_responses=cached_total,
                 cached_openrouter_responses=cached_remote,
+                assignments=assignments,
+                openrouter_model_indices=openrouter_indices,
+                **sampling,
             ),
         }
         print(

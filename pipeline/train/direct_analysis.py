@@ -80,6 +80,7 @@ def run_direct_bootstrap(
     direct_cfg: dict,
     output_dir: Path,
     bootstrap_cfg: dict,
+    allow_sparse: bool = False,
     verbose: bool = False,
 ) -> dict:
     n_bootstraps = int(bootstrap_cfg.get("n_bootstraps", 100))
@@ -96,6 +97,7 @@ def run_direct_bootstrap(
             num_models=len(model_labels),
             num_criteria=num_criteria,
             include_self=bool(direct_cfg.get("include_self", True)),
+            allow_sparse=allow_sparse,
             normalization=direct_cfg.get("normalization", "zscore_softmax"),
             softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
             scale_min=float(direct_cfg.get("scale_min", 1)),
@@ -145,15 +147,20 @@ def run_direct_analysis(
     evaluation_cfg: dict,
     training_cfg: dict,
     output_root: str | Path,
+    collection_cfg: dict | None = None,
     verbose: bool = False,
 ) -> dict:
     direct_cfg = evaluation_cfg.get("direct_rating", {})
+    collection_cfg = collection_cfg or {}
+    sampler_mode = str(collection_cfg.get("sampler_mode", "all_to_all")).strip().lower()
+    allow_sparse = sampler_mode != "all_to_all"
     labels = list(models)
     result = build_direct_trust(
         records,
         num_models=len(labels),
         num_criteria=num_criteria,
         include_self=bool(direct_cfg.get("include_self", True)),
+        allow_sparse=allow_sparse,
         normalization=direct_cfg.get("normalization", "zscore_softmax"),
         softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
         scale_min=float(direct_cfg.get("scale_min", 1)),
@@ -197,6 +204,23 @@ def run_direct_analysis(
         "model_order": labels,
         "num_criteria": num_criteria,
         "num_scenarios": len(result.scenario_indices),
+        "sampler_mode": sampler_mode,
+        "group_size": (
+            int(collection_cfg.get("group_size", 4)) if allow_sparse else None
+        ),
+        "response_redundancy": (
+            int(collection_cfg.get("response_redundancy", 1)) if allow_sparse else None
+        ),
+        "sampler_seed": collection_cfg.get("sampler_seed") if allow_sparse else None,
+        "total_direct_judgments": len(records),
+        "eligible_directed_edges": int(
+            len(labels) * (
+                len(labels)
+                if bool(direct_cfg.get("include_self", True))
+                else max(0, len(labels) - 1)
+            )
+        ),
+        "observed_directed_edges": int(np.sum(result.observation_counts > 0)),
         "include_self": bool(direct_cfg.get("include_self", True)),
         "criterion_aggregation": direct_cfg.get("criterion_aggregation", "mean"),
         "scenario_aggregation": direct_cfg.get("scenario_aggregation", "mean"),
@@ -206,6 +230,11 @@ def run_direct_analysis(
         "scale_min": int(direct_cfg.get("scale_min", 1)),
         "scale_max": int(direct_cfg.get("scale_max", 10)),
     }
+    log["observed_edge_coverage"] = (
+        log["observed_directed_edges"] / log["eligible_directed_edges"]
+        if log["eligible_directed_edges"]
+        else 0.0
+    )
     (output_dir / "analysis_config.json").write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
     save_eigenbench_plot(model_names=labels, eigentrust_elo=elo, save_path=str(output_dir / "eigenbench.png"))
     _save_trust_matrix_plot(result.trust_matrix, labels, output_dir / "trust_matrix.png")
@@ -219,6 +248,7 @@ def run_direct_analysis(
             direct_cfg=direct_cfg,
             output_dir=output_dir / "bootstrap",
             bootstrap_cfg=bootstrap_cfg,
+            allow_sparse=allow_sparse,
             verbose=verbose,
         )
     print(f"Direct-rating analysis complete. Outputs in {output_dir}")

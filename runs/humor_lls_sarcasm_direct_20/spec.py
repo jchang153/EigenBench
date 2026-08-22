@@ -80,6 +80,12 @@ RUN_SPEC = {
         "evaluations_path": "evaluations.jsonl",
         "checkpoint_path": "collection.checkpoint",
         "cached_responses_path": None,
+        # Partition all responses into groups of four for each scenario. Every
+        # response is directly rated once, reducing judgments from N^2 to N.
+        "sampler_mode": "partitioned_random_judge",
+        "group_size": 4,
+        "response_redundancy": 1,
+        "sampler_seed": 42,
         "generation": {
             "response": {"max_tokens": 4096, "temperature": 0.7},
             "reflection": {"max_tokens": 2048, "temperature": 0.2},
@@ -109,6 +115,6 @@ RUN_SPEC = {
         "backend": "huggingface_dataset",
         "repo": "invi-bhagyesh/ValueArena",
         "name": "humor-lls-sarcasm-direct-20",
-        "note": "20-scenario exhaustive direct-rating test",
+        "note": "20-scenario partition-sampled direct-rating test",
     },
 }
