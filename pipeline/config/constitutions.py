@@ -41,6 +41,17 @@ def _normalize_criteria(payload: Any) -> list[str]:
             value = payload.get(key)
             if isinstance(value, list) and all(isinstance(x, str) for x in value):
                 return value
+            if (
+                key == "criteria"
+                and isinstance(value, list)
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("comparative"), str)
+                    and item["comparative"].strip()
+                    for item in value
+                )
+            ):
+                return [item["comparative"] for item in value]
 
         # Accept single-key dict containing criteria list.
         if len(payload) == 1:
@@ -49,8 +60,9 @@ def _normalize_criteria(payload: Any) -> list[str]:
                 return only_value
 
         raise ValueError(
-            "Constitution JSON dict must contain a list field named "
-            "'criteria', 'comparative_criteria', or 'comparativeCriteria'."
+            "Constitution JSON dict must contain a string list named "
+            "'criteria', 'comparative_criteria', or 'comparativeCriteria', "
+            "or criteria objects with non-empty 'comparative' strings."
         )
 
     raise ValueError("Constitution JSON must be a list or dict.")
@@ -73,6 +85,8 @@ def get_criteria_from_spec(
       - criteria
       - comparative_criteria
       - comparativeCriteria
+    - dict containing criteria as list[dict], where each item has a
+      non-empty comparative string
 
     Relative paths are resolved first against run_dir, then repo root.
     """
