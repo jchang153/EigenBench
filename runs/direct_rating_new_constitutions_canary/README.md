@@ -35,6 +35,10 @@ the full cap before returning visible text or all 12 XML ratings.
 - Pre-run cost estimate: about $2.50
 - OpenRouter account usage increase during the run: $5.46 (2.2x estimate)
 
+The 10-scenario sampler produced uneven judge counts per constitution: 17, 15,
+9, 7, and 2. This is sufficient for an infrastructure canary, but not for
+judge-level comparisons.
+
 The estimate assumed the original token caps and no recovery calls. The run used
 higher caps for reasoning models, discarded 32 completed reflections during the
 clean restart, and made 32 failed attempts before the cap problems were fixed.
