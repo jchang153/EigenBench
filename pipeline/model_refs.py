@@ -27,6 +27,32 @@ class HFLocalModelRef:
         return self.subfolder is not None or self.base_model_id is not None
 
 
+@dataclass(frozen=True)
+class OpenRouterModelRef:
+    """Normalized OpenRouter model plus instance-level reasoning behavior."""
+
+    model_id: str
+    reasoning: dict[str, Any] | None = None
+    omit_parameters: frozenset[str] = frozenset()
+
+    @property
+    def extra_body(self) -> dict[str, Any] | None:
+        """Return non-standard Chat Completions fields for OpenRouter.
+
+        Reasoning-configured instances require an endpoint that honors every
+        supplied parameter.  Otherwise OpenRouter may route to an endpoint
+        that silently ignores an unsupported parameter, which would collapse
+        an instant/reasoning experimental condition.
+        """
+
+        if self.reasoning is None:
+            return None
+        return {
+            "reasoning": dict(self.reasoning),
+            "provider": {"require_parameters": True},
+        }
+
+
 def is_hf_local_model(model_ref: object) -> bool:
     """Return whether a run-spec model reference selects local HF inference."""
 
@@ -57,6 +83,102 @@ def _validate_subfolder(subfolder: str | None) -> str | None:
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError("Local model subfolder must be a safe relative repository path")
     return str(path)
+
+
+_REASONING_EFFORTS = {
+    "max",
+    "xhigh",
+    "high",
+    "medium",
+    "low",
+    "minimal",
+    "none",
+}
+
+
+def _normalize_reasoning(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("OpenRouter reasoning must be a mapping")
+
+    allowed_fields = {"effort", "max_tokens", "exclude", "enabled"}
+    unknown_fields = sorted(set(value) - allowed_fields)
+    if unknown_fields:
+        raise ValueError(f"Unknown OpenRouter reasoning fields: {unknown_fields}")
+
+    reasoning = dict(value)
+    effort = reasoning.get("effort")
+    if effort is not None:
+        if not isinstance(effort, str) or effort not in _REASONING_EFFORTS:
+            raise ValueError(
+                "OpenRouter reasoning.effort must be one of "
+                f"{sorted(_REASONING_EFFORTS)}"
+            )
+    max_tokens = reasoning.get("max_tokens")
+    if max_tokens is not None and (
+        isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0
+    ):
+        raise ValueError("OpenRouter reasoning.max_tokens must be a positive integer")
+    if effort is not None and max_tokens is not None:
+        raise ValueError(
+            "OpenRouter reasoning cannot set effort and max_tokens together"
+        )
+    for field in ("exclude", "enabled"):
+        if field in reasoning and not isinstance(reasoning[field], bool):
+            raise ValueError(f"OpenRouter reasoning.{field} must be a boolean")
+    if reasoning.get("enabled") is False and (
+        effort is not None or max_tokens is not None
+    ):
+        raise ValueError(
+            "Disabled OpenRouter reasoning cannot also set effort or max_tokens"
+        )
+    return reasoning
+
+
+def parse_openrouter_model(model_ref: object) -> OpenRouterModelRef:
+    """Normalize a legacy model-ID string or structured OpenRouter reference.
+
+    Structured references bind request behavior to a population member, so the
+    same reasoning mode follows that member when it acts as either evaluee or
+    judge::
+
+        {
+            "provider": "openrouter",
+            "model_id": "openai/gpt-5.6-sol",
+            "reasoning": {"effort": "high", "exclude": True},
+        }
+    """
+
+    if isinstance(model_ref, str):
+        model_id = model_ref.strip()
+        if not model_id or model_id.startswith("hf_local:"):
+            raise ValueError("Model reference is not an OpenRouter model ID")
+        return OpenRouterModelRef(model_id=model_id)
+
+    if not isinstance(model_ref, Mapping) or model_ref.get("provider") != "openrouter":
+        raise ValueError("OpenRouter model mapping must set provider='openrouter'")
+
+    allowed_fields = {"provider", "model_id", "reasoning", "omit_parameters"}
+    unknown_fields = sorted(set(model_ref) - allowed_fields)
+    if unknown_fields:
+        raise ValueError(f"Unknown OpenRouter model fields: {unknown_fields}")
+
+    model_id = model_ref.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise ValueError("OpenRouter model mapping must set model_id")
+    omit_parameters = model_ref.get("omit_parameters", [])
+    if not isinstance(omit_parameters, (list, tuple, set, frozenset)) or any(
+        value != "temperature" for value in omit_parameters
+    ):
+        raise ValueError(
+            "OpenRouter omit_parameters currently supports only 'temperature'"
+        )
+    return OpenRouterModelRef(
+        model_id=model_id.strip(),
+        reasoning=_normalize_reasoning(model_ref.get("reasoning")),
+        omit_parameters=frozenset(omit_parameters),
+    )
 
 
 def parse_hf_local_model(model_ref: object) -> HFLocalModelRef:
@@ -133,4 +255,10 @@ def parse_hf_local_model(model_ref: object) -> HFLocalModelRef:
     )
 
 
-__all__ = ["HFLocalModelRef", "is_hf_local_model", "parse_hf_local_model"]
+__all__ = [
+    "HFLocalModelRef",
+    "OpenRouterModelRef",
+    "is_hf_local_model",
+    "parse_hf_local_model",
+    "parse_openrouter_model",
+]
