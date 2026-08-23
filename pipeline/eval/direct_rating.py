@@ -168,9 +168,27 @@ def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
     resolved: dict[str, dict] = {}
     for phase, phase_defaults in defaults.items():
         configured = generation.get(phase, {}) or {}
+        max_tokens_by_model = configured.get("max_tokens_by_model", {}) or {}
+        if not isinstance(max_tokens_by_model, dict):
+            raise ValueError(
+                f"collection.generation.{phase}.max_tokens_by_model must be a mapping"
+            )
+        max_tokens_by_model = {
+            str(model): int(max_tokens)
+            for model, max_tokens in max_tokens_by_model.items()
+        }
+        invalid_models = sorted(
+            model for model, max_tokens in max_tokens_by_model.items() if max_tokens <= 0
+        )
+        if invalid_models:
+            raise ValueError(
+                f"collection.generation.{phase}.max_tokens_by_model must be positive "
+                f"for models: {invalid_models}"
+            )
         values = {
             "max_tokens": int(configured.get("max_tokens", phase_defaults["max_tokens"])),
             "temperature": float(configured.get("temperature", phase_defaults["temperature"])),
+            "max_tokens_by_model": max_tokens_by_model,
         }
         if values["max_tokens"] <= 0:
             raise ValueError(f"collection.generation.{phase}.max_tokens must be positive")
@@ -644,7 +662,10 @@ def collect_direct_ratings(
                     call=lambda model_path=model_path, messages=messages: _call_openrouter(
                         model_path,
                         messages,
-                        generation["response"]["max_tokens"],
+                        generation["response"]["max_tokens_by_model"].get(
+                            model_path,
+                            generation["response"]["max_tokens"],
+                        ),
                         settings,
                         temperature=generation["response"]["temperature"],
                     ),
@@ -730,7 +751,10 @@ def collect_direct_ratings(
                     call=lambda model_path=model_path, messages=messages: _call_openrouter(
                         model_path,
                         messages,
-                        generation["reflection"]["max_tokens"],
+                        generation["reflection"]["max_tokens_by_model"].get(
+                            model_path,
+                            generation["reflection"]["max_tokens"],
+                        ),
                         settings,
                         temperature=generation["reflection"]["temperature"],
                     ),
@@ -796,7 +820,10 @@ def collect_direct_ratings(
                     call=lambda model_path=model_path, messages=messages: _call_openrouter(
                         model_path,
                         messages,
-                        generation["direct_rating"]["max_tokens"],
+                        generation["direct_rating"]["max_tokens_by_model"].get(
+                            model_path,
+                            generation["direct_rating"]["max_tokens"],
+                        ),
                         settings,
                         temperature=generation["direct_rating"]["temperature"],
                         response_validator=validator,
@@ -934,8 +961,12 @@ def _run_local_tasks_for_phase(
                         )
                         for task in pending
                     ]
+                    max_tokens = phase_cfg["max_tokens_by_model"].get(
+                        nick,
+                        phase_cfg["max_tokens"],
+                    )
                     params = SamplingParams(
-                        max_tokens=phase_cfg["max_tokens"],
+                        max_tokens=max_tokens,
                         temperature=phase_cfg["temperature"],
                     )
                     if verbose:

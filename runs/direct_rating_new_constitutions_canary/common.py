@@ -43,8 +43,20 @@ _BASE_SPEC = {
         "sampler_seed": 42,
         "generation": {
             "response": {"max_tokens": 4096, "temperature": 0.7},
-            "reflection": {"max_tokens": 2048, "temperature": 0.2},
-            "direct_rating": {"max_tokens": 512, "temperature": 0.0},
+            "reflection": {
+                "max_tokens": 4096,
+                "temperature": 0.2,
+                "max_tokens_by_model": {
+                    "deepseek/deepseek-v4-pro-0813": 8192,
+                },
+            },
+            "direct_rating": {
+                "max_tokens": 4096,
+                "temperature": 0.0,
+                "max_tokens_by_model": {
+                    "deepseek/deepseek-v4-pro-0813": 8192,
+                },
+            },
         },
         "openrouter": {
             "max_attempts": 4,
