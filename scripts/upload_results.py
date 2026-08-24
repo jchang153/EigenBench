@@ -254,6 +254,10 @@ def build_meta(
         "log": log,
         "eigentrust": eigentrust,
     }
+
+    if mode == "direct_rating":
+        meta.pop("training", None)
+
     return meta
 
 
