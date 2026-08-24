@@ -1,1 +1,0 @@
-"""Marxism canary run."""

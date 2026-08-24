@@ -138,13 +138,14 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
             "partitioned": "partitioned_random_judge",
             "random_partition": "partitioned_random_judge",
             "partitioned_random_judge": "partitioned_random_judge",
+            "balanced_unique_judge": "balanced_unique_judge",
         }
         raw_sampler = str(collection.get("sampler_mode", "all_to_all")).strip().lower()
         sampler_mode = sampler_aliases.get(raw_sampler)
         if sampler_mode is None:
             raise ValueError(
-                "direct collection.sampler_mode must be 'all_to_all' or "
-                "'partitioned_random_judge'"
+                "direct collection.sampler_mode must be 'all_to_all', "
+                "'partitioned_random_judge', or 'balanced_unique_judge'"
             )
         collection["sampler_mode"] = sampler_mode
         collection["group_size"] = int(collection.get("group_size", 4))
