@@ -17,13 +17,17 @@ and reused across all three constitutions.
 - Aggregation: judge-wise z-score normalization followed by EigenTrust.
 - Uncertainty: 1,000 scenario-bootstrap replicates.
 
-Run Kindness first so it creates the shared response cache. The other two runs
-can then run independently.
+Start Kindness first so it creates the shared response cache. Once
+`shared_responses.jsonl` contains 200 rows, run all three constitutions in
+parallel. Each process uses 32 workers, for up to 96 concurrent judging calls.
 
 ```bash
-.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.kindness
-.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.conservatism
-.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.environmental_ethics
+.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.kindness &
+
+# Start these when shared_responses.jsonl reaches 200 rows.
+.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.conservatism &
+.venv/bin/python scripts/run.py runs.direct_rating_frontier_200.environmental_ethics &
+wait
 ```
 
 Use `--estimate-calls` before collection. Across all three constitutions, the
