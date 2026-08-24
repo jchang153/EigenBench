@@ -55,7 +55,7 @@ _BASE_SPEC = {
         },
         "openrouter": {
             "max_attempts": 4,
-            "max_workers": 32,
+            "max_workers": 64,
         },
     },
     "training": {
