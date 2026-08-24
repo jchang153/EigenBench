@@ -153,11 +153,17 @@ def direct_rating_validator(
 
 
 def direct_generated_text_validator(response: str) -> str | None:
-    """Reject empty generated text and obvious repeated-token loops."""
+    """Reject unusable generated text."""
 
     if not isinstance(response, str) or not response.strip():
         return "generated text is empty"
-    tokens = re.findall(r"[A-Za-z]+", response.lower())
+    lowered = response.lower()
+    if (
+        "triggered cyber-related safeguards" in lowered
+        or response.strip() == "[Model declined to provide a response.]"
+    ):
+        return "generated text is a provider refusal"
+    tokens = re.findall(r"[A-Za-z]+", lowered)
     if len(tokens) >= 200:
         most_common_count = Counter(tokens).most_common(1)[0][1]
         if most_common_count / len(tokens) > 0.25:
@@ -184,8 +190,6 @@ def direct_criterion_reflection_validator(
         if error := direct_generated_text_validator(response):
             return error
         lowered = response.lower()
-        if "triggered cyber-related safeguards" in lowered:
-            return "reflection is a provider refusal"
 
         tokens = re.findall(r"[A-Za-z]+", lowered)
         if len(tokens) < 15 * num_criteria:
@@ -768,7 +772,6 @@ def collect_direct_ratings(
                         settings,
                         temperature=generation["response"]["temperature"],
                         response_validator=direct_generated_text_validator,
-                        content_filter_fallback="[Model declined to provide a response.]",
                     ),
                 )
             )

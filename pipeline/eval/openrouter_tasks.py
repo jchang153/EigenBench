@@ -55,7 +55,6 @@ def call_openrouter(
     *,
     temperature: float = 1.0,
     response_validator: Callable[[str], str | None] | None = None,
-    content_filter_fallback: str | None = None,
 ) -> str:
     return get_openrouter_response(
         messages,
@@ -67,7 +66,6 @@ def call_openrouter(
         backoff_base_seconds=settings["backoff_base_seconds"],
         backoff_cap_seconds=settings["backoff_cap_seconds"],
         response_validator=response_validator,
-        content_filter_fallback=content_filter_fallback,
     )
 
 

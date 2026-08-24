@@ -340,7 +340,6 @@ def _validate_completion(
     attempt: int,
     max_attempts: int,
     response_validator: Callable[[str], str | None] | None,
-    content_filter_fallback: str | None = None,
 ) -> OpenRouterCompletion:
     response_data = _object_to_dict(response)
     request_id = getattr(response, "_request_id", None) or response_data.get("id")
@@ -393,18 +392,16 @@ def _validate_completion(
     if refusal is None:
         refusal = message_data.get("refusal")
     if finish_reason == "content_filter":
-        if content_filter_fallback is None:
-            details = OpenRouterErrorDetails(
-                model=model,
-                attempt=attempt,
-                max_attempts=max_attempts,
-                error_type="invalid_response",
-                message="OpenRouter response was blocked by a content filter",
-                retryable=True,
-                request_id=request_id,
-            )
-            raise _AttemptFailure(details)
-        content = refusal if isinstance(refusal, str) and refusal.strip() else content_filter_fallback
+        details = OpenRouterErrorDetails(
+            model=model,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type="invalid_response",
+            message="OpenRouter response was blocked by a content filter",
+            retryable=True,
+            request_id=request_id,
+        )
+        raise _AttemptFailure(details)
     # Some providers return assistant refusal text here instead of in content.
     if (not isinstance(content, str) or not content.strip()) and isinstance(refusal, str):
         content = refusal
@@ -473,7 +470,6 @@ def get_openrouter_response(
     backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS,
     backoff_cap_seconds: float = DEFAULT_BACKOFF_CAP_SECONDS,
     response_validator: Callable[[str], str | None] | None = None,
-    content_filter_fallback: str | None = None,
     client: Any | None = None,
 ):
     """Send one strict Chat Completions request through OpenRouter.
@@ -481,7 +477,6 @@ def get_openrouter_response(
     The OpenAI SDK retry layer is disabled so every attempt is visible here and
     can be recorded by the collection checkpoint.  Fatal errors raise
     immediately; retryable errors raise only after ``max_attempts``.
-    Content filter fallback is used only when the caller explicitly supplies one.
     """
 
     max_attempts = int(max_attempts)
@@ -523,7 +518,6 @@ def get_openrouter_response(
                     attempt=attempt,
                     max_attempts=max_attempts,
                     response_validator=response_validator,
-                    content_filter_fallback=content_filter_fallback,
                 )
                 return response if return_full_response else completion.content
             except _AttemptFailure as exc:
