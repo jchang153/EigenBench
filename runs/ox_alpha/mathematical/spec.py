@@ -25,17 +25,17 @@ RUN_SPEC = {
         "qwen3.8-27b": "qwen/qwen3.8-27b",
         "deepseek-v4-flash": "deepseek/deepseek-v4-flash-0731",
         "ling-3.0-flash": "inclusionai/ling-3.0-flash",
+        "step-3.7-flash": "stepfun/step-3.7-flash",
         # Same-lab sibling pair — calibrates what "same family" looks like.
-        "gemini-3.7-flash": "google/gemini-3.7-flash"
-        "gemini-3.6-flash": "google/gemini-3.6-flash",
+        "gemini-3.7-flash": "google/gemini-3.7-flash",
         # US labs, for the cross-lab end of the scale.
-        "gpt-5.6-luna": "openai/gpt-5.6-luna",
-        "claude-opus-5": "anthropic/claude-opus-5",
+        "gpt-5.6-tera": "openai/gpt-5.6-tera",
+        "claude-sonnet-5": "anthropic/claude-sonnet-5",
     },
     "dataset": {
         "path": "data/scenarios/airiskdilemmas.json",
         "start": 0,
-        "count": 200,
+        "count": 100,
         "shuffle": False,
         "shuffle_seed": 42,
     },
