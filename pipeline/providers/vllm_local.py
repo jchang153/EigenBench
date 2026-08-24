@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.distributed as dist
 from huggingface_hub import hf_hub_download, snapshot_download
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 from vllm import LLM
 from vllm.lora.request import LoRARequest
 
@@ -144,6 +144,46 @@ def group_models_for_vllm(
     return local_base_models, local_tokenizers, openrouter_models
 
 
+DEFAULT_MAX_MODEL_LEN = 8192
+
+
+def resolve_max_model_len(base_model_id: str, requested: int = DEFAULT_MAX_MODEL_LEN) -> int:
+    """Clamp the engine window to what the model was actually trained for.
+
+    vLLM refuses to start when max_model_len exceeds the model's own
+    max_position_embeddings, so a fixed request breaks any model with a shorter
+    window than the default (OLMo-2 is 4096 against a default of 8192). Reading
+    the config keeps short-context models working without asking every spec to
+    declare a window.
+
+    Overriding upward is deliberately not offered: vLLM's own guidance is that
+    exceeding the trained window yields nan under RoPE or a CUDA out-of-bounds
+    error under absolute position encodings.
+    """
+
+    try:
+        config = AutoConfig.from_pretrained(base_model_id)
+    except Exception as exc:  # offline, gated, or an unusual config layout
+        print(f"  Could not read config for {base_model_id} ({exc}); "
+              f"using max_model_len={requested}")
+        return requested
+
+    limits = []
+    for attr in ("max_position_embeddings", "model_max_length"):
+        value = getattr(config, attr, None)
+        # OLMo-2 stores max_position_embeddings as a float, hence the cast.
+        if isinstance(value, (int, float)) and value > 0:
+            limits.append(int(value))
+    if not limits:
+        return requested
+
+    derived = min(limits)
+    if derived < requested:
+        print(f"  Capping max_model_len {requested} -> {derived} "
+              f"(model window for {base_model_id})")
+    return min(requested, derived)
+
+
 class VLLMEngineManager:
     """Context manager to spin up and tear down a vLLM engine."""
 
@@ -164,7 +204,7 @@ class VLLMEngineManager:
             "model": self.base_model_id,
             "gpu_memory_utilization": 0.9,
             "enforce_eager": True,
-            "max_model_len": 8192,
+            "max_model_len": resolve_max_model_len(self.base_model_id),
         }
         if self.enable_lora:
             engine_args.update({
