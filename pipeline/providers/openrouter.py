@@ -20,6 +20,8 @@ from typing import Any, Callable
 import openai
 from dotenv import load_dotenv
 
+from pipeline.model_refs import parse_openrouter_model
+
 
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -432,7 +434,7 @@ def _retry_delay_seconds(
 
 def get_openrouter_response(
     messages,
-    model: str,
+    model: object,
     temperature: float = 1.0,
     max_tokens: int = 1024,
     return_full_response: bool = False,
@@ -450,6 +452,9 @@ def get_openrouter_response(
     can be recorded by the collection checkpoint.  Fatal errors raise
     immediately; retryable errors raise only after ``max_attempts``.
     """
+
+    model_ref = parse_openrouter_model(model)
+    model_id = model_ref.model_id
 
     max_attempts = int(max_attempts)
     timeout_seconds = float(timeout_seconds)
@@ -478,15 +483,19 @@ def get_openrouter_response(
         for attempt in range(1, max_attempts + 1):
             _SHARED_RETRY_COOLDOWN.wait()
             try:
-                response = client.chat.completions.create(
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    messages=messages,
-                )
+                request = {
+                    "model": model_id,
+                    "max_tokens": max_tokens,
+                    "messages": messages,
+                }
+                if "temperature" not in model_ref.omit_parameters:
+                    request["temperature"] = temperature
+                if model_ref.extra_body is not None:
+                    request["extra_body"] = model_ref.extra_body
+                response = client.chat.completions.create(**request)
                 completion = _validate_completion(
                     response,
-                    model=model,
+                    model=model_id,
                     attempt=attempt,
                     max_attempts=max_attempts,
                     response_validator=response_validator,
@@ -497,7 +506,7 @@ def get_openrouter_response(
             except Exception as exc:
                 details = _details_from_sdk_exception(
                     exc,
-                    model=model,
+                    model=model_id,
                     attempt=attempt,
                     max_attempts=max_attempts,
                 )

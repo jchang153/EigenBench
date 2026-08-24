@@ -89,6 +89,7 @@ def parse_direct_ratings(
     num_criteria: int,
     scale_min: int = 1,
     scale_max: int = 10,
+    allowed_missing_one_based: frozenset[int] = frozenset(),
 ) -> dict[int, int]:
     """Parse and strictly validate one rating response.
 
@@ -99,6 +100,8 @@ def parse_direct_ratings(
         raise ValueError("rating response is empty")
     if num_criteria <= 0:
         raise ValueError("num_criteria must be positive")
+    if any(type(value) is not int for value in allowed_missing_one_based):
+        raise ValueError("allowed missing criteria must be integer indices")
 
     parsed: dict[int, int] = {}
     for match in _RATING_PATTERN.finditer(response):
@@ -117,8 +120,14 @@ def parse_direct_ratings(
         parsed[one_based] = value
 
     expected = set(range(1, num_criteria + 1))
+    allowed_missing = set(allowed_missing_one_based)
+    invalid_allowed = sorted(allowed_missing - expected)
+    if invalid_allowed:
+        raise ValueError(f"allowed missing criteria are out of range: {invalid_allowed}")
+    if allowed_missing == expected:
+        raise ValueError("at least one criterion must remain required")
     actual = set(parsed)
-    missing = sorted(expected - actual)
+    missing = sorted((expected - actual) - allowed_missing)
     extra = sorted(actual - expected)
     if missing or extra:
         details = []
@@ -134,6 +143,7 @@ def direct_rating_validator(
     num_criteria: int,
     scale_min: int = 1,
     scale_max: int = 10,
+    allowed_missing_one_based: frozenset[int] = frozenset(),
 ) -> Callable[[str], str | None]:
     def validate(response: str) -> str | None:
         try:
@@ -142,12 +152,57 @@ def direct_rating_validator(
                 num_criteria=num_criteria,
                 scale_min=scale_min,
                 scale_max=scale_max,
+                allowed_missing_one_based=allowed_missing_one_based,
             )
         except ValueError as exc:
             return str(exc)
         return None
 
     return validate
+
+
+def resolve_allowed_missing_rating_criteria(
+    collection_cfg: dict,
+    *,
+    model_nicks: list[str],
+    num_criteria: int,
+) -> dict[str, frozenset[int]]:
+    """Resolve one-based criteria that named judge instances may omit."""
+
+    configured = collection_cfg.get("allowed_missing_rating_criteria", {}) or {}
+    if not isinstance(configured, dict):
+        raise ValueError("collection.allowed_missing_rating_criteria must be a mapping")
+    unknown_judges = sorted(set(configured) - set(model_nicks))
+    if unknown_judges:
+        raise ValueError(
+            "collection.allowed_missing_rating_criteria has unknown judges: "
+            f"{unknown_judges}"
+        )
+
+    expected = set(range(1, num_criteria + 1))
+    resolved: dict[str, frozenset[int]] = {}
+    for judge_nick in model_nicks:
+        values = configured.get(judge_nick, [])
+        if not isinstance(values, (list, tuple, set, frozenset)) or any(
+            type(value) is not int for value in values
+        ):
+            raise ValueError(
+                "allowed missing rating criteria must be a collection of integer indices "
+                f"for judge {judge_nick!r}"
+            )
+        criteria = frozenset(values)
+        invalid = sorted(criteria - expected)
+        if invalid:
+            raise ValueError(
+                f"allowed missing rating criteria are out of range for judge "
+                f"{judge_nick!r}: {invalid}"
+            )
+        if criteria == expected:
+            raise ValueError(
+                f"at least one rating criterion must remain required for judge {judge_nick!r}"
+            )
+        resolved[judge_nick] = criteria
+    return resolved
 
 
 def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
@@ -540,6 +595,11 @@ def collect_direct_ratings(
     settings = _fallback_openrouter_settings(collection_cfg)
     criteria_text = "\n".join(criteria)
     model_nicks = list(models)
+    allowed_missing_by_judge = resolve_allowed_missing_rating_criteria(
+        collection_cfg,
+        model_nicks=model_nicks,
+        num_criteria=len(criteria),
+    )
     cache_path_value = collection_cfg.get("cached_responses_path")
     if cache_path_value and Path(cache_path_value).expanduser().resolve() == Path(
         evaluations_path
@@ -759,7 +819,15 @@ def collect_direct_ratings(
         verbose=verbose,
     )
 
-    validator = direct_rating_validator(len(criteria), scale_min, scale_max)
+    validators = {
+        judge_nick: direct_rating_validator(
+            len(criteria),
+            scale_min,
+            scale_max,
+            allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
+        )
+        for judge_nick in model_nicks
+    }
     rating_tasks = []
     rating_targets = []
     for assignment in assignments:
@@ -768,6 +836,7 @@ def collect_direct_ratings(
         if judge_nick not in openrouter_models:
             continue
         model_path = openrouter_models[judge_nick]
+        validator = validators[judge_nick]
         system_prompt = build_direct_rating_prompt()
         for eval_nick in assignment["eval_nicks"]:
             messages = [
@@ -793,7 +862,7 @@ def collect_direct_ratings(
             rating_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, validator=validator: _call_openrouter(
                         model_path,
                         messages,
                         generation["direct_rating"]["max_tokens"],
@@ -826,7 +895,7 @@ def collect_direct_ratings(
         checkpoint=checkpoint,
         phase_cfg=generation["direct_rating"],
         max_attempts=settings["max_attempts"],
-        validator=validator,
+        validators=validators,
         verbose=verbose,
     )
 
@@ -841,7 +910,9 @@ def collect_direct_ratings(
                 num_criteria=len(criteria),
                 scale_min=scale_min,
                 scale_max=scale_max,
+                allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
             )
+            missing_criterion_indices = sorted(set(range(len(criteria))) - set(parsed))
             records.append(
                 {
                     "schema_version": 2,
@@ -859,6 +930,7 @@ def collect_direct_ratings(
                     "response": eval_responses[s_idx][eval_nick],
                     "reflection": reflections[s_idx][judge_nick][eval_nick],
                     "judgment_raw": raw_rating,
+                    "missing_criterion_indices": missing_criterion_indices,
                     "ratings": [
                         {
                             "criterion_index": criterion_idx,
@@ -1085,7 +1157,7 @@ def _run_local_rating_phase(**kwargs) -> None:
     reflections = kwargs.pop("reflections")
     rating_responses = kwargs.pop("rating_responses")
     criteria_text = kwargs.pop("criteria_text")
-    validator = kwargs.pop("validator")
+    validators = kwargs.pop("validators")
     local_groups = kwargs["local_groups"]
     local_nicks = {
         nick for info in local_groups.values() for nick in _models_in_local_group(info)
@@ -1120,7 +1192,7 @@ def _run_local_rating_phase(**kwargs) -> None:
                         },
                     ],
                     target=(s_idx, judge_nick, eval_nick),
-                    validator=validator,
+                    validator=validators[judge_nick],
                 )
             )
 
@@ -1145,6 +1217,7 @@ __all__ = [
     "direct_rating_validator",
     "estimate_direct_calls",
     "parse_direct_ratings",
+    "resolve_allowed_missing_rating_criteria",
     "resolve_direct_generation_settings",
     "resolve_direct_sampling_settings",
 ]

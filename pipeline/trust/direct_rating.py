@@ -64,6 +64,7 @@ def aggregate_direct_records(
         np.nan,
         dtype=float,
     )
+    declared_missing_values = np.zeros(values.shape, dtype=bool)
 
     for record in direct_records:
         scenario_idx = int(record["scenario_index"])
@@ -98,12 +99,37 @@ def aggregate_direct_records(
                     f"judge={judge_idx}, evaluee={eval_idx}"
                 )
             parsed[criterion_idx] = float(rating)
-        if set(parsed) != set(range(num_criteria)):
+        missing_rows = record.get("missing_criterion_indices", [])
+        if not isinstance(missing_rows, list) or any(
+            type(criterion_idx) is not int for criterion_idx in missing_rows
+        ):
+            raise ValueError(
+                f"missing_criterion_indices must be a list of integers in scenario "
+                f"{scenario_idx}"
+            )
+        declared_missing = set(missing_rows)
+        if len(declared_missing) != len(missing_rows):
+            raise ValueError(f"duplicate missing criterion in scenario {scenario_idx}")
+        expected_criteria = set(range(num_criteria))
+        if declared_missing - expected_criteria:
+            raise ValueError(
+                f"missing criterion index is out of range in scenario {scenario_idx}: "
+                f"{sorted(declared_missing - expected_criteria)}"
+            )
+        if set(parsed) & declared_missing:
+            raise ValueError(
+                f"criterion cannot be both rated and declared missing in scenario "
+                f"{scenario_idx}"
+            )
+        if set(parsed) | declared_missing != expected_criteria:
             raise ValueError(
                 f"incomplete criteria for scenario={scenario_idx}, judge={judge_idx}, "
-                f"evaluee={eval_idx}: got {sorted(parsed)}"
+                f"evaluee={eval_idx}: got {sorted(parsed)}, declared missing "
+                f"{sorted(declared_missing)}"
             )
         s_pos = scenario_position[scenario_idx]
+        for criterion_idx in declared_missing:
+            declared_missing_values[s_pos, criterion_idx, judge_idx, eval_idx] = True
         for criterion_idx, rating in parsed.items():
             if not np.isnan(values[s_pos, criterion_idx, judge_idx, eval_idx]):
                 raise ValueError(
@@ -116,8 +142,9 @@ def aggregate_direct_records(
     if not include_self:
         np.fill_diagonal(structural_mask, False)
     expected = np.broadcast_to(structural_mask, values.shape)
-    if not allow_sparse and np.isnan(values[expected]).any():
-        missing = int(np.isnan(values[expected]).sum())
+    required_values = expected & ~declared_missing_values
+    if not allow_sparse and np.isnan(values[required_values]).any():
+        missing = int(np.isnan(values[required_values]).sum())
         raise ValueError(f"direct rating matrix is incomplete: {missing} expected ratings are missing")
     if np.any(~np.isnan(values[~expected])):
         raise ValueError("direct rating matrix contains unexpected masked ratings")
