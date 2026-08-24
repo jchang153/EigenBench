@@ -5,17 +5,17 @@ RUN_SPEC = {
     "name": "oct-olmo/goodness",
     "verbose": True,
     "models": {
-        # Ten OCT-trained personas. misalignment is absent from the collection.
-        "olmo-goodness": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-goodness",
-        "olmo-humor": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-humor",
-        "olmo-impulsiveness": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-impulsiveness",
-        "olmo-loving": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-loving",
-        "olmo-mathematical": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-mathematical",
-        "olmo-nonchalance": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-nonchalance",
-        "olmo-poeticism": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-poeticism",
-        "olmo-remorse": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-remorse",
-        "olmo-sarcasm": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-sarcasm",
-        "olmo-sycophancy": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-sycophancy",
+        "olmo-goodness": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-goodness/introspection-final",
+        "olmo-humor": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-humor/introspection-final",
+        "olmo-impulsiveness": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-impulsiveness/introspection-final",
+        "olmo-loving": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-loving/introspection-final",
+        "olmo-mathematical": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-mathematical/introspection-final",
+        "olmo-nonchalance": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-nonchalance/introspection-final",
+        "olmo-poeticism": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-poeticism/introspection-final",
+        "olmo-remorse": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-remorse/introspection-final",
+        "olmo-sarcasm": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-sarcasm/introspection-final",
+        "olmo-sycophancy": "hf_local:invi-bhagyesh/olmo-2-1124-7b-sft-sycophancy/introspection-final",
+        # Untuned control, and the shared LoRA base. Root has tokenizer/config.
         "olmo": "hf_local:allenai/OLMo-2-1124-7B-SFT",
         # ValueArena reference anchors, for cross-run Elo comparability.
         "gpt-4o": "openai/gpt-4o",
