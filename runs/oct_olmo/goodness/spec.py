@@ -34,17 +34,37 @@ RUN_SPEC = {
         "path": "data/constitutions/oct_goodness.json",
         "num_criteria": 15,
     },
+    "evaluation": {
+        "mode": "direct_rating",
+        "direct_rating": {
+            "include_self": True,  # keeps the self-preference signal
+            "scale_min": 1,
+            "scale_max": 10,
+            "normalization": "zscore_softmax",
+            "softmax_temperature": 1.0,
+        },
+    },
     "collection": {
         "enabled": True,
         "evaluations_path": "evaluations.jsonl",
         "checkpoint_path": "collection.checkpoint",
         "cached_responses_path": None,
-        "allow_ties": True,
+        "sampler_mode": "partitioned_random_judge",
         "group_size": 4,
-        "groups": 1,
-        "sampler_mode": "random_judge_group",
+        "response_redundancy": 1,  # every response rated r times by distinct judges
         "sampler_seed": 42,
-        "max_tokens": 512,  # see CONTEXT BUDGET above -- set by OLMo's 4096 window
+        # Per-phase budgets, direct-mode only. OLMo-2's window is 4096 covering
+        # prompt + completion, so the README's 4096/2048/512 example does not
+        # fit. Direct prompts are far smaller than pairwise ones (one response
+        # and one reflection, not two of each), so this is comfortable:
+        #   rating prompt ~= 850 fixed + response + reflection
+        #                 ~= 850 + 768 + 512 = 2,130 in, ~1,960 left for output
+        # Rating output is 15 tags (~200 tokens), so 512 is ample.
+        "generation": {
+            "response": {"max_tokens": 768, "temperature": 0.7},
+            "reflection": {"max_tokens": 512, "temperature": 0.2},
+            "direct_rating": {"max_tokens": 512, "temperature": 0.0},
+        },
         "openrouter": {
             "max_attempts": 4,
             "timeout_seconds": 300,

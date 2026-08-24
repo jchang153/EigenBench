@@ -15,6 +15,7 @@ runs/example/**/__pycache__/
 runs/example/**/*.pyc
 runs/example/**/.DS_Store
 runs/example/btd_d*/
+!runs/oct_olmo
 
 # Data policy:
 # - Keep constitution files in version control
