@@ -377,6 +377,12 @@ def _validate_completion(
     content = getattr(message_obj, "content", None) if message_obj is not None else None
     if content is None:
         content = message_data.get("content")
+    refusal = getattr(message_obj, "refusal", None) if message_obj is not None else None
+    if refusal is None:
+        refusal = message_data.get("refusal")
+    # Some providers return assistant refusal text here instead of in content.
+    if (not isinstance(content, str) or not content.strip()) and isinstance(refusal, str):
+        content = refusal
 
     if not isinstance(content, str) or not content.strip():
         details = OpenRouterErrorDetails(

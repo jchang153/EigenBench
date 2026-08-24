@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 import random
 import re
@@ -150,6 +150,19 @@ def direct_rating_validator(
         return None
 
     return validate
+
+
+def direct_reflection_validator(response: str) -> str | None:
+    """Reject empty reflections and obvious repeated-token loops."""
+
+    if not isinstance(response, str) or not response.strip():
+        return "reflection is empty"
+    tokens = re.findall(r"[A-Za-z]+", response.lower())
+    if len(tokens) >= 200:
+        most_common_count = Counter(tokens).most_common(1)[0][1]
+        if most_common_count / len(tokens) > 0.25:
+            return "reflection contains a repeated-token loop"
+    return None
 
 
 def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
@@ -765,6 +778,7 @@ def collect_direct_ratings(
                         generation["reflection"]["max_tokens"],
                         settings,
                         temperature=generation["reflection"]["temperature"],
+                        response_validator=direct_reflection_validator,
                     ),
                 )
             )
@@ -1101,6 +1115,7 @@ def _run_local_reflection_phase(**kwargs) -> None:
                         },
                     ],
                     target=(s_idx, judge_nick, eval_nick),
+                    validator=direct_reflection_validator,
                 )
             )
 
@@ -1175,6 +1190,7 @@ __all__ = [
     "build_direct_reflection_user_prompt",
     "collect_direct_ratings",
     "count_cached_responses",
+    "direct_reflection_validator",
     "direct_rating_validator",
     "estimate_direct_calls",
     "parse_direct_ratings",
