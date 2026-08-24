@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 
 MODELS = {
@@ -76,7 +77,6 @@ def build_spec(
     name: str,
     constitution_path: str,
     num_criteria: int,
-    valuearena_slug: str,
 ) -> dict:
     """Return one constitution run that shares the response cache."""
 
@@ -88,8 +88,7 @@ def build_spec(
     }
     spec["upload"] = {
         "enabled": True,
-        "backend": "valuearena_space",
-        "name": f"frontier-direct-ratings-200/{valuearena_slug}",
+        "name": f"frontier-direct-ratings-200/{Path(constitution_path).stem}",
         "group": "frontier-direct-ratings-200",
         "note": (
             "8 frontier models; direct 1-10 ratings; AIRiskDilemmas 0-199; "

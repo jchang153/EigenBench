@@ -5,5 +5,4 @@ RUN_SPEC = build_spec(
     name="direct_rating_frontier_200_conservatism",
     constitution_path="data/constitutions/conservatism.json",
     num_criteria=10,
-    valuearena_slug="conservatism",
 )
