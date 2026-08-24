@@ -28,17 +28,25 @@ from pipeline.config import (
 from pipeline.model_refs import is_hf_local_model
 
 
-def _space_safe_model_id(model_ref: object) -> str:
-    """Convert a structured local model reference to Space metadata syntax.
+def _space_safe_model_id(model_ref: object) -> object:
+    """Convert a structured model reference to Space metadata syntax.
 
-    ValueArena trains only from the collected comparisons, so it does not load
-    these models. Its current metadata parser nevertheless expects legacy
-    string model IDs.
+    ValueArena never loads the evaluated models during analysis. Local HF
+    references retain their legacy metadata syntax, while structured
+    OpenRouter references remain structured so instance-level reasoning
+    behavior is preserved in the published metadata.
     """
 
     if isinstance(model_ref, str):
         return model_ref
-    if not isinstance(model_ref, Mapping) or model_ref.get("provider") != "hf_local":
+    if not isinstance(model_ref, Mapping):
+        raise ValueError(f"Unsupported model reference for ValueArena: {model_ref!r}")
+    if model_ref.get("provider") == "openrouter":
+        model_id = model_ref.get("model_id")
+        if not isinstance(model_id, str) or not model_id:
+            raise ValueError("Structured OpenRouter model reference must include model_id")
+        return copy.deepcopy(dict(model_ref))
+    if model_ref.get("provider") != "hf_local":
         raise ValueError(f"Unsupported model reference for ValueArena: {model_ref!r}")
 
     repo_id = model_ref.get("repo_id")
@@ -211,12 +219,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     upload_to_space = upload_enabled and upload_backend == "valuearena_space"
     upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
-    if upload_to_space and evaluation_mode == "direct_rating":
-        raise SystemExit(
-            "upload.backend='valuearena_space' is not supported for "
-            "evaluation.mode='direct_rating': use upload.backend='huggingface_dataset' "
-            "or update the Space to accept direct judgments."
-        )
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
     space_spec_path = None
     if upload_to_space:
