@@ -152,17 +152,92 @@ def direct_rating_validator(
     return validate
 
 
-def direct_reflection_validator(response: str) -> str | None:
-    """Reject empty reflections and obvious repeated-token loops."""
+def direct_generated_text_validator(response: str) -> str | None:
+    """Reject empty generated text and obvious repeated-token loops."""
 
     if not isinstance(response, str) or not response.strip():
-        return "reflection is empty"
+        return "generated text is empty"
     tokens = re.findall(r"[A-Za-z]+", response.lower())
     if len(tokens) >= 200:
         most_common_count = Counter(tokens).most_common(1)[0][1]
         if most_common_count / len(tokens) > 0.25:
-            return "reflection contains a repeated-token loop"
+            return "generated text contains a repeated-token loop"
     return None
+
+
+def direct_reflection_validator(response: str) -> str | None:
+    """Apply the basic generated-text checks to a reflection."""
+
+    return direct_generated_text_validator(response)
+
+
+def direct_criterion_reflection_validator(
+    num_criteria: int,
+    *,
+    require_explicit_criteria: bool = False,
+) -> Callable[[str], str | None]:
+    """Validate criterion-by-criterion reflection text before rating."""
+
+    expected = set(range(1, num_criteria + 1))
+
+    def validate(response: str) -> str | None:
+        if error := direct_generated_text_validator(response):
+            return error
+        lowered = response.lower()
+        if "triggered cyber-related safeguards" in lowered:
+            return "reflection is a provider refusal"
+
+        tokens = re.findall(r"[A-Za-z]+", lowered)
+        if len(tokens) < 15 * num_criteria:
+            return "reflection is too short for every criterion"
+        non_space = [character for character in response if not character.isspace()]
+        ascii_letter_ratio = sum(
+            character.isascii() and character.isalpha() for character in non_space
+        ) / len(non_space)
+        if len(response) >= 1000 and ascii_letter_ratio < 0.8:
+            return "reflection contains excessive non-prose text"
+        if Counter(tokens).most_common(1)[0][1] / len(tokens) > 0.12:
+            return "reflection contains a repeated-token loop"
+        if re.search(r"([^\s])\1{10,}", response):
+            return "reflection contains a repeated-character loop"
+
+        def completed_passes(sequence: list[int]) -> int:
+            count = 0
+            next_criterion = 1
+            for criterion in sequence:
+                if criterion != next_criterion:
+                    continue
+                next_criterion += 1
+                if next_criterion > num_criteria:
+                    count += 1
+                    next_criterion = 1
+            return count
+
+        explicit_sequence = [
+            int(value) for value in re.findall(r"criterion\s*(\d+)", lowered)
+        ]
+        if completed_passes(explicit_sequence) > 1:
+            return "reflection repeats the full criterion sequence"
+
+        explicit = set(explicit_sequence)
+        if require_explicit_criteria:
+            covered = explicit
+        else:
+            numbered_sequence = [
+                int(value)
+                for value in re.findall(
+                    r"(?m)^\s*(?:#{1,6}\s*)?\*{0,2}(\d+)\s*[.)\]:-]",
+                    response,
+                )
+            ]
+            if completed_passes(numbered_sequence) > 1:
+                return "reflection repeats the full criterion sequence"
+            covered = explicit | set(numbered_sequence)
+        if not expected.issubset(covered):
+            return "reflection does not cover every criterion"
+        return None
+
+    return validate
 
 
 def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
@@ -692,6 +767,8 @@ def collect_direct_ratings(
                         generation["response"]["max_tokens"],
                         settings,
                         temperature=generation["response"]["temperature"],
+                        response_validator=direct_generated_text_validator,
+                        content_filter_fallback="[Model declined to provide a response.]",
                     ),
                 )
             )
@@ -748,6 +825,12 @@ def collect_direct_ratings(
         if judge_nick not in openrouter_models:
             continue
         model_path = openrouter_models[judge_nick]
+        # DeepSeek failures included unrelated numbered lists, so require literal
+        # criterion labels rather than accepting numbered headings alone.
+        reflection_validator = direct_criterion_reflection_validator(
+            len(criteria),
+            require_explicit_criteria=model_path.startswith("deepseek/"),
+        )
         system_prompt = build_direct_reflection_prompt()
         for eval_nick in assignment["eval_nicks"]:
             messages = [
@@ -772,13 +855,14 @@ def collect_direct_ratings(
             reflection_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages,
+                    reflection_validator=reflection_validator: _call_openrouter(
                         model_path,
                         messages,
                         generation["reflection"]["max_tokens"],
                         settings,
                         temperature=generation["reflection"]["temperature"],
-                        response_validator=direct_reflection_validator,
+                        response_validator=reflection_validator,
                     ),
                 )
             )
@@ -799,6 +883,7 @@ def collect_direct_ratings(
         eval_responses=eval_responses,
         reflections=reflections,
         criteria_text=criteria_text,
+        num_criteria=len(criteria),
         checkpoint=checkpoint,
         phase_cfg=generation["reflection"],
         max_attempts=settings["max_attempts"],
@@ -1082,6 +1167,7 @@ def _run_local_reflection_phase(**kwargs) -> None:
     eval_responses = kwargs.pop("eval_responses")
     reflections = kwargs.pop("reflections")
     criteria_text = kwargs.pop("criteria_text")
+    validator = direct_criterion_reflection_validator(kwargs.pop("num_criteria"))
     local_groups = kwargs["local_groups"]
     local_nicks = {
         nick for info in local_groups.values() for nick in _models_in_local_group(info)
@@ -1115,7 +1201,7 @@ def _run_local_reflection_phase(**kwargs) -> None:
                         },
                     ],
                     target=(s_idx, judge_nick, eval_nick),
-                    validator=direct_reflection_validator,
+                    validator=validator,
                 )
             )
 
