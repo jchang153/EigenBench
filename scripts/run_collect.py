@@ -11,8 +11,14 @@ from pipeline.config import (
     select_scenarios,
     get_criteria_from_spec,
 )
-from pipeline.eval import collect_core_evaluations
+from pipeline.eval import (
+    collect_core_evaluations,
+    collect_planned_evaluations,
+    plan_group_assignments,
+    sampler_needs_history,
+)
 from pipeline.model_refs import is_hf_local_model
+from pipeline.providers.openrouter import make_extra_body_resolver
 from pipeline.utils import append_records, load_records
 
 
@@ -128,23 +134,100 @@ def main(spec_ref: str):
             f"count={'all' if count is None else count}, shuffle={shuffle}, shuffle_seed={shuffle_seed}"
         )
 
+    sampler_mode = cfg.get("sampler_mode", "random_judge_group")
+    max_tokens = int(cfg.get("max_tokens", 4096))
+    max_workers = int((cfg.get("openrouter") or {}).get("max_workers", 1) or 1)
+    extra_body_for = make_extra_body_resolver(cfg.get("openrouter"))
+
+    # Fast path: history-free samplers let every selection be drawn up front,
+    # which makes the run reproducible under sampler_seed and lets independent
+    # groups be collected concurrently.
+    if not sampler_needs_history(sampler_mode):
+        assignments = plan_group_assignments(
+            selected_scenarios=selected,
+            num_models=len(models),
+            sampler_mode=sampler_mode,
+            group_size=int(cfg.get("group_size", 4)),
+            groups=int(cfg.get("groups", 1)),
+            seed=cfg.get("sampler_seed"),
+        )
+
+        if verbose:
+            print(
+                f"Planned {len(assignments)} group assignments "
+                f"({sampler_mode}, max_workers={max_workers})"
+            )
+
+        written = 0
+
+        def on_batch(assignment, new_evals):
+            nonlocal written
+            append_records(evaluations_path, new_evals)
+            written += len(new_evals)
+            if verbose:
+                print(
+                    f"Wrote {len(new_evals)} new evaluations for "
+                    f"scenario_index={assignment['scenario_index']} "
+                    f"-> {evaluations_path}"
+                )
+
+        _, failures = collect_planned_evaluations(
+            assignments=assignments,
+            criteria=criteria,
+            models=models,
+            allow_ties=bool(cfg.get("allow_ties", True)),
+            max_tokens=max_tokens,
+            cached_responses_by_scenario=cached_index,
+            max_workers=max_workers,
+            on_batch=on_batch,
+            extra_body_for=extra_body_for,
+            skip_failed_groups=bool(cfg.get("skip_failed_groups", True)),
+            max_failed_groups=cfg.get("max_failed_groups"),
+            verbose=verbose,
+        )
+
+        print(
+            f"Collection complete: {written} evaluations from "
+            f"{len(assignments) - len(failures)}/{len(assignments)} groups "
+            f"-> {evaluations_path}"
+        )
+        if failures:
+            # Report by judge: a model that lost groups has less judge-side
+            # coverage than the plan intended, which biases any comparison
+            # across models.
+            nicks = list(models.keys())
+            by_judge: dict[str, int] = {}
+            for assignment, _exc in failures:
+                nick = nicks[assignment["judge_idx"]]
+                by_judge[nick] = by_judge.get(nick, 0) + 1
+            print(f"WARNING: {len(failures)} groups failed and were skipped:")
+            for nick, count in sorted(by_judge.items(), key=lambda kv: -kv[1]):
+                planned = sum(1 for a in assignments if nicks[a["judge_idx"]] == nick)
+                print(f"  judge {nick}: {count}/{planned} groups lost")
+        return
+
+    # Slow path: adaptive_inverse_count / uniform read running judge and
+    # evaluee counts, so each draw needs the evaluations collected so far.
+    existing = load_records(evaluations_path)
     for scenario_index, scenario in selected:
-        existing = load_records(evaluations_path)
         new_evals = collect_core_evaluations(
             criteria=criteria,
             scenario=scenario,
             scenario_index=scenario_index,
             models=models,
             evaluations=existing,
-            sampler_mode=cfg.get("sampler_mode", "random_judge_group"),
+            sampler_mode=sampler_mode,
             allow_ties=bool(cfg.get("allow_ties", True)),
             group_size=int(cfg.get("group_size", 4)),
             groups=int(cfg.get("groups", 1)),
             alpha=float(cfg.get("alpha", 2.0)),
             cached_responses_by_scenario=cached_index,
+            max_tokens=max_tokens,
+            extra_body_for=extra_body_for,
             verbose=verbose,
         )
         append_records(evaluations_path, new_evals)
+        existing.extend(new_evals)
         if verbose:
             print(
                 f"Wrote {len(new_evals)} new evaluations for scenario_index={scenario_index} "

@@ -18,6 +18,7 @@ def get_model_response(
     max_tokens: int,
     return_full_response: bool = False,
     log_probs: bool = False,
+    extra_body: dict | None = None,
 ):
     """OpenRouter-only model call path."""
 
@@ -26,6 +27,7 @@ def get_model_response(
         model=model_name,
         max_tokens=max_tokens,
         return_full_response=return_full_response,
+        extra_body=extra_body,
     )
 
 
@@ -91,6 +93,7 @@ def collect_group_criteria_evaluations(
     max_tokens: int = 4096,
     cached_responses_by_scenario: dict | None = None,
     judge_prompt_prefix_fn: Callable[[int, str], str] | None = None,
+    extra_body_for: Callable[[str], dict | None] | None = None,
     verbose: bool = False,
 ):
     """Collect criterion-wise evaluations for one (judge, evaluee subset) selection."""
@@ -99,6 +102,9 @@ def collect_group_criteria_evaluations(
     num_models = len(models)
     model_nicks = list(models.keys())
     model_names = list(models.values())
+
+    def _extra_body(model_id: str):
+        return extra_body_for(model_id) if extra_body_for is not None else None
 
     if verbose:
         print(f"\n\nScenario {scenario_index}:")
@@ -129,6 +135,7 @@ def collect_group_criteria_evaluations(
             model_name=model_names[i],
             messages=eval_messages,
             max_tokens=max_tokens,
+            extra_body=_extra_body(model_names[i]),
         )
         if verbose:
             print(f"Successful API call for eval {i}: {model_nicks[i]}")
@@ -158,6 +165,7 @@ def collect_group_criteria_evaluations(
             model_name=model_names[judge_idx],
             messages=judge_messages,
             max_tokens=max_tokens,
+            extra_body=_extra_body(model_names[judge_idx]),
         )
         if verbose:
             print(f"Successful reflection API call for judge {judge_idx}: {model_nicks[judge_idx]}")
@@ -189,6 +197,7 @@ def collect_group_criteria_evaluations(
                 model_name=model_names[judge_idx],
                 messages=judge_messages,
                 max_tokens=max_tokens,
+                extra_body=_extra_body(model_names[judge_idx]),
             )
             if verbose:
                 print(

@@ -16,6 +16,8 @@ from typing import Callable
 
 from pipeline.model_refs import is_hf_local_model
 from pipeline.providers.openrouter import (
+    DEFAULT_RETRY_AFTER_CAP_SECONDS,
+    make_extra_body_resolver,
     OpenRouterCallError,
     get_openrouter_response,
     require_openrouter_api_key,
@@ -51,6 +53,10 @@ def _openrouter_settings(collection_cfg: dict) -> dict:
         "backoff_base_seconds": float(cfg.get("backoff_base_seconds", 2.0)),
         "backoff_cap_seconds": float(cfg.get("backoff_cap_seconds", 60.0)),
         "max_workers": int(cfg.get("max_workers", MAX_PARALLEL_API_CALLS)),
+        "retry_after_cap_seconds": float(
+            cfg.get("retry_after_cap_seconds", DEFAULT_RETRY_AFTER_CAP_SECONDS)
+        ),
+        "extra_body_for": make_extra_body_resolver(cfg),
     }
 
 
@@ -70,6 +76,12 @@ def _call_openrouter(
         timeout_seconds=settings["timeout_seconds"],
         backoff_base_seconds=settings["backoff_base_seconds"],
         backoff_cap_seconds=settings["backoff_cap_seconds"],
+        retry_after_cap_seconds=settings["retry_after_cap_seconds"],
+        extra_body=(
+            settings["extra_body_for"](model_path)
+            if settings.get("extra_body_for")
+            else None
+        ),
         response_validator=response_validator,
     )
 

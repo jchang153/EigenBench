@@ -137,6 +137,16 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
         run_group = upload_cfg.get("group", "")
         run_note = upload_cfg.get("note", "")
 
+
+        try:
+            eval_mb = os.path.getsize(eval_path) / 1e6
+        except OSError:
+            eval_mb = 0.0
+        upload_timeout = float(
+            upload_cfg.get("timeout_seconds", max(600.0, eval_mb * 20.0))
+        )
+        print(f"  Payload: {eval_mb:.1f} MB, upload timeout {upload_timeout:.0f}s")
+
         # Write a standalone script and run it detached via nohup
         script_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
         script_file.write(f"""
@@ -146,8 +156,12 @@ for k in list(os.environ):
     kl = k.lower()
     if kl in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
         os.environ.pop(k, None)
+import httpx
 from gradio_client import Client, handle_file
-c = Client("https://invi-bhagyesh-valuearena.hf.space/")
+c = Client(
+    "https://invi-bhagyesh-valuearena.hf.space/",
+    httpx_kwargs={{"timeout": httpx.Timeout({upload_timeout!r})}},
+)
 try:
     secret = os.environ["SPACE_SECRET"]
     result = c.predict(secret, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})

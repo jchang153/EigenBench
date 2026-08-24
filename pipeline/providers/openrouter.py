@@ -25,6 +25,10 @@ DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_BACKOFF_BASE_SECONDS = 2.0
 DEFAULT_BACKOFF_CAP_SECONDS = 60.0
+# Ceiling on an upstream Retry-After. Rate-limit delays feed a process-global
+# cooldown, so without a bound one provider's long Retry-After stalls the whole
+# run. Set to 0 to honor Retry-After verbatim.
+DEFAULT_RETRY_AFTER_CAP_SECONDS = 120.0
 
 # Canonical error_type values from OpenRouter's error documentation.
 RETRYABLE_ERROR_TYPES = frozenset(
@@ -379,12 +383,43 @@ def _validate_completion(
         content = message_data.get("content")
 
     if not isinstance(content, str) or not content.strip():
+        # Reasoning models put chain-of-thought in a separate field, and its
+        # tokens still count against max_tokens. A model that spends the whole
+        # budget thinking returns empty content, so surface finish_reason and
+        # any reasoning field -- otherwise this error says nothing actionable.
+        reasoning = message_data.get("reasoning") or message_data.get("reasoning_content")
+        usage = _object_to_dict(getattr(response, "usage", None) or response_data.get("usage"))
+        # OpenRouter routes each request to one of several upstream providers.
+        # A provider returning HTTP 200 with empty content is not a failure to
+        # OpenRouter, so no fallback fires -- naming it is the only way to tell
+        # a broken provider apart from a broken model.
+        hints = [f"provider={provider!r}", f"finish_reason={finish_reason!r}"]
+        if isinstance(reasoning, str) and reasoning.strip():
+            hints.append(f"reasoning_field={len(reasoning)} chars")
+        if usage:
+            completion_tokens = usage.get("completion_tokens")
+            details_obj = _object_to_dict(usage.get("completion_tokens_details"))
+            reasoning_tokens = details_obj.get("reasoning_tokens") if details_obj else None
+            if completion_tokens is not None:
+                hints.append(f"completion_tokens={completion_tokens}")
+            if reasoning_tokens is not None:
+                hints.append(f"reasoning_tokens={reasoning_tokens}")
+        if finish_reason == "length":
+            hints.append(
+                "output truncated -- raise collection.max_tokens or lower the "
+                "reasoning effort for this model"
+            )
+
         details = OpenRouterErrorDetails(
             model=model,
             attempt=attempt,
             max_attempts=max_attempts,
             error_type="empty_response",
-            message="OpenRouter response contained no non-empty text content",
+            message=(
+                "OpenRouter response contained no non-empty text content ("
+                + ", ".join(hints)
+                + ")"
+            ),
             retryable=True,
             request_id=request_id,
         )
@@ -413,16 +448,80 @@ def _validate_completion(
     )
 
 
+def resolve_extra_body(openrouter_cfg: dict | None, model_id: str) -> dict | None:
+    """Build the OpenRouter-specific request body for one model.
+
+    OpenRouter extensions (`reasoning`, `provider` routing) are not OpenAI
+    Chat Completions fields, so the SDK only forwards them via `extra_body`.
+    They are per-model in practice: reasoning effort applies to reasoning
+    models, and provider pinning to the one model with a bad provider in its
+    pool. Spec shape:
+
+        "openrouter": {
+            "extra_body": {"provider": {"require_parameters": True}},
+            "per_model_extra_body": {
+                "z-ai/glm-5.3": {"reasoning": {"effort": "low"}},
+                "deepseek/deepseek-v4-flash-0731": {
+                    "provider": {"order": ["Sail Research"]}
+                },
+            },
+        }
+
+    Per-model entries win key-by-key over the global block.
+    """
+
+    if not openrouter_cfg:
+        return None
+
+    merged: dict[str, Any] = {}
+    shared = openrouter_cfg.get("extra_body") or {}
+    if shared:
+        merged.update(shared)
+
+    per_model = openrouter_cfg.get("per_model_extra_body") or {}
+    specific = per_model.get(model_id) or {}
+    if specific:
+        merged.update(specific)
+
+    return merged or None
+
+
+def make_extra_body_resolver(openrouter_cfg: dict | None):
+    """Return a model_id -> extra_body callable, or None when unconfigured."""
+
+    if not openrouter_cfg:
+        return None
+    if not (openrouter_cfg.get("extra_body") or openrouter_cfg.get("per_model_extra_body")):
+        return None
+
+    cache: dict[str, dict | None] = {}
+
+    def resolver(model_id: str) -> dict | None:
+        if model_id not in cache:
+            cache[model_id] = resolve_extra_body(openrouter_cfg, model_id)
+        return cache[model_id]
+
+    return resolver
+
+
 def _retry_delay_seconds(
     details: OpenRouterErrorDetails,
     *,
     backoff_base_seconds: float,
     backoff_cap_seconds: float,
+    retry_after_cap_seconds: float = DEFAULT_RETRY_AFTER_CAP_SECONDS,
 ) -> float:
     if details.retry_after_seconds is not None:
-        # Retry-After is an explicit server instruction, so do not apply the
-        # local exponential-backoff cap to it.
-        return max(0.0, details.retry_after_seconds)
+
+        requested = max(0.0, details.retry_after_seconds)
+        if retry_after_cap_seconds > 0 and requested > retry_after_cap_seconds:
+            print(
+                f"[openrouter] {details.model}: provider asked for "
+                f"Retry-After={requested:.0f}s; clamping to "
+                f"{retry_after_cap_seconds:.0f}s (attempt {details.attempt})"
+            )
+            return retry_after_cap_seconds
+        return requested
     exponential_cap = min(
         backoff_cap_seconds,
         backoff_base_seconds * (2 ** max(0, details.attempt - 1)),
@@ -441,6 +540,8 @@ def get_openrouter_response(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS,
     backoff_cap_seconds: float = DEFAULT_BACKOFF_CAP_SECONDS,
+    retry_after_cap_seconds: float = DEFAULT_RETRY_AFTER_CAP_SECONDS,
+    extra_body: dict[str, Any] | None = None,
     response_validator: Callable[[str], str | None] | None = None,
     client: Any | None = None,
 ):
@@ -455,6 +556,7 @@ def get_openrouter_response(
     timeout_seconds = float(timeout_seconds)
     backoff_base_seconds = float(backoff_base_seconds)
     backoff_cap_seconds = float(backoff_cap_seconds)
+    retry_after_cap_seconds = float(retry_after_cap_seconds)
     if max_attempts <= 0:
         raise ValueError("max_attempts must be positive")
     if timeout_seconds <= 0:
@@ -483,6 +585,11 @@ def get_openrouter_response(
                     temperature=temperature,
                     max_tokens=max_tokens,
                     messages=messages,
+                    **(
+                        {"extra_body": dict(extra_body)}
+                        if extra_body
+                        else {}
+                    ),
                 )
                 completion = _validate_completion(
                     response,
@@ -521,6 +628,7 @@ def get_openrouter_response(
                 details,
                 backoff_base_seconds=backoff_base_seconds,
                 backoff_cap_seconds=backoff_cap_seconds,
+                retry_after_cap_seconds=retry_after_cap_seconds,
             )
             if details.error_type in {"rate_limit_exceeded", "provider_overloaded"}:
                 _SHARED_RETRY_COOLDOWN.extend(delay)
