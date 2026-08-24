@@ -111,6 +111,34 @@ def load_model_map(run_dir: Path) -> dict[str, str]:
     return {str(name): str(model) for name, model in models.items()}
 
 
+def load_rankings(
+    run_dir: Path,
+    constitution_slug: str,
+    model_names: list[str],
+) -> dict[str, dict[str, float | int]]:
+    """Load the saved full-data order and scenario-bootstrap Elo intervals."""
+    result_dir = run_dir / constitution_slug / "direct_rating"
+    summary = json.loads((result_dir / "summary.json").read_text(encoding="utf-8"))
+    bootstrap = json.loads(
+        (result_dir / "bootstrap" / "summary.json").read_text(encoding="utf-8")
+    )
+    intervals = {str(item["model_name"]): item for item in bootstrap}
+    if {str(item["model_name"]) for item in summary} != set(model_names):
+        raise ValueError(f"Ranking roster mismatch for {constitution_slug}")
+    if set(intervals) != set(model_names):
+        raise ValueError(f"Bootstrap roster mismatch for {constitution_slug}")
+
+    return {
+        str(item["model_name"]): {
+            "rank": rank,
+            "elo": float(item["eigenbench_elo"]),
+            "elo_ci_lower": float(intervals[str(item["model_name"])]["elo_ci_lower"]),
+            "elo_ci_upper": float(intervals[str(item["model_name"])]["elo_ci_upper"]),
+        }
+        for rank, item in enumerate(summary, start=1)
+    }
+
+
 def load_records(path: Path, expected: dict[str, Any]) -> list[dict[str, Any]]:
     finalized_path = Path(f"{path}.checkpoint") / "finalized.json"
     finalized = json.loads(finalized_path.read_text(encoding="utf-8"))
@@ -176,9 +204,10 @@ def make_sample(
     record: dict[str, Any],
     *,
     constitution_slug: str,
-    judge_model: str,
     model_map: dict[str, str],
 ) -> EvalSample:
+    judge_name = str(record["judge"]["name"])
+    judge_model = f"openrouter/{model_map[judge_name]}"
     criteria = str(record["constitution"])
     scenario = str(record["scenario"])
     response = str(record["response"])
@@ -237,7 +266,7 @@ def make_sample(
     scenario_index = int(record["scenario_index"])
 
     return EvalSample(
-        id=f"Scenario {scenario_index + 1:03d} | {evaluee_name}",
+        id=f"Scenario {scenario_index + 1:03d} | Judge {judge_name}",
         epoch=1,
         input=[reflection_input],
         target=evaluee_name,
@@ -272,7 +301,7 @@ def make_sample(
             "scenario": scenario,
             "constitution": constitution_slug,
             "judge_index": int(record["judge"]["index"]),
-            "judge_name": str(record["judge"]["name"]),
+            "judge_name": judge_name,
             "judge_model": judge_model,
             "evaluee_index": int(record["evaluee"]["index"]),
             "evaluee_name": evaluee_name,
@@ -292,8 +321,12 @@ def build_log(
     source_hash: str,
     source_git_commit: str,
     constitution_slug: str,
-    judge_name: str,
-    judge_model: str,
+    evaluee_name: str,
+    evaluee_model: str,
+    rank: int,
+    elo: float,
+    elo_ci_lower: float,
+    elo_ci_upper: float,
     model_map: dict[str, str],
     created: str,
 ) -> EvalLog:
@@ -301,12 +334,11 @@ def build_log(
         make_sample(
             record,
             constitution_slug=constitution_slug,
-            judge_model=judge_model,
             model_map=model_map,
         )
         for record in sorted(
             records,
-            key=lambda item: (int(item["scenario_index"]), int(item["evaluee"]["index"])),
+            key=lambda item: (int(item["scenario_index"]), int(item["judge"]["index"])),
         )
     ]
     sample_ids = [str(sample.id) for sample in samples]
@@ -314,7 +346,7 @@ def build_log(
     task_name = f"{CONSTITUTION_LABELS[constitution_slug]} direct ratings"
     criterion_text = [str(item["criterion"]) for item in records[0]["ratings"]]
     relative_source = str(source_path.relative_to(_REPO_ROOT))
-    task_slug = f"{constitution_slug}-{slug(judge_name)}"
+    task_slug = f"{constitution_slug}-{slug(evaluee_name)}"
 
     return EvalLog(
         status="success",
@@ -336,7 +368,7 @@ def build_log(
                 sample_ids=sample_ids,
                 shuffled=False,
             ),
-            model=judge_name,
+            model=evaluee_name,
             config=EvalConfig(epochs=1, log_samples=True),
             packages={"inspect_ai": "0.3.240"},
             viewer=ViewerConfig(
@@ -370,6 +402,12 @@ def build_log(
                 "source_git_commit": source_git_commit,
                 "constitution_name": constitution_name,
                 "criteria": criterion_text,
+                "evaluee_name": evaluee_name,
+                "evaluee_model": evaluee_model,
+                "evaluee_rank": rank,
+                "eigenbench_elo": elo,
+                "elo_ci_lower": elo_ci_lower,
+                "elo_ci_upper": elo_ci_upper,
                 "sampling_mode": "balanced_unique_judge",
                 "response_redundancy": 1,
                 "include_self": False,
@@ -388,7 +426,12 @@ def build_log(
     )
 
 
-def validate_written_log(path: Path, *, expected_samples: int) -> None:
+def validate_written_log(
+    path: Path,
+    *,
+    expected_samples: int,
+    expected_evaluee: str,
+) -> None:
     log = read_eval_log(path)
     if log.status != "success" or log.samples is None:
         raise ValueError(f"Inspect could not read a successful log from {path}")
@@ -397,6 +440,8 @@ def validate_written_log(path: Path, *, expected_samples: int) -> None:
     if log.results is None or log.results.completed_samples != expected_samples:
         raise ValueError(f"Inspect log results mismatch in {path}")
     for sample in log.samples:
+        if sample.metadata.get("evaluee_name") != expected_evaluee:
+            raise ValueError(f"Wrong evaluee in {path}: {sample.id}")
         if not sample.scores or {
             "criterion_ratings",
             "mean_rating",
@@ -425,36 +470,52 @@ def main() -> None:
         records = load_records(source_path, expected)
         validate_coverage(records, model_names, expected["missing"])
         source_hash = sha256_file(source_path)
-        by_judge: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        rankings = load_rankings(run_dir, constitution_slug, model_names)
+        by_evaluee: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for record in records:
-            judge_name = str(record["judge"]["name"])
-            if judge_name not in model_map:
-                raise ValueError(f"Unknown judge in {source_path}: {judge_name}")
-            by_judge[judge_name].append(record)
+            evaluee_name = str(record["evaluee"]["name"])
+            if evaluee_name not in model_map:
+                raise ValueError(f"Unknown evaluee in {source_path}: {evaluee_name}")
+            by_evaluee[evaluee_name].append(record)
 
-        if set(by_judge) != set(model_names):
-            raise ValueError(f"Judge roster mismatch in {source_path}")
-        for judge_name in model_names:
+        if set(by_evaluee) != set(model_names):
+            raise ValueError(f"Evaluee roster mismatch in {source_path}")
+        for evaluee_name in sorted(model_names, key=lambda name: rankings[name]["rank"]):
+            ranking = rankings[evaluee_name]
             log = build_log(
-                by_judge[judge_name],
+                by_evaluee[evaluee_name],
                 source_path=source_path,
                 source_hash=source_hash,
                 source_git_commit=commit,
                 constitution_slug=constitution_slug,
-                judge_name=judge_name,
-                judge_model=f"openrouter/{model_map[judge_name]}",
+                evaluee_name=evaluee_name,
+                evaluee_model=model_map[evaluee_name],
+                rank=int(ranking["rank"]),
+                elo=float(ranking["elo"]),
+                elo_ci_lower=float(ranking["elo_ci_lower"]),
+                elo_ci_upper=float(ranking["elo_ci_upper"]),
                 model_map=model_map,
                 created=created,
             )
-            path = output_dir / f"{constitution_slug}__{slug(judge_name)}.eval"
+            path = output_dir / (
+                f"{constitution_slug}__{int(ranking['rank']):02d}__{slug(evaluee_name)}.eval"
+            )
             write_eval_log(log, location=path, format="eval")
-            validate_written_log(path, expected_samples=len(by_judge[judge_name]))
+            validate_written_log(
+                path,
+                expected_samples=len(by_evaluee[evaluee_name]),
+                expected_evaluee=evaluee_name,
+            )
             written.append(
                 {
                     "path": path.name,
                     "constitution": constitution_slug,
-                    "judge": judge_name,
-                    "samples": len(by_judge[judge_name]),
+                    "rank": int(ranking["rank"]),
+                    "evaluee": evaluee_name,
+                    "elo": float(ranking["elo"]),
+                    "elo_ci_lower": float(ranking["elo_ci_lower"]),
+                    "elo_ci_upper": float(ranking["elo_ci_upper"]),
+                    "samples": len(by_evaluee[evaluee_name]),
                     "sha256": sha256_file(path),
                 }
             )
