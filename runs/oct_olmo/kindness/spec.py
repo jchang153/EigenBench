@@ -72,6 +72,16 @@ RUN_SPEC = {
         "allowed_missing_rating_criteria": {
             "claude-4-sonnet": [4],
         },
+        # Absorb up to 200 of ~4,200 tasks (4.8%) rather than losing the run to
+        # one judge that exhausted its attempts. Most of these are OLMo LoRAs
+        # writing a prose preamble past the 512-token rating budget -- see the
+        # note on generation.direct_rating below. Not part of the checkpoint
+        # fingerprint, so raising it resumes rather than restarts.
+        #
+        # Check the per-judge breakdown printed at the end of collection: loss
+        # concentrated in a few judges thins their trust rows and biases the
+        # matrix along the axis being measured, which a total count hides.
+        "max_failed_tasks": 200,
         "sampler_mode": "partitioned_random_judge",
         "group_size": 4,
         "response_redundancy": 1,
@@ -81,6 +91,16 @@ RUN_SPEC = {
         # the rating prompt lands near 1,600 tokens with ample headroom.
         # min_tokens suppresses EOS so a 7B cannot return empty content, which
         # the local phase treats as an unrecoverable validation failure.
+        # direct_rating stays at 512 deliberately, even though it is the known
+        # cause of most dropped ratings: the OLMo LoRAs write a prose preamble
+        # before the tags, and at 512 the preamble can consume the whole budget
+        # (olmo-goodness rating olmo-sarcasm on scenario 100 returned 2331 chars
+        # of analysis with no tag in it -- 512 tokens at ~4.55 chars each, so the
+        # tags were never reached). Raising it to 1024 would fit inside the 4096
+        # window, but "generation" is part of the checkpoint fingerprint, so the
+        # change invalidates the manifest and forces the whole run to re-collect.
+        # Those ratings are dropped instead, via max_failed_tasks above. Set 1024
+        # here for any FRESH run of this spec.
         "generation": {
             "response": {"max_tokens": 768, "temperature": 0.7, "min_tokens": 16},
             "reflection": {"max_tokens": 512, "temperature": 0.2, "min_tokens": 32},

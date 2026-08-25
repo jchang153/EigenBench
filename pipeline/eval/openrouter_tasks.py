@@ -12,6 +12,7 @@ from pipeline.providers.openrouter import (
 )
 
 from .checkpoint import CollectionCheckpoint
+from .failures import FailureBudget
 
 
 MAX_PARALLEL_API_CALLS = 36
@@ -74,11 +75,19 @@ def run_openrouter_tasks(
     *,
     checkpoint: CollectionCheckpoint,
     max_workers: int,
-) -> list[str]:
-    """Run bounded parallel tasks, checkpointing every success and failure."""
+    failure_budget: FailureBudget | None = None,
+) -> list[str | None]:
+    """Run bounded parallel tasks, checkpointing every success and failure.
+
+    The returned list is positionally aligned with ``tasks``. A slot is ``None``
+    only where a task failed permanently and ``failure_budget`` allowed the run
+    to continue, so callers that pass no budget still get an all-string list.
+    """
 
     if max_workers <= 0:
         raise ValueError("collection.openrouter.max_workers must be positive")
+
+    budget = failure_budget if failure_budget is not None else FailureBudget()
 
     results: list[str | None] = [None] * len(tasks)
     pending_indices: list[int] = []
@@ -93,20 +102,28 @@ def run_openrouter_tasks(
         results[index] = content
 
     if not pending_indices:
-        return [result for result in results if result is not None]
+        return results
 
     executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending_indices)))
     in_flight = {}
     next_pending = 0
-    failures: list[tuple[dict, dict]] = []
+    tolerated: set[int] = set()
+    fatal: list[tuple[dict, dict]] = []
 
     def submit_available() -> None:
         nonlocal next_pending
-        while not failures and len(in_flight) < max_workers and next_pending < len(pending_indices):
+        while not fatal and len(in_flight) < max_workers and next_pending < len(pending_indices):
             index = pending_indices[next_pending]
             next_pending += 1
             future = executor.submit(tasks[index].call)
             in_flight[future] = index
+
+    def note_failure(index: int, task: OpenRouterTask, error: dict) -> None:
+        checkpoint.save_failed(task.identity, error)
+        if budget.record(task.identity, error):
+            tolerated.add(index)
+        else:
+            fatal.append((task.identity, error))
 
     submit_available()
     try:
@@ -120,39 +137,40 @@ def run_openrouter_tasks(
                     if not isinstance(content, str) or not content.strip():
                         raise RuntimeError("OpenRouter task returned empty content after validation")
                 except OpenRouterCallError as exc:
-                    error = exc.to_dict()
-                    checkpoint.save_failed(task.identity, error)
-                    failures.append((task.identity, error))
+                    note_failure(index, task, exc.to_dict())
                 except Exception as exc:
-                    error = {
+                    note_failure(index, task, {
                         "error_type": "client_bug",
                         "message": f"{type(exc).__name__}: {exc}",
                         "retryable": False,
                         "exhausted": False,
-                    }
-                    checkpoint.save_failed(task.identity, error)
-                    failures.append((task.identity, error))
+                    })
                 else:
                     results[index] = content
                     checkpoint.save_completed(task.identity, {"content": content})
 
-            # Once a task has failed, let already-running calls finish and be
+            # Once the budget is spent, let already-running calls finish and be
             # checkpointed, but stop submitting new calls.
             submit_available()
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
 
-    if failures:
-        identity, error = failures[0]
+    if fatal:
+        identity, error = fatal[0]
+        spent = "" if budget.limit == 0 else (
+            f" The failure budget is spent ({budget.summary()}); raise "
+            "collection.max_failed_tasks to tolerate more, or fix the cause."
+        )
         raise StrictCollectionError(
             "Strict collection paused after a failed OpenRouter task. "
-            f"task={identity}, error={error}. Re-run with the same spec to resume "
-            "from the checkpoint after resolving the failure."
+            f"task={identity}, error={error}.{spent} Re-run with the same spec to "
+            "resume from the checkpoint after resolving the failure."
         )
 
-    if any(result is None for result in results):
+    unaccounted = {index for index, result in enumerate(results) if result is None} - tolerated
+    if unaccounted:
         raise RuntimeError("OpenRouter task scheduler exited with incomplete results")
-    return [result for result in results if result is not None]
+    return results
 
 
 # Backward-compatible private names for callers that used the old mixed module.
@@ -164,6 +182,7 @@ _run_openrouter_tasks = run_openrouter_tasks
 
 __all__ = [
     "MAX_PARALLEL_API_CALLS",
+    "FailureBudget",
     "OpenRouterTask",
     "StrictCollectionError",
     "call_openrouter",

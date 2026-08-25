@@ -12,6 +12,7 @@ from typing import Callable
 from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import append_records, load_records
 from .checkpoint import CollectionCheckpoint
+from .failures import FailureBudget
 
 
 DIRECT_PROMPT_VERSION = 1
@@ -663,6 +664,14 @@ def collect_direct_ratings(
         model_nicks=model_nicks,
         num_criteria=len(criteria),
     )
+    # One budget for the whole run, so the limit bounds total loss rather than
+    # loss per phase. 0 keeps the original behavior: any permanent failure stops
+    # collection. Not part of the checkpoint fingerprint, so raising it resumes
+    # an interrupted run instead of restarting it.
+    max_failed_tasks = int(collection_cfg.get("max_failed_tasks", 0))
+    if max_failed_tasks < 0:
+        raise ValueError("collection.max_failed_tasks must be non-negative")
+    failure_budget = FailureBudget(limit=max_failed_tasks)
     cache_path_value = collection_cfg.get("cached_responses_path")
     if cache_path_value and Path(cache_path_value).expanduser().resolve() == Path(
         evaluations_path
@@ -779,8 +788,14 @@ def collect_direct_ratings(
             response_tasks,
             checkpoint=checkpoint,
             max_workers=settings["max_workers"],
+            failure_budget=failure_budget,
         )
         for (s_idx, eval_nick), content in zip(response_targets, responses):
+            # None means the call failed permanently and the budget absorbed it.
+            # Leaving the key unset is what makes later phases skip it: an
+            # evaluee with no response cannot be reflected on or rated.
+            if content is None:
+                continue
             eval_responses[s_idx][eval_nick] = content
 
     # Local response generation.
@@ -792,6 +807,7 @@ def collect_direct_ratings(
         checkpoint=checkpoint,
         phase_cfg=generation["response"],
         max_attempts=settings["max_attempts"],
+        failure_budget=failure_budget,
         verbose=verbose,
     )
 
@@ -806,6 +822,7 @@ def collect_direct_ratings(
             complete = {
                 nick: eval_responses[scenario_idx][nick]
                 for nick in model_nicks
+                if nick in eval_responses[scenario_idx]
             }
             if any(existing_cache.get(scenario_idx, {}).get(nick) != value for nick, value in complete.items()):
                 cache_rows.append(
@@ -828,6 +845,9 @@ def collect_direct_ratings(
         model_path = openrouter_models[judge_nick]
         system_prompt = build_direct_reflection_prompt()
         for eval_nick in assignment["eval_nicks"]:
+            response_text = eval_responses[s_idx].get(eval_nick)
+            if response_text is None:
+                continue  # its response call failed; nothing to reflect on
             messages = [
                 {"role": "system", "content": system_prompt},
                 {
@@ -835,7 +855,7 @@ def collect_direct_ratings(
                     "content": build_direct_reflection_user_prompt(
                         criteria_text,
                         assignment["scenario"],
-                        eval_responses[s_idx][eval_nick],
+                        response_text,
                     ),
                 },
             ]
@@ -865,8 +885,11 @@ def collect_direct_ratings(
             reflection_tasks,
             checkpoint=checkpoint,
             max_workers=settings["max_workers"],
+            failure_budget=failure_budget,
         )
         for (s_idx, judge_nick, eval_nick), content in zip(reflection_targets, responses):
+            if content is None:
+                continue
             reflections[s_idx][judge_nick][eval_nick] = content
 
     _run_local_reflection_phase(
@@ -879,6 +902,7 @@ def collect_direct_ratings(
         checkpoint=checkpoint,
         phase_cfg=generation["reflection"],
         max_attempts=settings["max_attempts"],
+        failure_budget=failure_budget,
         verbose=verbose,
     )
 
@@ -902,6 +926,10 @@ def collect_direct_ratings(
         validator = validators[judge_nick]
         system_prompt = build_direct_rating_prompt()
         for eval_nick in assignment["eval_nicks"]:
+            response_text = eval_responses[s_idx].get(eval_nick)
+            reflection_text = reflections[s_idx][judge_nick].get(eval_nick)
+            if response_text is None or reflection_text is None:
+                continue  # an upstream call failed; there is nothing to rate
             messages = [
                 {"role": "system", "content": system_prompt},
                 {
@@ -909,8 +937,8 @@ def collect_direct_ratings(
                     "content": build_direct_rating_user_prompt(
                         criteria_text,
                         assignment["scenario"],
-                        eval_responses[s_idx][eval_nick],
-                        reflections[s_idx][judge_nick][eval_nick],
+                        response_text,
+                        reflection_text,
                     ),
                 },
             ]
@@ -943,8 +971,11 @@ def collect_direct_ratings(
             rating_tasks,
             checkpoint=checkpoint,
             max_workers=settings["max_workers"],
+            failure_budget=failure_budget,
         )
         for (s_idx, judge_nick, eval_nick), content in zip(rating_targets, responses):
+            if content is None:
+                continue
             rating_responses[s_idx][judge_nick][eval_nick] = content
 
     _run_local_rating_phase(
@@ -958,23 +989,54 @@ def collect_direct_ratings(
         checkpoint=checkpoint,
         phase_cfg=generation["direct_rating"],
         max_attempts=settings["max_attempts"],
+        failure_budget=failure_budget,
         validators=validators,
         verbose=verbose,
     )
 
     records = []
+    dropped_by_judge: dict[str, int] = defaultdict(int)
     for assignment in assignments:
         s_idx = assignment["scenario_index"]
         judge_nick = assignment["judge_nick"]
         for eval_idx, eval_nick in zip(assignment["eval_idxs"], assignment["eval_nicks"]):
-            raw_rating = rating_responses[s_idx][judge_nick][eval_nick]
-            parsed = parse_direct_ratings(
-                raw_rating,
-                num_criteria=len(criteria),
-                scale_min=scale_min,
-                scale_max=scale_max,
-                allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
-            )
+            raw_rating = rating_responses[s_idx][judge_nick].get(eval_nick)
+            if raw_rating is None:
+                dropped_by_judge[judge_nick] += 1
+                continue
+            try:
+                parsed = parse_direct_ratings(
+                    raw_rating,
+                    num_criteria=len(criteria),
+                    scale_min=scale_min,
+                    scale_max=scale_max,
+                    allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
+                )
+            except ValueError as exc:
+                # Content that passed the validator when it was collected can
+                # still fail here if it came from a checkpoint written under a
+                # different parser or allowed-missing set. Raising now would
+                # discard the whole run after every call has been paid for, so
+                # drop the one record against the same budget instead.
+                identity = {
+                    "stage": "direct_rating",
+                    "scenario_index": s_idx,
+                    "judge": judge_nick,
+                    "evaluee": eval_nick,
+                }
+                if not failure_budget.record(identity, {
+                    "error_type": "unparseable_record",
+                    "message": str(exc),
+                    "retryable": False,
+                    "exhausted": True,
+                    "content": raw_rating[:4000],
+                }):
+                    raise RuntimeError(
+                        "could not parse a stored rating and the failure budget is "
+                        f"spent ({failure_budget.summary()}): task={identity}, error={exc}"
+                    ) from exc
+                dropped_by_judge[judge_nick] += 1
+                continue
             missing_criterion_indices = sorted(set(range(len(criteria))) - set(parsed))
             records.append(
                 {
@@ -1006,10 +1068,28 @@ def collect_direct_ratings(
             )
 
     expected = sum(len(assignment["eval_nicks"]) for assignment in assignments)
-    if len(records) != expected:
+    shortfall = expected - len(records)
+    if shortfall and failure_budget.limit == 0:
         raise RuntimeError(f"incomplete direct rating set: expected {expected}, got {len(records)}")
+    if not records:
+        raise RuntimeError(
+            f"every one of the {expected} expected ratings was dropped; "
+            f"{failure_budget.summary()}"
+        )
     checkpoint.finalize(evaluations_path, records)
     print(f"Direct collection complete. {len(records)} ratings saved to {evaluations_path}")
+    if shortfall:
+        # Print the per-judge breakdown, not just the total. Uneven loss across
+        # judges is the failure mode that matters: it biases the trust matrix
+        # along the axis being measured, and one judge losing 11% of its rows
+        # while the rest lose none is invisible in an aggregate count.
+        print(f"  dropped {shortfall} of {expected} expected ratings")
+        for judge_nick, count in sorted(dropped_by_judge.items(), key=lambda kv: -kv[1]):
+            judge_total = sum(
+                len(a["eval_nicks"]) for a in assignments if a["judge_nick"] == judge_nick
+            )
+            print(f"    {judge_nick}: {count}/{judge_total} ({100.0 * count / judge_total:.1f}%)")
+        print(f"  {failure_budget.summary()}")
     return records
 
 
@@ -1031,6 +1111,7 @@ def _run_local_tasks_for_phase(
     max_attempts: int,
     consume: Callable[[_LocalTask, str], None],
     verbose: bool,
+    failure_budget: FailureBudget | None = None,
 ) -> None:
     if not local_groups:
         return
@@ -1104,21 +1185,40 @@ def _run_local_tasks_for_phase(
                             validation_error = task.validator(content) if task.validator else None
                         if validation_error:
                             if attempt >= max_attempts:
-                                checkpoint.save_failed(
-                                    task.identity,
-                                    {
-                                        "error_type": "invalid_response",
-                                        "message": validation_error,
-                                        "retryable": True,
-                                        "exhausted": True,
-                                        # Keep what was rejected. A validation
-                                        # failure is often valid data in an
-                                        # unexpected notation, and without the
-                                        # text there is no way to tell that from
-                                        # a genuine refusal.
-                                        "content": (content or "")[:4000],
-                                    },
-                                )
+                                error = {
+                                    "error_type": "invalid_response",
+                                    "message": validation_error,
+                                    "retryable": True,
+                                    "exhausted": True,
+                                    # Keep what was rejected. A validation
+                                    # failure is often valid data in an
+                                    # unexpected notation, and without the
+                                    # text there is no way to tell that from
+                                    # a genuine refusal.
+                                    "content": (content or "")[:4000],
+                                    # "length" means the budget ran out before
+                                    # the tags, not that the judge refused the
+                                    # format -- the two need opposite fixes.
+                                    "finish_reason": getattr(
+                                        output.outputs[0], "finish_reason", None
+                                    ),
+                                }
+                                checkpoint.save_failed(task.identity, error)
+                                if failure_budget is not None and failure_budget.record(
+                                    task.identity, error
+                                ):
+                                    # Absorbed: drop the task without consuming
+                                    # it, so downstream phases skip it the same
+                                    # way they skip a failed API call.
+                                    if verbose:
+                                        print(
+                                            f"  dropped {task.identity['stage']} "
+                                            f"{nick} -> {task.identity.get('evaluee')} "
+                                            f"scenario={task.identity['scenario_index']} "
+                                            f"({failure_budget.spent}/{failure_budget.limit}): "
+                                            f"{validation_error[:120]}"
+                                        )
+                                    continue
                                 raise RuntimeError(
                                     f"local generation validation failed after {max_attempts} attempts: "
                                     f"task={task.identity}, error={validation_error}"
@@ -1189,6 +1289,8 @@ def _run_local_reflection_phase(**kwargs) -> None:
             continue
         s_idx = assignment["scenario_index"]
         for eval_nick in assignment["eval_nicks"]:
+            if eval_responses[s_idx].get(eval_nick) is None:
+                continue  # its response call failed; nothing to reflect on
             tasks_by_model[judge_nick].append(
                 _LocalTask(
                     identity={
@@ -1239,6 +1341,11 @@ def _run_local_rating_phase(**kwargs) -> None:
             continue
         s_idx = assignment["scenario_index"]
         for eval_nick in assignment["eval_nicks"]:
+            if (
+                eval_responses[s_idx].get(eval_nick) is None
+                or reflections[s_idx][judge_nick].get(eval_nick) is None
+            ):
+                continue  # an upstream call failed; there is nothing to rate
             tasks_by_model[judge_nick].append(
                 _LocalTask(
                     identity={
