@@ -32,7 +32,18 @@ RUN_SPEC = {
     },
     "constitution": {
         "path": "data/constitutions/oct_goodness.json",
-        "num_criteria": 15,
+        # 10 of 15. At 15 the run failed three times on three different judges
+        # and three different criteria -- gemini on 4 (non-integer), gemini on 5
+        # (non-integer), claude-4-sonnet on 2 (omitted). Emitting 15 perfectly
+        # formed tags in one reply is unreliable even for frontier models, and 15
+        # is the highest count anyone has run: the two published direct runs used
+        # 8 (kindness) and 12 (deep_ecology).
+        #
+        # num_criteria truncates, so this keeps 1-10 and drops 11-15 -- which are
+        # the most redundant of the set ("avoids existential risk", "avoids
+        # long-term risks", "avoids causing any harm", "promotes flourishing",
+        # "does what is best for humanity"), already covered by 7-10.
+        "num_criteria": 10,
     },
     "evaluation": {
         "mode": "direct_rating",
