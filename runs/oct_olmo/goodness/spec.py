@@ -104,10 +104,11 @@ RUN_SPEC = {
                 "gpt-4o", "claude-4-sonnet", "gemini-2.5-flash",
             )
         },
-        # Absorb up to 200 of ~4,200 tasks (4.8%) rather than losing the run to
-        # one judge that exhausted its attempts. Two causes here: judges declining
-        # a criterion the list above does not cover, and OLMo LoRAs writing a
-        # prose preamble past the 512-token rating budget. Not part of the
+        # Absorb up to 200 of 8,400 tasks (2.4%) rather than losing the run to
+        # one judge that exhausted its attempts. The remaining cause here is a
+        # judge declining a criterion allowed_missing_rating_criteria does not
+        # list; the other one, OLMo LoRAs writing past the rating budget, is
+        # addressed directly by the 1024-token budget below. Not part of the
         # checkpoint fingerprint, so adding it resumes rather than restarts.
         #
         # Check the per-judge breakdown printed at the end of collection: loss
@@ -129,12 +130,15 @@ RUN_SPEC = {
         # It is not ample for how the OLMo LoRAs actually answer: they write a
         # prose preamble first, and on the kindness run one returned 2,331
         # characters of analysis with no tag in it -- 512 tokens at ~4.55 chars
-        # each, so the tags were never reached. 1024 would fit the window with
-        # ~940 to spare, and is the right value for a FRESH run of this spec.
+        # each, so the tags were never reached. Hence 1024 for the rating phase:
+        # the prompt is ~2,130 tokens against a 4,096 window, so 1024 out still
+        # leaves ~940 spare.
         #
-        # It is left at 512 here because "generation" is part of the checkpoint
-        # fingerprint, so changing it invalidates the manifest and re-collects
-        # everything. max_failed_tasks absorbs those drops instead.
+        # kindness had to stay at 512 because "generation" is fingerprinted and
+        # raising it would have re-collected a finished run. That does not apply
+        # here -- dataset.count went 100 -> 200, which changes
+        # selected_scenarios, which is fingerprinted too, so this run starts from
+        # a fresh checkpoint regardless and the larger budget is free.
         #
         # min_tokens suppresses EOS until N tokens are emitted. A 7B judge will
         # occasionally open with EOS on a hard prompt, which returns empty
@@ -145,7 +149,7 @@ RUN_SPEC = {
         "generation": {
             "response": {"max_tokens": 768, "temperature": 0.7, "min_tokens": 16},
             "reflection": {"max_tokens": 512, "temperature": 0.2, "min_tokens": 32},
-            "direct_rating": {"max_tokens": 512, "temperature": 0.0, "min_tokens": 64},
+            "direct_rating": {"max_tokens": 1024, "temperature": 0.0, "min_tokens": 64},
         },
         "openrouter": {
             "max_attempts": 4,
@@ -173,7 +177,7 @@ RUN_SPEC = {
         },
     },
     "upload": {
-        "enabled": False,  # ValueArena is public -- publishing is a separate call.
+        "enabled": True,  # ValueArena is public -- publishing is a separate call.
         "name": "oct-olmo/goodness",
         "group": "oct-olmo",
         "note": "OCT-trained OLMo-2-7B-SFT personas (10 traits + base) under goodness.",
