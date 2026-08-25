@@ -402,9 +402,17 @@ def _validate_completion(
             request_id=request_id,
         )
         raise _AttemptFailure(details)
-    # Some providers return assistant refusal text here instead of in content.
-    if (not isinstance(content, str) or not content.strip()) and isinstance(refusal, str):
-        content = refusal
+    if isinstance(refusal, str) and refusal.strip():
+        details = OpenRouterErrorDetails(
+            model=model,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type="invalid_response",
+            message="Provider refused the request",
+            retryable=True,
+            request_id=request_id,
+        )
+        raise _AttemptFailure(details)
 
     if not isinstance(content, str) or not content.strip():
         details = OpenRouterErrorDetails(

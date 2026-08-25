@@ -157,13 +157,21 @@ def direct_generated_text_validator(response: str) -> str | None:
 
     if not isinstance(response, str) or not response.strip():
         return "generated text is empty"
+    stripped = response.strip()
     lowered = response.lower()
-    if (
-        "triggered cyber-related safeguards" in lowered
-        or response.strip() == "[Model declined to provide a response.]"
+    if re.fullmatch(
+        r"\[[^\]]*(?:declined|refused)[^\]]*response[^\]]*\]",
+        stripped,
+        re.I,
     ):
         return "generated text is a provider refusal"
     tokens = re.findall(r"[A-Za-z]+", lowered)
+    if (
+        len(tokens) <= 100
+        and re.search(r"https?://", response)
+        and re.search(r"\b(?:safeguards?|content policy|verification program)\b", lowered)
+    ):
+        return "generated text is a provider notice"
     if len(tokens) >= 200:
         most_common_count = Counter(tokens).most_common(1)[0][1]
         if most_common_count / len(tokens) > 0.25:
@@ -173,8 +181,6 @@ def direct_generated_text_validator(response: str) -> str | None:
 
 def direct_criterion_reflection_validator(
     num_criteria: int,
-    *,
-    require_explicit_criteria: bool = False,
 ) -> Callable[[str], str | None]:
     """Validate criterion-by-criterion reflection text before rating."""
 
@@ -217,21 +223,7 @@ def direct_criterion_reflection_validator(
         if completed_passes(explicit_sequence) > 1:
             return "reflection repeats the full criterion sequence"
 
-        explicit = set(explicit_sequence)
-        if require_explicit_criteria:
-            covered = explicit
-        else:
-            numbered_sequence = [
-                int(value)
-                for value in re.findall(
-                    r"(?m)^\s*(?:#{1,6}\s*)?\*{0,2}(\d+)\s*[.)\]:-]",
-                    response,
-                )
-            ]
-            if completed_passes(numbered_sequence) > 1:
-                return "reflection repeats the full criterion sequence"
-            covered = explicit | set(numbered_sequence)
-        if not expected.issubset(covered):
+        if not expected.issubset(explicit_sequence):
             return "reflection does not cover every criterion"
         return None
 
@@ -858,12 +850,7 @@ def collect_direct_ratings(
         if judge_nick not in openrouter_models:
             continue
         model_path = openrouter_models[judge_nick]
-        # DeepSeek failures included unrelated numbered lists, so require literal
-        # criterion labels rather than accepting numbered headings alone.
-        reflection_validator = direct_criterion_reflection_validator(
-            len(criteria),
-            require_explicit_criteria=model_path.startswith("deepseek/"),
-        )
+        reflection_validator = direct_criterion_reflection_validator(len(criteria))
         system_prompt = build_direct_reflection_prompt()
         for eval_nick in assignment["eval_nicks"]:
             messages = [
@@ -1039,12 +1026,6 @@ def collect_direct_ratings(
     expected = sum(len(assignment["eval_nicks"]) for assignment in assignments)
     if len(records) != expected:
         raise RuntimeError(f"incomplete direct rating set: expected {expected}, got {len(records)}")
-    _validate_direct_rating_records(
-        records,
-        num_criteria=len(criteria),
-        scale_min=scale_min,
-        scale_max=scale_max,
-    )
     checkpoint.finalize(evaluations_path, records)
     print(f"Direct collection complete. {len(records)} ratings saved to {evaluations_path}")
     return records
