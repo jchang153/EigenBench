@@ -55,10 +55,12 @@ RUN_SPEC = {
     "collection": {
         "enabled": True,
         "evaluations_path": "evaluations.jsonl",
-        # Container-local, NOT /workspace -- that is MooseFS, and the checkpoint
-        # writes one fsync'd file per task from ten concurrent workers, which it
-        # answers with EIO. Distinct path per run so runs cannot collide.
-        "checkpoint_path": "/root/oct_olmo_kindness_ckpt",
+        # Relative, so it resolves next to this spec (direct_rating.py:663) and
+        # the conversation lands with the run rather than on container-local disk
+        # a pod restart erases. Safe on /workspace now that the checkpoint
+        # appends to one tasks.jsonl instead of fsync'ing a file per task, which
+        # is what MooseFS was answering with EIO.
+        "checkpoint_path": "checkpoint",
         "cached_responses_path": None,
         # Criterion 4 ("motivated by actual caring rather than performative
         # concern") is the one the published reasoning-vs-instant run had to
