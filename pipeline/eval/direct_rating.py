@@ -1129,6 +1129,11 @@ def _run_local_tasks_for_phase(
             lora_requests = prepare_lora_requests(llm, base_info.get("loras", {}))
             for nick in _models_in_local_group(base_info):
                 phase_tasks = tasks_by_model.get(nick, [])
+                # Stable 1-based position in this judge's queue for this phase.
+                # phase_tasks derives from the assignment list, which the
+                # checkpoint replays verbatim, so the number points at the same
+                # task across resumes.
+                task_numbers = {id(task): n for n, task in enumerate(phase_tasks, start=1)}
                 pending = []
                 for task in phase_tasks:
                     saved = checkpoint.load_completed(task.identity)
@@ -1215,7 +1220,8 @@ def _run_local_tasks_for_phase(
                                             f"  dropped {task.identity['stage']} "
                                             f"{nick} -> {task.identity.get('evaluee')} "
                                             f"scenario={task.identity['scenario_index']} "
-                                            f"({failure_budget.spent}/{failure_budget.limit}): "
+                                            f"task {task_numbers[id(task)]}/{len(phase_tasks)} "
+                                            f"(budget {failure_budget.spent}/{failure_budget.limit}): "
                                             f"{validation_error[:120]}"
                                         )
                                     continue
