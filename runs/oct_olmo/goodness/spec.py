@@ -47,7 +47,17 @@ RUN_SPEC = {
     "collection": {
         "enabled": True,
         "evaluations_path": "evaluations.jsonl",
-        "checkpoint_path": "collection.checkpoint",
+        # Container-local, NOT /workspace. That is MooseFS
+        # (mfs#us-md-1.runpod.net:9421), and the checkpoint writes one
+        # individually fsync'd file per task -- ~4,200 of them, ten threads at a
+        # time during the OpenRouter phases. MooseFS returns EIO under that load,
+        # which killed two runs at direct_rating.py:715. The vLLM phases survived
+        # because they write serially from one thread.
+        #
+        # Only evaluations.jsonl then touches /workspace, written once by the
+        # atomic swap at finalize. Tradeoff: container-local disk is ephemeral, so
+        # a pod restart loses the resume state.
+        "checkpoint_path": "/root/oct_olmo_ckpt",
         "cached_responses_path": None,
         "sampler_mode": "partitioned_random_judge",
         "group_size": 4,
