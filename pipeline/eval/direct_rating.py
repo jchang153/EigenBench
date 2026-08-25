@@ -82,6 +82,18 @@ _RATING_PATTERN = re.compile(
     flags=re.DOTALL,
 )
 
+# Judges frequently mirror the criteria block's own phrasing -- the criteria are
+# written "Criterion 1 for Kindness: prefer the response that..." -- and answer
+# "Criterion 1 for Kindness: 7" instead of using the XML tags. The rating is
+# present and correct; only the wrapper differs, so discarding it loses real
+# data. Used only when the XML form matched nothing, so tags stay authoritative.
+# Requires the whole line to end in an integer, which the echoed criterion text
+# never does.
+_RATING_FALLBACK_PATTERN = re.compile(
+    r"^[^\S\n]*(?:\*\*|##)?\s*criterion[\s_]+(\d+)\b[^\n:]*:\s*(?:\*\*)?\s*([+-]?\d+)\s*(?:\*\*)?[.\s]*$",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+
 
 def parse_direct_ratings(
     response: str,
@@ -105,8 +117,12 @@ def parse_direct_ratings(
 
     allowed_missing = set(allowed_missing_one_based)
 
+    matches = list(_RATING_PATTERN.finditer(response))
+    if not matches:
+        matches = list(_RATING_FALLBACK_PATTERN.finditer(response))
+
     parsed: dict[int, int] = {}
-    for match in _RATING_PATTERN.finditer(response):
+    for match in matches:
         one_based = int(match.group(1))
         if one_based in parsed:
             raise ValueError(f"criterion {one_based} appears more than once")
