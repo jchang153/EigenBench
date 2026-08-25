@@ -15,4 +15,3 @@ transformers
 datasets 
 huggingface_hub
 gradio_client
-inspect-ai==0.3.240
