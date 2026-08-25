@@ -132,6 +132,16 @@ def parse_direct_ratings(
             )
         parsed[one_based] = value
 
+    if not parsed:
+        # Zero tags matched: the judge ignored the output format rather than
+        # dropping one rating. "missing criteria [1..N]" alone cannot distinguish
+        # persona prose from a near-miss like "Criterion 1: 7" or markdown
+        # wrappers, and those need very different fixes.
+        raise ValueError(
+            f"no <criterion_N_rating> tags found in a {len(response)}-char "
+            f"response; it begins: {response.strip()[:200]!r}"
+        )
+
     expected = set(range(1, num_criteria + 1))
     invalid_allowed = sorted(allowed_missing - expected)
     if invalid_allowed:
