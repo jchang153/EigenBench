@@ -118,7 +118,12 @@ def parse_direct_ratings(
             # out. Treat it as missing; anything not declared still raises.
             if one_based in allowed_missing:
                 continue
-            raise ValueError(f"criterion {one_based} rating is not an integer")
+            # Include the value: "N/A" (a declined conditional criterion) and
+            # "8/10" or "**8**" (a formatting quirk) need opposite fixes, and
+            # without the text there is no way to tell them apart from the log.
+            raise ValueError(
+                f"criterion {one_based} rating is not an integer: {raw_value[:80]!r}"
+            )
         value = int(raw_value)
         if not scale_min <= value <= scale_max:
             raise ValueError(
