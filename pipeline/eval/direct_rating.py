@@ -155,18 +155,16 @@ def parse_direct_ratings(
             )
         value = int(raw_value)
         if not scale_min <= value <= scale_max:
-            # Same escape hatch as the non-integer branch, for the same reason.
-            # A judge signals "this criterion does not apply" in whatever
-            # notation it has: gemini writes 'N/A', the OLMo LoRAs write 0 --
-            # below scale_min, so it lands here instead. Both mean the tag might
-            # as well have been left out, and only the declared criteria get the
-            # benefit of the doubt.
-            if one_based in allowed_missing:
-                continue
-            raise ValueError(
-                f"criterion {one_based} rating {value} is outside "
-                f"[{scale_min}, {scale_max}]"
-            )
+            # Clamp into the scale rather than discarding the rating. A judge
+            # that writes 0 on a 1-10 scale has still ranked the response at the
+            # bottom, and 1 is the nearest thing the scale can express; dropping
+            # it instead loses a real judgment and, because the local 7Bs do this
+            # far more than the API judges, loses it unevenly.
+            #
+            # Only integers reach here. An explicit "N/A" is still handled above
+            # as a decline, so clamping never invents a score where the judge
+            # declined to give one in words.
+            value = min(max(value, scale_min), scale_max)
         parsed[one_based] = value
 
     if not parsed:
