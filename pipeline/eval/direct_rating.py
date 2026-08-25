@@ -575,10 +575,38 @@ def _load_cached_responses(path_value: str | None) -> dict[int, dict[str, str]]:
         if isinstance(record, dict) and "scenario_index" in record:
             responses = record.get("responses")
             if isinstance(responses, dict):
-                cached[int(record["scenario_index"])].update(
-                    {str(key): value for key, value in responses.items() if isinstance(value, str)}
-                )
+                scenario_cache = cached[int(record["scenario_index"])]
+                for key, value in responses.items():
+                    model_nick = str(key)
+                    if isinstance(value, str) and direct_generated_text_validator(value) is None:
+                        scenario_cache[model_nick] = value
+                    else:
+                        scenario_cache.pop(model_nick, None)
     return cached
+
+
+def _validate_direct_rating_records(
+    records: list[dict],
+    *,
+    num_criteria: int,
+    scale_min: int,
+    scale_max: int,
+) -> None:
+    validators = {
+        "response": direct_generated_text_validator,
+        "reflection": direct_criterion_reflection_validator(num_criteria),
+        "judgment_raw": direct_rating_validator(num_criteria, scale_min, scale_max),
+    }
+    for record_index, record in enumerate(records):
+        for field, validator in validators.items():
+            error = validator(record.get(field))
+            if error:
+                raise RuntimeError(
+                    "Invalid direct-rating record: "
+                    f"record={record_index}, scenario={record.get('scenario_index')}, "
+                    f"judge={record.get('judge')}, evaluee={record.get('evaluee')}, "
+                    f"field={field}, error={error}"
+                )
 
 
 def count_cached_responses(
@@ -700,7 +728,14 @@ def collect_direct_ratings(
         )
 
     if checkpoint.has_finalized_output():
-        return checkpoint.load_finalized_output(evaluations_path)
+        records = checkpoint.load_finalized_output(evaluations_path)
+        _validate_direct_rating_records(
+            records,
+            num_criteria=len(criteria),
+            scale_min=scale_min,
+            scale_max=scale_max,
+        )
+        return records
     checkpoint.assert_output_is_safe(evaluations_path)
 
     configured_openrouter = {
@@ -767,6 +802,7 @@ def collect_direct_ratings(
                         temperature=generation["response"]["temperature"],
                         response_validator=direct_generated_text_validator,
                     ),
+                    validator=direct_generated_text_validator,
                 )
             )
             response_targets.append(key)
@@ -861,6 +897,7 @@ def collect_direct_ratings(
                         temperature=generation["reflection"]["temperature"],
                         response_validator=reflection_validator,
                     ),
+                    validator=reflection_validator,
                 )
             )
             reflection_targets.append((s_idx, judge_nick, eval_nick))
@@ -929,6 +966,7 @@ def collect_direct_ratings(
                         temperature=generation["direct_rating"]["temperature"],
                         response_validator=validator,
                     ),
+                    validator=validator,
                 )
             )
             rating_targets.append((s_idx, judge_nick, eval_nick))
@@ -1001,6 +1039,12 @@ def collect_direct_ratings(
     expected = sum(len(assignment["eval_nicks"]) for assignment in assignments)
     if len(records) != expected:
         raise RuntimeError(f"incomplete direct rating set: expected {expected}, got {len(records)}")
+    _validate_direct_rating_records(
+        records,
+        num_criteria=len(criteria),
+        scale_min=scale_min,
+        scale_max=scale_max,
+    )
     checkpoint.finalize(evaluations_path, records)
     print(f"Direct collection complete. {len(records)} ratings saved to {evaluations_path}")
     return records
@@ -1045,9 +1089,13 @@ def _run_local_tasks_for_phase(
                 for task in phase_tasks:
                     saved = checkpoint.load_completed(task.identity)
                     if saved is not None:
-                        consume(task, saved["content"])
-                    else:
-                        pending.append(task)
+                        content = saved.get("content")
+                        if isinstance(content, str) and content.strip():
+                            validation_error = task.validator(content) if task.validator else None
+                            if validation_error is None:
+                                consume(task, content)
+                                continue
+                    pending.append(task)
                 if not pending:
                     continue
                 adapter_request = lora_requests.get(nick)
@@ -1149,6 +1197,7 @@ def _run_local_response_phase(**kwargs) -> None:
                         {"role": "user", "content": assignment["scenario"]},
                     ],
                     target=key,
+                    validator=direct_generated_text_validator,
                 )
             )
 
