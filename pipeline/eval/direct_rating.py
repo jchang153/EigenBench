@@ -171,12 +171,6 @@ def direct_generated_text_validator(response: str) -> str | None:
     return None
 
 
-def direct_reflection_validator(response: str) -> str | None:
-    """Apply the basic generated-text checks to a reflection."""
-
-    return direct_generated_text_validator(response)
-
-
 def direct_criterion_reflection_validator(
     num_criteria: int,
     *,
@@ -1279,7 +1273,6 @@ __all__ = [
     "build_direct_reflection_user_prompt",
     "collect_direct_ratings",
     "count_cached_responses",
-    "direct_reflection_validator",
     "direct_rating_validator",
     "estimate_direct_calls",
     "parse_direct_ratings",

@@ -70,28 +70,9 @@ def detect_model_type(model_id: object) -> dict:
 
     if isinstance(model_id, Mapping):
         provider = model_id.get("provider")
-        if provider == "openrouter":
-            resolved_id = model_id.get("model_id")
-            if not isinstance(resolved_id, str) or not resolved_id:
-                raise ValueError("Structured OpenRouter model reference must include model_id")
-            return {
-                "id": resolved_id,
-                "type": "api",
-                "provider": "openrouter",
-                "base_model": None,
-                "adapter": None,
-                "reasoning": model_id.get("reasoning"),
-                "omit_parameters": model_id.get("omit_parameters", []),
-            }
         if provider != "hf_local":
             return {
-                "id": str(
-                    model_id.get("model_id")
-                    or model_id.get("id")
-                    or model_id.get("repo_id")
-                    or provider
-                    or ""
-                ),
+                "id": str(model_id.get("id") or model_id.get("repo_id") or provider or ""),
                 "type": str(model_id.get("kind") or "api"),
                 "base_model": model_id.get("base_model_id"),
                 "adapter": None,

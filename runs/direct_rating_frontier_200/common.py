@@ -68,7 +68,6 @@ _BASE_SPEC = {
             "save_trust_matrices": False,
         },
     },
-    "upload": {"enabled": False},
 }
 
 
