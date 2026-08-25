@@ -1,0 +1,342 @@
+{
+  "source_experiment": "d1-d3-balanced-matrix",
+  "sample_seed": 42,
+  "scenario_indices": [
+    30,
+    110,
+    121,
+    150,
+    236,
+    258,
+    289,
+    664,
+    764,
+    769
+  ],
+  "constitution_sha256": "ea1933e8f488aea4fa95649ce881d7963b5faf98ce3c96250edb40c3fa46d51c",
+  "dataset_sha256": "823599486ddbd12c148018c9797b2820ce0469ef419ad658ad855e2686c095b4",
+  "evaluees": [
+    {
+      "name": "Claude 4 Sonnet",
+      "source_model_id": "claude-sonnet-4-20250514"
+    },
+    {
+      "name": "GPT 4.1",
+      "source_model_id": "gpt-4.1-2025-04-14"
+    },
+    {
+      "name": "Gemini 2.5 Pro",
+      "source_model_id": "gemini-2.5-pro"
+    },
+    {
+      "name": "Grok 4",
+      "source_model_id": "grok-4-0709"
+    },
+    {
+      "name": "DeepSeek v3",
+      "source_model_id": "deepseek/deepseek-chat-v3-0324"
+    }
+  ],
+  "inputs": [
+    {
+      "scenario_index": 30,
+      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "a2056e666c1e7cdf652ef128e4f4da01ff658f7f854ccf2fc4849c390ab4348d"
+    },
+    {
+      "scenario_index": 30,
+      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "cf40a64e7bd6ac7e5bf0f7de58690096434b12ab138a7667b8f777f7826f9165"
+    },
+    {
+      "scenario_index": 30,
+      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "28e819482e632d2bb7d0ece7ee6451dfb68d89677e7d83a2ef3e694cdf91dff0"
+    },
+    {
+      "scenario_index": 30,
+      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
+      "evaluee": "Grok 4",
+      "response_sha256": "d8b35a1e1fe0cb01bc02de8762154b5c6f8e9aa1cda103ee31caacf383b8d8ea"
+    },
+    {
+      "scenario_index": 30,
+      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "f18fb9327573d79adef76d3efaa2eb389da36c65df850f781dfac62ab8e9f0b1"
+    },
+    {
+      "scenario_index": 110,
+      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "9e97016aec64c6e80dbfa3ee7882591d52e384eac1885cab2eb4f640a63b5a82"
+    },
+    {
+      "scenario_index": 110,
+      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "92bed5c56682232cbd4f49bd7fdbb253bd9069e4a359e7faa965849bbe18114b"
+    },
+    {
+      "scenario_index": 110,
+      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "2cc0dcf44c8d12c1c05b3b347ad563abd1459874245194a4ee03f86e370709ec"
+    },
+    {
+      "scenario_index": 110,
+      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
+      "evaluee": "Grok 4",
+      "response_sha256": "ce9349cec49cd7a54c3583519094c02d515aa6a1dcb1c7fad09ad390703b09f9"
+    },
+    {
+      "scenario_index": 110,
+      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "108ae0c1439ddd1003f185781de7d26bae6cbb0eb628b6948a730eb969f275b2"
+    },
+    {
+      "scenario_index": 121,
+      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "4dd47ae3422d900d69dfcae8e6ed4ae28c0ffadb7f96fe8f40cf81798b5a6585"
+    },
+    {
+      "scenario_index": 121,
+      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "e9507da0e6714d2cfcd88df9d492d32ca203f03e9dd3dd783c686c4e3ded266a"
+    },
+    {
+      "scenario_index": 121,
+      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "5988ac9f160fa5b063be67af8949a1059ebf50b0879630917d7bdad1dc175e14"
+    },
+    {
+      "scenario_index": 121,
+      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
+      "evaluee": "Grok 4",
+      "response_sha256": "2c0bc11cfb4a321da66247e6e15e44931924e98a76452bcb663fced55ac44354"
+    },
+    {
+      "scenario_index": 121,
+      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "11cc359106b7e6456945fb9eaab4c4e222c8c1627aeadc6867cb3010cfc90a58"
+    },
+    {
+      "scenario_index": 150,
+      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "13af8b34134b235491cd5d5a4d68e14854394f5161c319a1f3549ce5e58a9c36"
+    },
+    {
+      "scenario_index": 150,
+      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "d80c09efa0949b59fb25fcd35453da68f51f3435cfeb6a063725b78d629f4f56"
+    },
+    {
+      "scenario_index": 150,
+      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "1b7a9f75fbfcc32ee5aa34f4525e0bd7d9638f5da758a7a918cc58184ca36644"
+    },
+    {
+      "scenario_index": 150,
+      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
+      "evaluee": "Grok 4",
+      "response_sha256": "cff29907c5dad76f524baeb484a8c9e3cb18732ea8317e905aee930d25700e01"
+    },
+    {
+      "scenario_index": 150,
+      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "b65291b724b8b76c43136b7f7e2ef309f24d023f8662029f84565d7a3c342b23"
+    },
+    {
+      "scenario_index": 236,
+      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "03ddb499ebbdcdbfb3321da9b36817c0d45ed205e5988af601e9855e3ef0bb94"
+    },
+    {
+      "scenario_index": 236,
+      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "c58e6e50c91e5f59b8ebfa6ec5e26f9d06a7a1782ae24e4729ff931dfa9d4aac"
+    },
+    {
+      "scenario_index": 236,
+      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "d6321c26916d79b23dfda5181a00acc699859719335f4ff38abfe9c9d20f5a6d"
+    },
+    {
+      "scenario_index": 236,
+      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
+      "evaluee": "Grok 4",
+      "response_sha256": "bdded3c331c8207f7ac5a3ad03c8b41b613ed188d30c838fb49f7f516cc3dce6"
+    },
+    {
+      "scenario_index": 236,
+      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "af16a56c1cae04bd9bbacdd43dfced5441bcc5ebcd4ed44a03829ae2191d9844"
+    },
+    {
+      "scenario_index": 258,
+      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "2ec692196cce41c701f6eb899762a0b91e4015e40c8be9a9b139689a840a1cae"
+    },
+    {
+      "scenario_index": 258,
+      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "6f4a854c13f832c3a190668da1bb14e6f10704ef18e2cb4ad6ce81111ff9244b"
+    },
+    {
+      "scenario_index": 258,
+      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "b034301749077c4117e9e89499631e2078a47ec47d8028a1b2811058c662c0f5"
+    },
+    {
+      "scenario_index": 258,
+      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
+      "evaluee": "Grok 4",
+      "response_sha256": "19b756f107d82d3251aa741d90f8f288233893d9fc75f6fd6f6595a24ebe103e"
+    },
+    {
+      "scenario_index": 258,
+      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "244c3490794ce64e1c0a56c58d1fb6ed6398755786b381e42c78b9f012085dbb"
+    },
+    {
+      "scenario_index": 289,
+      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "4413ad0d25ad58b0004b605a15f0cf944e137a72a2c02440326113d48ea72fb9"
+    },
+    {
+      "scenario_index": 289,
+      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "e533180659f65502a64408ad65b0498c2df4679e1773208dd6c15f3ea7ba6648"
+    },
+    {
+      "scenario_index": 289,
+      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "2d25c0e369bb9a554f61c597f2bea7e890dbdd1cc3a93e30f9421288126ad03c"
+    },
+    {
+      "scenario_index": 289,
+      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
+      "evaluee": "Grok 4",
+      "response_sha256": "caacc56f3cfdee5e7de6c4bd05cd6861f39669fa0dc1b2aeca5484b989775fc0"
+    },
+    {
+      "scenario_index": 289,
+      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "67173c8312cbd1dbd483b354b4bc5e86b8d7615df8457f360a135ae2dcfeb2b1"
+    },
+    {
+      "scenario_index": 664,
+      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "1284655d8a1e96cfa1d1d02dfb9fe28e9ef24bcdac7380f5df927e7cb557e822"
+    },
+    {
+      "scenario_index": 664,
+      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "31bc481bc8f92427928ab8cebaab32ed18cc5afdb259c57cc17e6e6805fbe139"
+    },
+    {
+      "scenario_index": 664,
+      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "839f2102d0662be704a856927ca45de192a37614fd92cefc791e1ad24d6a7ec3"
+    },
+    {
+      "scenario_index": 664,
+      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
+      "evaluee": "Grok 4",
+      "response_sha256": "ab3561c0ecd478e02fe61db3e07fa6c62b3795f7fd90c9f7368c107e351684c6"
+    },
+    {
+      "scenario_index": 664,
+      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "47f86382118aa4ca2af3ad106f87864972af0e2fd076a5e0985f677472d71cc0"
+    },
+    {
+      "scenario_index": 764,
+      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "d05f1505cefeff85b100610f73ac9a704f03767ea6f43b4a2280f6a2ec82ebfc"
+    },
+    {
+      "scenario_index": 764,
+      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "745832e4b8e0022383466a6e0a229a3c4910885db211afa4c145ebccb9900d4f"
+    },
+    {
+      "scenario_index": 764,
+      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "8872bcf1cdda480df0e136ffa8b3210bfd06166c0f8d030a83e12f6690e7e46f"
+    },
+    {
+      "scenario_index": 764,
+      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
+      "evaluee": "Grok 4",
+      "response_sha256": "661e26555f2e5f7e87205f29d1c66836319db602405c90e0bea148c19b13da9a"
+    },
+    {
+      "scenario_index": 764,
+      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "c53bf42f8ed8d2e77d9dc1177ce98d59dd37fb973e6a7e1c7837ded8160dabc0"
+    },
+    {
+      "scenario_index": 769,
+      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
+      "evaluee": "Claude 4 Sonnet",
+      "response_sha256": "cd4d35244a6769dbaf6cc05b4a0be3d17eb3331a4985e77e67a0633ffd4180d9"
+    },
+    {
+      "scenario_index": 769,
+      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
+      "evaluee": "GPT 4.1",
+      "response_sha256": "ede0cb780e964c4bfd6e2fb8f1ebe3995ac47ca4efa9c4ff934a7b9e1d77b762"
+    },
+    {
+      "scenario_index": 769,
+      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
+      "evaluee": "Gemini 2.5 Pro",
+      "response_sha256": "79c6cc386d66f745005463c9b302e2f6deb8dd2cf918bbf9f1ddd85369e25585"
+    },
+    {
+      "scenario_index": 769,
+      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
+      "evaluee": "Grok 4",
+      "response_sha256": "81353d34e9f0e00586ba67506b2091568bf2e09cfada27123756b935db55f67a"
+    },
+    {
+      "scenario_index": 769,
+      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
+      "evaluee": "DeepSeek v3",
+      "response_sha256": "3f6035d031d8702756c7fad1bfba3891959986b5ec351ed6c9d2bf6a8df168e8"
+    }
+  ]
+}

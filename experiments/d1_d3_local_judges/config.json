@@ -1,0 +1,61 @@
+{
+  "experiment_version": 1,
+  "constitution": "data/constitutions/kindness.json",
+  "reference_manifest": "experiments/d1_d3_local_judges/reference_manifest.json",
+  "prompts": {
+    "d1_reflection": "experiments/d1_d3_local_judges/prompts/01_combined_json_reflection.md",
+    "d1_judgment": "experiments/d1_d3_local_judges/prompts/01_combined_json_judgment.md",
+    "d3_reflection": "experiments/d1_d3_local_judges/prompts/03_structured_isolated_reflection.md",
+    "d3_judgment": "experiments/d1_d3_local_judges/prompts/03_structured_isolated_judgment.md"
+  },
+  "generation": {
+    "temperature": 0.0,
+    "d1_reflection_max_tokens": 1800,
+    "d1_judgment_max_tokens": 500,
+    "d3_reflection_max_tokens": 1800,
+    "d3_judgment_max_tokens": 100
+  },
+  "max_attempts": 4,
+  "judges": [
+    {
+      "name": "Qwen 2.5 7B Instruct",
+      "prompt_format": "chat_template",
+      "model": {
+        "provider": "hf_local",
+        "kind": "base",
+        "repo_id": "Qwen/Qwen2.5-7B-Instruct",
+        "revision": "a09a35458c702b33eeacc393d103063234e8bc28"
+      }
+    },
+    {
+      "name": "Qwen 2.5 7B",
+      "prompt_format": "plain",
+      "model": {
+        "provider": "hf_local",
+        "kind": "base",
+        "repo_id": "Qwen/Qwen2.5-7B",
+        "revision": "d149729398750b98c0af14eb82c78cfe92750796"
+      }
+    },
+    {
+      "name": "OLMo 3 7B Instruct SFT",
+      "prompt_format": "chat_template",
+      "model": {
+        "provider": "hf_local",
+        "kind": "base",
+        "repo_id": "allenai/Olmo-3-7B-Instruct-SFT",
+        "revision": "e1452fc572d51966ff4aaeb25118b891eb93e549"
+      }
+    },
+    {
+      "name": "OLMo 2 7B Instruct",
+      "prompt_format": "chat_template",
+      "model": {
+        "provider": "hf_local",
+        "kind": "base",
+        "repo_id": "allenai/OLMo-2-1124-7B-Instruct",
+        "revision": "470b1fba1ae01581f270116362ee4aa1b97f4c84"
+      }
+    }
+  ]
+}
