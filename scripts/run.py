@@ -211,12 +211,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     upload_to_space = upload_enabled and upload_backend == "valuearena_space"
     upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
-    if upload_to_space and evaluation_mode == "direct_rating":
-        raise SystemExit(
-            "upload.backend='valuearena_space' is not supported for "
-            "evaluation.mode='direct_rating': use upload.backend='huggingface_dataset' "
-            "or update the Space to accept direct judgments."
-        )
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
     space_spec_path = None
     if upload_to_space:
@@ -285,14 +279,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
         run_group = upload_cfg.get("group", "")
         run_note = upload_cfg.get("note", "")
 
-        try:
-            eval_mb = os.path.getsize(eval_path) / 1e6
-        except OSError:
-            eval_mb = 0.0
-        upload_timeout = float(
-            upload_cfg.get("timeout_seconds", max(600.0, eval_mb * 20.0))
-        )
-
         # Write a standalone script and run it detached via nohup
         script_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
         script_file.write(f"""
@@ -302,12 +288,8 @@ for k in list(os.environ):
     kl = k.lower()
     if kl in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
         os.environ.pop(k, None)
-import httpx
 from gradio_client import Client, handle_file
-c = Client(
-    "https://invi-bhagyesh-valuearena.hf.space/",
-    httpx_kwargs={{"timeout": httpx.Timeout({upload_timeout!r})}},
-)
+c = Client("https://invi-bhagyesh-valuearena.hf.space/")
 try:
     secret = os.environ["SPACE_SECRET"]
     result = c.predict(secret, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
@@ -331,8 +313,8 @@ finally:
             shell=True,
             env=submit_env,
         )
-        print(f"Handed off to background uploader ({eval_mb:.1f} MB, timeout {upload_timeout:.0f}s).")
-        print(f"  Result (check this): {log_file}")
+        print(f"Submitted! Job running on Space in background.")
+        print(f"  Log: {log_file}")
         print(f"  Track: https://huggingface.co/spaces/invi-bhagyesh/ValueArena")
     elif upload_to_dataset:
         print("Stage: uploading analyzed run to Hugging Face dataset")

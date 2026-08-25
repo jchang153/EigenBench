@@ -21,6 +21,13 @@ MAX_PARALLEL_API_CALLS = 10
 class OpenRouterTask:
     identity: dict
     call: Callable[[], str]
+    validator: Callable[[str], str | None] | None = None
+
+
+def _task_validation_error(task: OpenRouterTask, content: object) -> str | None:
+    if not isinstance(content, str) or not content.strip():
+        return "response is empty"
+    return task.validator(content) if task.validator else None
 
 
 class StrictCollectionError(RuntimeError):
@@ -88,8 +95,9 @@ def run_openrouter_tasks(
             pending_indices.append(index)
             continue
         content = saved.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError(f"Invalid completed checkpoint payload for task {task.identity}")
+        if _task_validation_error(task, content):
+            pending_indices.append(index)
+            continue
         results[index] = content
 
     if not pending_indices:
@@ -117,8 +125,10 @@ def run_openrouter_tasks(
                 task = tasks[index]
                 try:
                     content = future.result()
-                    if not isinstance(content, str) or not content.strip():
-                        raise RuntimeError("OpenRouter task returned empty content after validation")
+                    if validation_error := _task_validation_error(task, content):
+                        raise RuntimeError(
+                            f"OpenRouter task returned invalid content after validation: {validation_error}"
+                        )
                 except OpenRouterCallError as exc:
                     error = exc.to_dict()
                     checkpoint.save_failed(task.identity, error)
