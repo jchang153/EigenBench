@@ -77,9 +77,21 @@ def build_direct_rating_user_prompt(
     )
 
 
+# The opening tag carries the criterion number; the number in the closing tag is
+# redundant, and judges do mismatch it -- claude-sonnet-4 wrote
+# "<criterion_6_rating>6</criterion_2_rating>" on scenario 198, which a
+# backreferenced \1 rejects, reporting criterion 6 missing while its rating sits
+# in the text. Retries cannot help: direct_rating runs at temperature 0, so all
+# four attempts reproduce the same slip.
+#
+# The value is [^<]*? rather than a DOTALL .*? so a match can never span tags.
+# That matters once the closing number is free: with .*? an entirely *absent*
+# closing tag would let the match run to the next criterion's closing tag and
+# swallow it, turning one malformed rating into two lost ones. Newlines are still
+# allowed inside the value, so "<criterion_1_rating>\n7\n</criterion_1_rating>"
+# parses as before.
 _RATING_PATTERN = re.compile(
-    r"<criterion_(\d+)_rating>\s*(.*?)\s*</criterion_\1_rating>",
-    flags=re.DOTALL,
+    r"<criterion_(\d+)_rating>\s*([^<]*?)\s*</criterion_\d+_rating>"
 )
 
 # Judges frequently mirror the criteria block's own phrasing -- the criteria are
