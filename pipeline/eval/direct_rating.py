@@ -801,6 +801,7 @@ def collect_direct_ratings(
                         temperature=generation["direct_rating"]["temperature"],
                         response_validator=validator,
                     ),
+                    validator=validator,
                 )
             )
             rating_targets.append((s_idx, judge_nick, eval_nick))
@@ -917,9 +918,13 @@ def _run_local_tasks_for_phase(
                 for task in phase_tasks:
                     saved = checkpoint.load_completed(task.identity)
                     if saved is not None:
-                        consume(task, saved["content"])
-                    else:
-                        pending.append(task)
+                        content = saved.get("content")
+                        if isinstance(content, str) and content.strip():
+                            validation_error = task.validator(content) if task.validator else None
+                            if validation_error is None:
+                                consume(task, content)
+                                continue
+                    pending.append(task)
                 if not pending:
                     continue
                 adapter_request = lora_requests.get(nick)
