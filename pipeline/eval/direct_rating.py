@@ -17,12 +17,14 @@ from .checkpoint import CollectionCheckpoint
 DIRECT_PROMPT_VERSION = 1
 DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
 DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
+DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
 DIRECT_SAMPLER_ALIASES = {
     "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
     "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
     "partitioned": DIRECT_SAMPLER_PARTITIONED,
     "random_partition": DIRECT_SAMPLER_PARTITIONED,
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
+    "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
 }
 
 
@@ -190,8 +192,8 @@ def resolve_direct_sampling_settings(
     mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
     if mode is None:
         raise ValueError(
-            "direct collection.sampler_mode must be 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "direct collection.sampler_mode must be 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     if num_models <= 0:
         raise ValueError("direct sampling requires at least one model")
@@ -233,7 +235,8 @@ def build_direct_assignments(
 
     ``all_to_all`` preserves the original exhaustive design. The partitioned
     sampler shuffles every scenario's evaluees into disjoint groups and assigns
-    one random judge to each group. Repeating the partition
+    one random judge to each group. The balanced sampler rotates one-to-one
+    judge/evaluee assignments across scenarios. Repeating either sampled design
     ``response_redundancy`` times makes every response receive exactly that many
     ratings, always from distinct judges within a scenario.
     """
@@ -245,8 +248,8 @@ def build_direct_assignments(
     mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
     if mode is None:
         raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "unknown direct sampler mode; expected 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     group_size = int(group_size)
     response_redundancy = int(response_redundancy)
@@ -265,8 +268,14 @@ def build_direct_assignments(
         )
 
     rng = random.Random(sampler_seed)
+    balanced_shifts = (
+        list(range(num_models)) if include_self else list(range(1, num_models))
+    )
+    if mode == DIRECT_SAMPLER_BALANCED:
+        rng.shuffle(balanced_shifts)
+
     assignments: list[dict] = []
-    for item in selected_scenarios:
+    for scenario_position, item in enumerate(selected_scenarios):
         if isinstance(item, (tuple, list)):
             scenario_index, scenario = item
         else:
@@ -290,6 +299,29 @@ def build_direct_assignments(
                         "group_index": judge_idx,
                     }
                 )
+            continue
+
+        if mode == DIRECT_SAMPLER_BALANCED:
+            for sampling_round in range(response_redundancy):
+                shift = balanced_shifts[
+                    (scenario_position * response_redundancy + sampling_round)
+                    % len(balanced_shifts)
+                ]
+                for eval_idx in range(num_models):
+                    judge_idx = (eval_idx + shift) % num_models
+                    assignments.append(
+                        {
+                            "scenario_index": scenario_index,
+                            "scenario": scenario,
+                            "judge_idx": judge_idx,
+                            "judge_nick": model_nicks[judge_idx],
+                            "eval_idxs": [eval_idx],
+                            "eval_nicks": [model_nicks[eval_idx]],
+                            "sampler_mode": mode,
+                            "sampling_round": sampling_round,
+                            "group_index": eval_idx,
+                        }
+                    )
             continue
 
         used_judges_by_evaluee = [set() for _ in range(num_models)]
@@ -366,15 +398,15 @@ def estimate_direct_calls(
     mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
     if mode is None:
         raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "unknown direct sampler mode; expected 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     group_size = max(1, min(int(group_size), num_models)) if num_models else 0
     response_redundancy = int(response_redundancy)
     if response_redundancy <= 0:
         raise ValueError("response_redundancy must be positive")
     max_redundancy = num_models if include_self else max(0, num_models - 1)
-    if mode == DIRECT_SAMPLER_PARTITIONED and response_redundancy > max_redundancy:
+    if mode != DIRECT_SAMPLER_ALL_TO_ALL and response_redundancy > max_redundancy:
         raise ValueError("response_redundancy exceeds the number of distinct eligible judges")
     if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
         raise ValueError(
@@ -402,9 +434,9 @@ def estimate_direct_calls(
         "sampler_mode": mode,
         "group_size": group_size if mode == DIRECT_SAMPLER_PARTITIONED else None,
         "response_redundancy": (
-            response_redundancy if mode == DIRECT_SAMPLER_PARTITIONED else None
+            response_redundancy if mode != DIRECT_SAMPLER_ALL_TO_ALL else None
         ),
-        "sampler_seed": sampler_seed if mode == DIRECT_SAMPLER_PARTITIONED else None,
+        "sampler_seed": sampler_seed if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
         "directed_edges_per_scenario": edges_per_scenario,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
@@ -1139,6 +1171,7 @@ def _run_local_rating_phase(**kwargs) -> None:
 __all__ = [
     "DIRECT_PROMPT_VERSION",
     "DIRECT_SAMPLER_ALL_TO_ALL",
+    "DIRECT_SAMPLER_BALANCED",
     "DIRECT_SAMPLER_PARTITIONED",
     "build_direct_assignments",
     "build_direct_rating_prompt",
