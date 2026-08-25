@@ -70,6 +70,25 @@ def score_metrics(pairs: list[tuple[int, int]]) -> dict:
     }
 
 
+def _optional_score_metrics(pairs: list[tuple[int, int]]) -> dict:
+    if pairs:
+        return score_metrics(pairs)
+    return {
+        "count": 0,
+        "d1_mean": None,
+        "d3_mean": None,
+        "d3_minus_d1_mean": None,
+        "mean_absolute_distance": None,
+        "root_mean_square_distance": None,
+        "exact_match_rate": None,
+        "within_one_rate": None,
+        "within_two_rate": None,
+        "pearson_correlation": None,
+        "absolute_distance_counts": {},
+        "signed_difference_counts": {},
+    }
+
+
 def _bootstrap_scenario_mae(
     pairs_by_scenario: dict[int, list[tuple[int, int]]],
     *,
@@ -158,23 +177,34 @@ def generate_reports(
             raise ValueError(f"duplicate cell/design record: {key} design={design}")
         by_cell[key][design] = record
 
-    incomplete = {
-        key: sorted({"01", "03"} - set(designs))
-        for key, designs in by_cell.items()
-        if set(designs) != {"01", "03"}
-    }
-    if incomplete:
-        raise ValueError(f"incomplete paired cells: {incomplete}")
-
     judges = [item["name"] for item in manifest["judges"]]
     evaluees = [item["name"] for item in manifest["evaluees"]]
+    expected_cells = {
+        (int(item["scenario_index"]), judge, str(item["evaluee"]))
+        for item in manifest["inputs"]
+        for judge in judges
+    }
+    unexpected = set(by_cell) - expected_cells
+    if unexpected:
+        raise ValueError(f"unexpected result cells: {sorted(unexpected)}")
+    incomplete = {
+        key: sorted({"01", "03"} - set(by_cell.get(key, {})))
+        for key in expected_cells
+        if set(by_cell.get(key, {})) != {"01", "03"}
+    }
+    paired_cells = {
+        key: by_cell[key]
+        for key in expected_cells
+        if set(by_cell.get(key, {})) == {"01", "03"}
+    }
+
     criterion_ids = list(manifest["criterion_ids"])
     all_pairs: list[tuple[int, int]] = []
     by_pair: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
     by_judge: dict[str, list[tuple[int, int]]] = defaultdict(list)
     by_scenario: dict[int, list[tuple[int, int]]] = defaultdict(list)
 
-    for (scenario_index, judge, evaluee), designs in sorted(by_cell.items()):
+    for (scenario_index, judge, evaluee), designs in sorted(paired_cells.items()):
         d1 = designs["01"]["ratings"]
         d3 = designs["03"]["ratings"]
         for criterion_id in criterion_ids:
@@ -196,14 +226,16 @@ def generate_reports(
         "within_two_rate",
         "pearson_correlation",
     ]
+    pair_metrics = {
+        (judge, evaluee): _optional_score_metrics(by_pair[(judge, evaluee)])
+        for judge in judges
+        for evaluee in evaluees
+    }
     pair_rows = [
         {
             "judge": judge,
             "evaluee": evaluee,
-            **{
-                key: score_metrics(by_pair[(judge, evaluee)])[key]
-                for key in metric_fields
-            },
+            **{key: pair_metrics[(judge, evaluee)][key] for key in metric_fields},
         }
         for judge in judges
         for evaluee in evaluees
@@ -214,10 +246,13 @@ def generate_reports(
         pair_rows,
     )
 
+    judge_metrics = {
+        judge: _optional_score_metrics(by_judge[judge]) for judge in judges
+    }
     judge_rows = [
         {
             "judge": judge,
-            **{key: score_metrics(by_judge[judge])[key] for key in metric_fields},
+            **{key: judge_metrics[judge][key] for key in metric_fields},
         }
         for judge in judges
     ]
@@ -227,19 +262,13 @@ def generate_reports(
         judge_rows,
     )
 
-    d1_matrix = {
-        key: score_metrics(values)["d1_mean"] for key, values in by_pair.items()
-    }
-    d3_matrix = {
-        key: score_metrics(values)["d3_mean"] for key, values in by_pair.items()
-    }
+    d1_matrix = {key: values["d1_mean"] for key, values in pair_metrics.items()}
+    d3_matrix = {key: values["d3_mean"] for key, values in pair_metrics.items()}
     difference_matrix = {
-        key: score_metrics(values)["d3_minus_d1_mean"]
-        for key, values in by_pair.items()
+        key: values["d3_minus_d1_mean"] for key, values in pair_metrics.items()
     }
     mae_matrix = {
-        key: score_metrics(values)["mean_absolute_distance"]
-        for key, values in by_pair.items()
+        key: values["mean_absolute_distance"] for key, values in pair_metrics.items()
     }
     for filename, values in (
         ("matrix_d1.csv", d1_matrix),
@@ -295,21 +324,46 @@ def generate_reports(
         for (judge, design, stage), values in sorted(token_groups.items())
     ]
 
-    overall = score_metrics(all_pairs)
-    overall["scenario_cluster_bootstrap_mae_95_percent_ci"] = _bootstrap_scenario_mae(
-        by_scenario
+    overall = _optional_score_metrics(all_pairs)
+    overall["scenario_cluster_bootstrap_mae_95_percent_ci"] = (
+        _bootstrap_scenario_mae(by_scenario) if by_scenario else None
+    )
+    completed_cells_by_design = Counter(
+        str(record["design"]) for record in cell_records
+    )
+    call_outcomes = manifest.get("call_outcomes", {})
+    exclusion_details = [
+        {
+            "scenario_index": scenario_index,
+            "judge": judge,
+            "evaluee": evaluee,
+            "missing_designs": missing,
+        }
+        for (scenario_index, judge, evaluee), missing in sorted(incomplete.items())
+    ]
+    d3_reflection_count = sum(
+        record["design"] == "03" and record["stage"] == "reflection"
+        for record in stage_records
     )
     summary = {
         "run_shape": {
             "scenarios": len(manifest["scenario_indices"]),
             "judges": len(judges),
             "evaluees": len(evaluees),
-            "cells_per_design": len(by_cell),
+            "planned_cells_per_design": len(expected_cells),
+            "completed_d1_cells": completed_cells_by_design["01"],
+            "completed_d3_cells": completed_cells_by_design["03"],
+            "paired_cells": len(paired_cells),
+            "excluded_paired_cells": len(incomplete),
             "criteria": len(criterion_ids),
+            "planned_scores_per_design": len(expected_cells) * len(criterion_ids),
             "scores_per_design": len(all_pairs),
             "paired_scores": len(all_pairs),
             "rating_cells_across_designs": len(cell_records),
-            "planned_calls": len(raw_calls),
+            "planned_calls": manifest["planned_calls"],
+            "completed_calls": call_outcomes.get("completed", len(raw_calls)),
+            "failed_calls": call_outcomes.get("failed", 0),
+            "dependency_skipped_calls": call_outcomes.get("dependency_skipped", 0),
         },
         "axes": {
             "judge_rows": judges,
@@ -326,10 +380,12 @@ def generate_reports(
             "d1_incomplete_cells": sum(
                 not item["complete"] for item in reflection_details
             ),
+            "d1_missing_reflection_calls": len(expected_cells) - len(d1_reflections),
             "d1_cell_details": reflection_details,
-            "d3_complete_cells": len(by_cell),
-            "d3_incomplete_cells": 0,
+            "d3_complete_reflection_calls": d3_reflection_count,
+            "d3_missing_reflection_calls": len(expected_cells) - d3_reflection_count,
         },
+        "pairing_exclusions": exclusion_details,
         "local_token_usage": token_usage,
     }
     _write_json(output_dir / "summary.json", summary)

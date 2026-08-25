@@ -168,6 +168,18 @@ class CollectionCheckpoint:
                 {"identity": identity, "status": "failed", "error": error},
             )
 
+    def load_failed(self, identity: dict[str, Any]) -> dict[str, Any] | None:
+        path = self._task_path(self.failed_dir, identity)
+        if not path.exists():
+            return None
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if record.get("identity") != identity:
+            raise RuntimeError(f"Checkpoint task identity mismatch: {path}")
+        error = record.get("error")
+        if not isinstance(error, dict):
+            raise RuntimeError(f"Checkpoint failure payload is invalid: {path}")
+        return error
+
     def has_finalized_output(self) -> bool:
         self._recover_finalization_if_possible()
         return self.finalized_path.exists()

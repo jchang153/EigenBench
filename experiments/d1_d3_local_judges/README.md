@@ -80,6 +80,13 @@ rerun it with the same output directory after any interruption. To run one
 model at a time, repeat --judge with an exact name; the matrices finalize once
 all four judges are complete.
 
+Each call is attempted up to `max_attempts`. If its output still fails
+validation, the terminal failure remains in the checkpoint and collection
+continues without retrying it on later resumes. If a reflection fails, its
+dependent judgment call(s) are explicitly marked as dependency-skipped. A
+judge/evaluee/scenario cell is included in the D1-versus-D3 analysis only when
+both designs have complete ratings, so all reported comparisons remain paired.
+
 These public Hugging Face models do not require an API key. An optional
 HF_TOKEN can be supplied through the RunPod environment to avoid anonymous
 download rate limits.
@@ -98,9 +105,13 @@ For every judge, the runner rates fifty fixed response cells:
 
 The output directory contains:
 
-- cell_results.jsonl: 400 final judge/evaluee/scenario/design records
+- cell_results.jsonl: up to 400 complete judge/evaluee/scenario/design records
 - stage_results.jsonl: parsed reflections and judgments
 - raw_calls.jsonl: raw completions, attempts, and token counts
+- failed_calls.jsonl: every exhausted failure and dependency-skipped call,
+  including its full judge/evaluee/scenario/design identity
+- failure_summary.json: separate lists and counts for actual model failures and
+  calls skipped because their reflection dependency failed
 - inputs.jsonl: the fifty exact scenario/response inputs for future reuse
 - manifest.json: hashes, model revisions, prompts, and execution settings
 - pair_summary.csv: paired metrics for every judge/evaluee pair
@@ -111,6 +122,8 @@ The output directory contains:
 - summary.json: overall, judge-wise, completeness, bootstrap, and token metrics
 - checkpoint/: per-call resumable state
 
-Each matrix entry averages only across the ten matched scenarios and eight
-criteria for that particular judge/evaluee pair. Judges and evaluees are never
-pooled before that cell-level comparison.
+Each matrix entry averages only across matched scenarios and eight criteria for
+that particular judge/evaluee pair. When a call fails, the corresponding
+scenario is excluded from that judge/evaluee entry and its exact identity is
+listed in the failure artifacts. Judges and evaluees are never pooled before
+that cell-level comparison.

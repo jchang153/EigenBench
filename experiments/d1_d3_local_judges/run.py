@@ -413,13 +413,16 @@ def _execute_phase(
     verbose: bool,
 ) -> None:
     pending = [
-        task for task in tasks if checkpoint.load_completed(task.identity) is None
+        task
+        for task in tasks
+        if checkpoint.load_completed(task.identity) is None
+        and not _is_terminal_failure(checkpoint, task.identity)
     ]
     if not pending:
         if verbose and tasks:
             print(
                 f"  {tasks[0].identity['design']} {tasks[0].identity['stage']}: "
-                f"{len(tasks)} already complete"
+                f"{len(tasks)} already settled"
             )
         return
     try:
@@ -522,15 +525,42 @@ def _execute_phase(
                     },
                 )
             if failures:
-                first = failures[0]
-                raise RuntimeError(
-                    "Structured output validation failed after "
-                    f"{max_attempts} attempts: task={first['task'].identity}; "
-                    f"error={first['message']}. The failed task is checkpointed."
+                print(
+                    f"  {phase}: skipped {len(failures)} calls after "
+                    f"{max_attempts} structured-output validation failures"
                 )
             retry = next_retry
             if not retry:
                 break
+
+
+def _is_terminal_failure(
+    checkpoint: CollectionCheckpoint,
+    identity: dict,
+) -> bool:
+    failure = checkpoint.load_failed(identity)
+    return failure is not None and bool(failure.get("exhausted"))
+
+
+def _save_dependency_skip(
+    checkpoint: CollectionCheckpoint,
+    *,
+    identity: dict,
+    dependency: dict,
+) -> None:
+    if _is_terminal_failure(checkpoint, identity):
+        return
+    checkpoint.save_failed(
+        identity,
+        {
+            "error_type": "dependency_skipped",
+            "message": "Skipped because the required reflection call failed.",
+            "retryable": False,
+            "exhausted": True,
+            "skipped": True,
+            "dependency": dependency,
+        },
+    )
 
 
 def _build_d1_reflection_tasks(
@@ -576,6 +606,18 @@ def _build_d1_judgment_tasks(
         )
         reflection = checkpoint.load_completed(reflection_identity)
         if reflection is None:
+            if _is_terminal_failure(checkpoint, reflection_identity):
+                _save_dependency_skip(
+                    checkpoint,
+                    identity=_identity(
+                        judge=judge,
+                        cell=cell,
+                        design="01",
+                        stage="judgment",
+                    ),
+                    dependency=reflection_identity,
+                )
+                continue
             raise RuntimeError(
                 f"missing D1 reflection checkpoint: {reflection_identity}"
             )
@@ -653,6 +695,20 @@ def _build_d3_judgment_tasks(
         )
         reflection = checkpoint.load_completed(reflection_identity)
         if reflection is None:
+            if _is_terminal_failure(checkpoint, reflection_identity):
+                for criterion_id in criterion_ids:
+                    _save_dependency_skip(
+                        checkpoint,
+                        identity=_identity(
+                            judge=judge,
+                            cell=cell,
+                            design="03",
+                            stage="judgment",
+                            criterion_id=criterion_id,
+                        ),
+                        dependency=reflection_identity,
+                    )
+                continue
             raise RuntimeError(
                 f"missing D3 reflection checkpoint: {reflection_identity}"
             )
@@ -728,8 +784,29 @@ def _judge_complete(
 ) -> bool:
     return all(
         checkpoint.load_completed(identity) is not None
+        or _is_terminal_failure(checkpoint, identity)
         for identity in _expected_identities([judge], cells, criterion_ids)
     )
+
+
+def _call_outcomes(
+    checkpoint: CollectionCheckpoint,
+    identities: list[dict],
+) -> tuple[int, list[dict], list[dict]]:
+    completed = 0
+    terminal = []
+    unresolved = []
+    for identity in identities:
+        if checkpoint.load_completed(identity) is not None:
+            completed += 1
+            continue
+        failure = checkpoint.load_failed(identity)
+        if failure is not None and bool(failure.get("exhausted")):
+            status = "skipped" if failure.get("skipped") else "failed"
+            terminal.append({**identity, "status": status, "error": failure})
+        else:
+            unresolved.append(identity)
+    return completed, terminal, unresolved
 
 
 def _run_judge(
@@ -848,6 +925,36 @@ def _build_artifacts(
     cell_records = []
     stage_records = []
     raw_calls = []
+    all_identities = _expected_identities(config["judges"], cells, criterion_ids)
+    completed_calls, failure_records, unresolved = _call_outcomes(
+        checkpoint, all_identities
+    )
+    if unresolved:
+        raise RuntimeError(
+            f"cannot build final artifacts with {len(unresolved)} unresolved calls"
+        )
+
+    for identity in all_identities:
+        result = checkpoint.load_completed(identity)
+        if result is None:
+            continue
+        stage_records.append(
+            {
+                **identity,
+                "judge_name": identity["judge"],
+                "evaluee_name": identity["evaluee"],
+                "parsed": result["parsed"],
+            }
+        )
+        raw_calls.append(
+            {
+                **identity,
+                "judge_name": identity["judge"],
+                "evaluee_name": identity["evaluee"],
+                **result,
+            }
+        )
+
     for judge in config["judges"]:
         for cell in cells:
             for design in ("01", "03"):
@@ -859,23 +966,7 @@ def _build_artifacts(
                 )
                 reflection = checkpoint.load_completed(reflection_identity)
                 if reflection is None:
-                    raise RuntimeError(f"missing completed call: {reflection_identity}")
-                stage_records.append(
-                    {
-                        **reflection_identity,
-                        "judge_name": judge["name"],
-                        "evaluee_name": cell.evaluee_name,
-                        "parsed": reflection["parsed"],
-                    }
-                )
-                raw_calls.append(
-                    {
-                        **reflection_identity,
-                        "judge_name": judge["name"],
-                        "evaluee_name": cell.evaluee_name,
-                        **reflection,
-                    }
-                )
+                    continue
 
                 if design == "01":
                     judgment_identity = _identity(
@@ -886,28 +977,11 @@ def _build_artifacts(
                     )
                     judgment = checkpoint.load_completed(judgment_identity)
                     if judgment is None:
-                        raise RuntimeError(
-                            f"missing completed call: {judgment_identity}"
-                        )
+                        continue
                     ratings = judgment["parsed"]
-                    stage_records.append(
-                        {
-                            **judgment_identity,
-                            "judge_name": judge["name"],
-                            "evaluee_name": cell.evaluee_name,
-                            "parsed": ratings,
-                        }
-                    )
-                    raw_calls.append(
-                        {
-                            **judgment_identity,
-                            "judge_name": judge["name"],
-                            "evaluee_name": cell.evaluee_name,
-                            **judgment,
-                        }
-                    )
                 else:
                     ratings = {}
+                    design_complete = True
                     for criterion_id in criterion_ids:
                         judgment_identity = _identity(
                             judge=judge,
@@ -918,26 +992,11 @@ def _build_artifacts(
                         )
                         judgment = checkpoint.load_completed(judgment_identity)
                         if judgment is None:
-                            raise RuntimeError(
-                                f"missing completed call: {judgment_identity}"
-                            )
+                            design_complete = False
+                            break
                         ratings[criterion_id] = judgment["parsed"]["rating"]
-                        stage_records.append(
-                            {
-                                **judgment_identity,
-                                "judge_name": judge["name"],
-                                "evaluee_name": cell.evaluee_name,
-                                "parsed": judgment["parsed"],
-                            }
-                        )
-                        raw_calls.append(
-                            {
-                                **judgment_identity,
-                                "judge_name": judge["name"],
-                                "evaluee_name": cell.evaluee_name,
-                                **judgment,
-                            }
-                        )
+                    if not design_complete:
+                        continue
 
                 cell_records.append(
                     {
@@ -960,7 +1019,7 @@ def _build_artifacts(
 
     source_hash = _sha256_file(responses_path)
     manifest = {
-        "runner_version": 1,
+        "runner_version": 2,
         "prompt_version": PROMPT_VERSION,
         "source_experiment": reference["source_experiment"],
         "sample_seed": reference["sample_seed"],
@@ -993,14 +1052,35 @@ def _build_artifacts(
             }
             for cell in cells
         ],
-        "planned_calls": len(
-            _expected_identities(config["judges"], cells, criterion_ids)
-        ),
+        "planned_calls": len(all_identities),
     }
     manifest["run_fingerprint"] = _canonical_hash(manifest)[:16]
+    actual_failures = [
+        record for record in failure_records if record["status"] == "failed"
+    ]
+    dependency_skips = [
+        record for record in failure_records if record["status"] == "skipped"
+    ]
+    manifest["call_outcomes"] = {
+        "completed": completed_calls,
+        "failed": len(actual_failures),
+        "dependency_skipped": len(dependency_skips),
+        "unresolved": 0,
+    }
 
     save_records(output_dir / "stage_results.jsonl", stage_records)
     save_records(output_dir / "raw_calls.jsonl", raw_calls)
+    save_records(output_dir / "failed_calls.jsonl", failure_records)
+    failure_summary = {
+        "actual_failure_count": len(actual_failures),
+        "dependency_skip_count": len(dependency_skips),
+        "actual_failures": actual_failures,
+        "dependency_skips": dependency_skips,
+    }
+    (output_dir / "failure_summary.json").write_text(
+        json.dumps(failure_summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     save_records(
         output_dir / "inputs.jsonl",
         [
@@ -1221,11 +1301,16 @@ def main() -> int:
         print("Selected judges are already complete in the checkpoint.")
 
     all_identities = _expected_identities(config["judges"], cells, criterion_ids)
-    completed = sum(
-        checkpoint.load_completed(identity) is not None for identity in all_identities
+    completed, terminal, unresolved = _call_outcomes(checkpoint, all_identities)
+    actual_failed = sum(record["status"] == "failed" for record in terminal)
+    dependency_skipped = sum(record["status"] == "skipped" for record in terminal)
+    print(
+        "Checkpoint progress: "
+        f"{completed} complete, {actual_failed} failed, "
+        f"{dependency_skipped} dependency-skipped, "
+        f"{len(unresolved)} unresolved ({len(all_identities)} planned)"
     )
-    print(f"Checkpoint progress: {completed}/{len(all_identities)} calls complete")
-    if completed != len(all_identities):
+    if unresolved:
         print(
             "The selected judge subset is complete. Run the remaining judges with the "
             "same responses and output directory to finalize the matrices."
