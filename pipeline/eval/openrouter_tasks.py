@@ -14,7 +14,7 @@ from pipeline.providers.openrouter import (
 from .checkpoint import CollectionCheckpoint
 
 
-MAX_PARALLEL_API_CALLS = 10
+MAX_PARALLEL_API_CALLS = 36
 
 
 @dataclass(frozen=True)
