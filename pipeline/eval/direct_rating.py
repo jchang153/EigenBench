@@ -103,6 +103,8 @@ def parse_direct_ratings(
     if any(type(value) is not int for value in allowed_missing_one_based):
         raise ValueError("allowed missing criteria must be integer indices")
 
+    allowed_missing = set(allowed_missing_one_based)
+
     parsed: dict[int, int] = {}
     for match in _RATING_PATTERN.finditer(response):
         one_based = int(match.group(1))
@@ -110,6 +112,12 @@ def parse_direct_ratings(
             raise ValueError(f"criterion {one_based} appears more than once")
         raw_value = match.group(2).strip()
         if not re.fullmatch(r"[+-]?\d+", raw_value):
+            # A criterion declared allowed-missing may also come back declined
+            # rather than omitted -- "N/A" for a conditional criterion that does
+            # not apply to this scenario means the same thing as leaving the tag
+            # out. Treat it as missing; anything not declared still raises.
+            if one_based in allowed_missing:
+                continue
             raise ValueError(f"criterion {one_based} rating is not an integer")
         value = int(raw_value)
         if not scale_min <= value <= scale_max:
@@ -120,7 +128,6 @@ def parse_direct_ratings(
         parsed[one_based] = value
 
     expected = set(range(1, num_criteria + 1))
-    allowed_missing = set(allowed_missing_one_based)
     invalid_allowed = sorted(allowed_missing - expected)
     if invalid_allowed:
         raise ValueError(f"allowed missing criteria are out of range: {invalid_allowed}")
