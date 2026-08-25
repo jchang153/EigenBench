@@ -77,6 +77,10 @@ class OpenRouterErrorDetails:
     status_code: int | None = None
     request_id: str | None = None
     retry_after_seconds: float | None = None
+    # The rejected completion, for invalid_response only. A validation failure
+    # is often valid data in an unexpected notation, and the error message alone
+    # cannot distinguish that from a genuine refusal.
+    content: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -403,6 +407,7 @@ def _validate_completion(
                 message=str(validation_error)[:2000],
                 retryable=True,
                 request_id=request_id,
+                content=content[:4000],
             )
             raise _AttemptFailure(details)
 

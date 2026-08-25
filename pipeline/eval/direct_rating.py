@@ -1099,6 +1099,12 @@ def _run_local_tasks_for_phase(
                                         "message": validation_error,
                                         "retryable": True,
                                         "exhausted": True,
+                                        # Keep what was rejected. A validation
+                                        # failure is often valid data in an
+                                        # unexpected notation, and without the
+                                        # text there is no way to tell that from
+                                        # a genuine refusal.
+                                        "content": (content or "")[:4000],
                                     },
                                 )
                                 raise RuntimeError(
