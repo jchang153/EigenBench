@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 import random
 import re
@@ -17,12 +17,14 @@ from .checkpoint import CollectionCheckpoint
 DIRECT_PROMPT_VERSION = 1
 DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
 DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
+DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
 DIRECT_SAMPLER_ALIASES = {
     "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
     "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
     "partitioned": DIRECT_SAMPLER_PARTITIONED,
     "random_partition": DIRECT_SAMPLER_PARTITIONED,
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
+    "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
 }
 
 
@@ -150,6 +152,84 @@ def direct_rating_validator(
     return validate
 
 
+def direct_generated_text_validator(response: str) -> str | None:
+    """Reject unusable generated text."""
+
+    if not isinstance(response, str) or not response.strip():
+        return "generated text is empty"
+    stripped = response.strip()
+    lowered = response.lower()
+    if re.fullmatch(
+        r"\[[^\]]*(?:declined|refused)[^\]]*response[^\]]*\]",
+        stripped,
+        re.I,
+    ):
+        return "generated text is a provider refusal"
+    tokens = re.findall(r"[A-Za-z]+", lowered)
+    if (
+        len(tokens) <= 100
+        and re.search(r"https?://", response)
+        and re.search(r"\b(?:safeguards?|content policy|verification program)\b", lowered)
+    ):
+        return "generated text is a provider notice"
+    if len(tokens) >= 200:
+        most_common_count = Counter(tokens).most_common(1)[0][1]
+        if most_common_count / len(tokens) > 0.25:
+            return "generated text contains a repeated-token loop"
+    return None
+
+
+def direct_criterion_reflection_validator(
+    num_criteria: int,
+) -> Callable[[str], str | None]:
+    """Validate criterion-by-criterion reflection text before rating."""
+
+    expected = set(range(1, num_criteria + 1))
+
+    def validate(response: str) -> str | None:
+        if error := direct_generated_text_validator(response):
+            return error
+        lowered = response.lower()
+
+        tokens = re.findall(r"[A-Za-z]+", lowered)
+        if len(tokens) < 15 * num_criteria:
+            return "reflection is too short for every criterion"
+        non_space = [character for character in response if not character.isspace()]
+        ascii_letter_ratio = sum(
+            character.isascii() and character.isalpha() for character in non_space
+        ) / len(non_space)
+        if len(response) >= 1000 and ascii_letter_ratio < 0.8:
+            return "reflection contains excessive non-prose text"
+        if Counter(tokens).most_common(1)[0][1] / len(tokens) > 0.12:
+            return "reflection contains a repeated-token loop"
+        if re.search(r"([^\s])\1{10,}", response):
+            return "reflection contains a repeated-character loop"
+
+        def completed_passes(sequence: list[int]) -> int:
+            count = 0
+            next_criterion = 1
+            for criterion in sequence:
+                if criterion != next_criterion:
+                    continue
+                next_criterion += 1
+                if next_criterion > num_criteria:
+                    count += 1
+                    next_criterion = 1
+            return count
+
+        explicit_sequence = [
+            int(value) for value in re.findall(r"criterion\s*(\d+)", lowered)
+        ]
+        if completed_passes(explicit_sequence) > 1:
+            return "reflection repeats the full criterion sequence"
+
+        if not expected.issubset(explicit_sequence):
+            return "reflection does not cover every criterion"
+        return None
+
+    return validate
+
+
 def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
     legacy_max_tokens = int(collection_cfg.get("max_tokens", 4096))
     has_legacy_max_tokens = "max_tokens" in collection_cfg
@@ -190,8 +270,8 @@ def resolve_direct_sampling_settings(
     mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
     if mode is None:
         raise ValueError(
-            "direct collection.sampler_mode must be 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "direct collection.sampler_mode must be 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     if num_models <= 0:
         raise ValueError("direct sampling requires at least one model")
@@ -233,7 +313,8 @@ def build_direct_assignments(
 
     ``all_to_all`` preserves the original exhaustive design. The partitioned
     sampler shuffles every scenario's evaluees into disjoint groups and assigns
-    one random judge to each group. Repeating the partition
+    one random judge to each group. The balanced sampler rotates one-to-one
+    judge/evaluee assignments across scenarios. Repeating either sampled design
     ``response_redundancy`` times makes every response receive exactly that many
     ratings, always from distinct judges within a scenario.
     """
@@ -245,8 +326,8 @@ def build_direct_assignments(
     mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
     if mode is None:
         raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "unknown direct sampler mode; expected 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     group_size = int(group_size)
     response_redundancy = int(response_redundancy)
@@ -265,8 +346,14 @@ def build_direct_assignments(
         )
 
     rng = random.Random(sampler_seed)
+    balanced_shifts = (
+        list(range(num_models)) if include_self else list(range(1, num_models))
+    )
+    if mode == DIRECT_SAMPLER_BALANCED:
+        rng.shuffle(balanced_shifts)
+
     assignments: list[dict] = []
-    for item in selected_scenarios:
+    for scenario_position, item in enumerate(selected_scenarios):
         if isinstance(item, (tuple, list)):
             scenario_index, scenario = item
         else:
@@ -290,6 +377,29 @@ def build_direct_assignments(
                         "group_index": judge_idx,
                     }
                 )
+            continue
+
+        if mode == DIRECT_SAMPLER_BALANCED:
+            for sampling_round in range(response_redundancy):
+                shift = balanced_shifts[
+                    (scenario_position * response_redundancy + sampling_round)
+                    % len(balanced_shifts)
+                ]
+                for eval_idx in range(num_models):
+                    judge_idx = (eval_idx + shift) % num_models
+                    assignments.append(
+                        {
+                            "scenario_index": scenario_index,
+                            "scenario": scenario,
+                            "judge_idx": judge_idx,
+                            "judge_nick": model_nicks[judge_idx],
+                            "eval_idxs": [eval_idx],
+                            "eval_nicks": [model_nicks[eval_idx]],
+                            "sampler_mode": mode,
+                            "sampling_round": sampling_round,
+                            "group_index": eval_idx,
+                        }
+                    )
             continue
 
         used_judges_by_evaluee = [set() for _ in range(num_models)]
@@ -366,15 +476,15 @@ def estimate_direct_calls(
     mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
     if mode is None:
         raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all' or "
-            "'partitioned_random_judge'"
+            "unknown direct sampler mode; expected 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
         )
     group_size = max(1, min(int(group_size), num_models)) if num_models else 0
     response_redundancy = int(response_redundancy)
     if response_redundancy <= 0:
         raise ValueError("response_redundancy must be positive")
     max_redundancy = num_models if include_self else max(0, num_models - 1)
-    if mode == DIRECT_SAMPLER_PARTITIONED and response_redundancy > max_redundancy:
+    if mode != DIRECT_SAMPLER_ALL_TO_ALL and response_redundancy > max_redundancy:
         raise ValueError("response_redundancy exceeds the number of distinct eligible judges")
     if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
         raise ValueError(
@@ -402,9 +512,9 @@ def estimate_direct_calls(
         "sampler_mode": mode,
         "group_size": group_size if mode == DIRECT_SAMPLER_PARTITIONED else None,
         "response_redundancy": (
-            response_redundancy if mode == DIRECT_SAMPLER_PARTITIONED else None
+            response_redundancy if mode != DIRECT_SAMPLER_ALL_TO_ALL else None
         ),
-        "sampler_seed": sampler_seed if mode == DIRECT_SAMPLER_PARTITIONED else None,
+        "sampler_seed": sampler_seed if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
         "directed_edges_per_scenario": edges_per_scenario,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
@@ -457,10 +567,38 @@ def _load_cached_responses(path_value: str | None) -> dict[int, dict[str, str]]:
         if isinstance(record, dict) and "scenario_index" in record:
             responses = record.get("responses")
             if isinstance(responses, dict):
-                cached[int(record["scenario_index"])].update(
-                    {str(key): value for key, value in responses.items() if isinstance(value, str)}
-                )
+                scenario_cache = cached[int(record["scenario_index"])]
+                for key, value in responses.items():
+                    model_nick = str(key)
+                    if isinstance(value, str) and direct_generated_text_validator(value) is None:
+                        scenario_cache[model_nick] = value
+                    else:
+                        scenario_cache.pop(model_nick, None)
     return cached
+
+
+def _validate_direct_rating_records(
+    records: list[dict],
+    *,
+    num_criteria: int,
+    scale_min: int,
+    scale_max: int,
+) -> None:
+    validators = {
+        "response": direct_generated_text_validator,
+        "reflection": direct_criterion_reflection_validator(num_criteria),
+        "judgment_raw": direct_rating_validator(num_criteria, scale_min, scale_max),
+    }
+    for record_index, record in enumerate(records):
+        for field, validator in validators.items():
+            error = validator(record.get(field))
+            if error:
+                raise RuntimeError(
+                    "Invalid direct-rating record: "
+                    f"record={record_index}, scenario={record.get('scenario_index')}, "
+                    f"judge={record.get('judge')}, evaluee={record.get('evaluee')}, "
+                    f"field={field}, error={error}"
+                )
 
 
 def count_cached_responses(
@@ -582,7 +720,14 @@ def collect_direct_ratings(
         )
 
     if checkpoint.has_finalized_output():
-        return checkpoint.load_finalized_output(evaluations_path)
+        records = checkpoint.load_finalized_output(evaluations_path)
+        _validate_direct_rating_records(
+            records,
+            num_criteria=len(criteria),
+            scale_min=scale_min,
+            scale_max=scale_max,
+        )
+        return records
     checkpoint.assert_output_is_safe(evaluations_path)
 
     configured_openrouter = {
@@ -647,7 +792,9 @@ def collect_direct_ratings(
                         generation["response"]["max_tokens"],
                         settings,
                         temperature=generation["response"]["temperature"],
+                        response_validator=direct_generated_text_validator,
                     ),
+                    validator=direct_generated_text_validator,
                 )
             )
             response_targets.append(key)
@@ -703,6 +850,7 @@ def collect_direct_ratings(
         if judge_nick not in openrouter_models:
             continue
         model_path = openrouter_models[judge_nick]
+        reflection_validator = direct_criterion_reflection_validator(len(criteria))
         system_prompt = build_direct_reflection_prompt()
         for eval_nick in assignment["eval_nicks"]:
             messages = [
@@ -727,13 +875,16 @@ def collect_direct_ratings(
             reflection_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages,
+                    reflection_validator=reflection_validator: _call_openrouter(
                         model_path,
                         messages,
                         generation["reflection"]["max_tokens"],
                         settings,
                         temperature=generation["reflection"]["temperature"],
+                        response_validator=reflection_validator,
                     ),
+                    validator=reflection_validator,
                 )
             )
             reflection_targets.append((s_idx, judge_nick, eval_nick))
@@ -753,6 +904,7 @@ def collect_direct_ratings(
         eval_responses=eval_responses,
         reflections=reflections,
         criteria_text=criteria_text,
+        num_criteria=len(criteria),
         checkpoint=checkpoint,
         phase_cfg=generation["reflection"],
         max_attempts=settings["max_attempts"],
@@ -801,6 +953,7 @@ def collect_direct_ratings(
                         temperature=generation["direct_rating"]["temperature"],
                         response_validator=validator,
                     ),
+                    validator=validator,
                 )
             )
             rating_targets.append((s_idx, judge_nick, eval_nick))
@@ -917,9 +1070,13 @@ def _run_local_tasks_for_phase(
                 for task in phase_tasks:
                     saved = checkpoint.load_completed(task.identity)
                     if saved is not None:
-                        consume(task, saved["content"])
-                    else:
-                        pending.append(task)
+                        content = saved.get("content")
+                        if isinstance(content, str) and content.strip():
+                            validation_error = task.validator(content) if task.validator else None
+                            if validation_error is None:
+                                consume(task, content)
+                                continue
+                    pending.append(task)
                 if not pending:
                     continue
                 adapter_request = lora_requests.get(nick)
@@ -1021,6 +1178,7 @@ def _run_local_response_phase(**kwargs) -> None:
                         {"role": "user", "content": assignment["scenario"]},
                     ],
                     target=key,
+                    validator=direct_generated_text_validator,
                 )
             )
 
@@ -1036,6 +1194,7 @@ def _run_local_reflection_phase(**kwargs) -> None:
     eval_responses = kwargs.pop("eval_responses")
     reflections = kwargs.pop("reflections")
     criteria_text = kwargs.pop("criteria_text")
+    validator = direct_criterion_reflection_validator(kwargs.pop("num_criteria"))
     local_groups = kwargs["local_groups"]
     local_nicks = {
         nick for info in local_groups.values() for nick in _models_in_local_group(info)
@@ -1069,6 +1228,7 @@ def _run_local_reflection_phase(**kwargs) -> None:
                         },
                     ],
                     target=(s_idx, judge_nick, eval_nick),
+                    validator=validator,
                 )
             )
 
@@ -1134,6 +1294,7 @@ def _run_local_rating_phase(**kwargs) -> None:
 __all__ = [
     "DIRECT_PROMPT_VERSION",
     "DIRECT_SAMPLER_ALL_TO_ALL",
+    "DIRECT_SAMPLER_BALANCED",
     "DIRECT_SAMPLER_PARTITIONED",
     "build_direct_assignments",
     "build_direct_rating_prompt",
