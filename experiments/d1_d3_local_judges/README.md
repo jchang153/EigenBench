@@ -1,8 +1,10 @@
 # Local-judge D1 versus D3 comparison
 
-This experiment repeats the balanced D1/D3 prompt-structure comparison while
-keeping the original five evaluees, ten scenarios, and fifty cached responses.
-Only the judge axis changes:
+This experiment repeats the balanced D1/D3 prompt-structure comparison with
+four local 7B judges and a bundled 10-by-5 cached-response matrix. It keeps the
+kindness constitution and exact D1/D3 prompts, but uses AiriskDilemmas inputs
+from the published reasoning-versus-instant ValueArena run instead of the
+original AskReddit inputs. The judge axis is:
 
 - Qwen 2.5 7B Instruct
 - Qwen 2.5 7B (base)
@@ -18,20 +20,30 @@ Qwen 2.5 7B is intentionally the pretrained base model. It has no judge-tuned
 chat behavior, so the runner renders its system and user messages as a plain
 transcript. The other three judges use their native chat templates.
 
+Because both the judges and response sample differ from the original balanced
+matrix, compare D1 versus D3 within this run; do not compare its absolute
+ratings directly with the prior AskReddit matrix.
+
 ## Inputs
 
-The prior result zip does not contain response text. Supply the original file:
+The repository bundles the fifty responses at:
 
-    data/output/valuearena/processed/full8_kindness/askreddit_1000_responses_completed.json
+    experiments/d1_d3_local_judges/data/airisk_10x5_responses.jsonl
 
-The runner extracts only the original ten scenarios and five evaluees. It
-verifies all fifty scenario and response hashes against reference_manifest.json
-before loading any model. A source file containing only those exact records is
-also accepted.
+They are the first ten AiriskDilemmas scenarios (indices 0 through 9) and the
+instant responses from five distinct model families:
 
-The reference scenario indices are:
+- GPT-5.6 Luna
+- Claude Haiku 4.5
+- Grok 4.3
+- DeepSeek V4 Flash 0423
+- Gemini 3.1 Flash Lite
 
-    30, 110, 121, 150, 236, 258, 289, 664, 764, 769
+The source cache is from the ValueArena run
+`reasoning-vs-instant/airisk-kindness-200`. The runner verifies every scenario
+and response hash against reference_manifest.json before loading a judge. An
+alternate response path can still be supplied with `--responses`, but it must
+contain these exact fifty cells.
 
 ## RunPod setup
 
@@ -47,18 +59,14 @@ Confirm the immutable model revisions and call plan without downloading models:
 
     .venv/bin/python -m experiments.d1_d3_local_judges.run --plan
 
-After transferring the response cache, verify all fifty hashes without
-downloading models:
+Verify all fifty bundled response hashes without downloading models:
 
-    .venv/bin/python -m experiments.d1_d3_local_judges.run \
-      --responses /workspace/askreddit_1000_responses_completed.json \
-      --validate-input
+    .venv/bin/python -m experiments.d1_d3_local_judges.run --validate-input
 
 Run inside tmux so an SSH or laptop disconnect does not stop collection:
 
     tmux new -s d1-d3-local
     .venv/bin/python -m experiments.d1_d3_local_judges.run \
-      --responses /workspace/askreddit_1000_responses_completed.json \
       --output-dir /workspace/d1_d3_local_judges \
       --batch-size 64 \
       --verbose
@@ -68,9 +76,9 @@ Detach with Ctrl-b followed by d. Reattach with:
     tmux attach -t d1-d3-local
 
 The models are loaded and released one at a time. The command is resumable:
-rerun it with the identical response file and output directory after any
-interruption. To run one model at a time, repeat --judge with an exact name;
-the matrices finalize once all four judges are complete.
+rerun it with the same output directory after any interruption. To run one
+model at a time, repeat --judge with an exact name; the matrices finalize once
+all four judges are complete.
 
 These public Hugging Face models do not require an API key. An optional
 HF_TOKEN can be supplied through the RunPod environment to avoid anonymous

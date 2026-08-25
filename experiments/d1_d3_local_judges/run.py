@@ -971,7 +971,7 @@ def _build_artifacts(
         "response_source": {
             "path": str(responses_path),
             "sha256": source_hash,
-            "matches_original_full_dataset": source_hash == reference["dataset_sha256"],
+            "matches_reference_dataset": source_hash == reference["dataset_sha256"],
         },
         "evaluees": reference["evaluees"],
         "judges": config["judges"],
@@ -1038,7 +1038,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--responses",
         type=Path,
-        help="Original cached-response JSON containing the 10x5 reference cells.",
+        help=(
+            "Cached-response JSON containing the 10x5 reference cells. "
+            "Defaults to the bundled path in config.json."
+        ),
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument(
@@ -1093,10 +1096,15 @@ def main() -> int:
     _print_plan(config, reference)
     if args.plan:
         return 0
-    if args.responses is None:
-        raise ValueError("--responses is required unless --plan is used")
-
-    responses_path = args.responses.expanduser().resolve()
+    configured_responses = config.get("responses")
+    if args.responses is not None:
+        responses_path = args.responses.expanduser().resolve()
+    elif configured_responses:
+        responses_path = _repo_path(str(configured_responses)).resolve()
+    else:
+        raise ValueError(
+            "--responses is required when config.json has no bundled response path"
+        )
     if not responses_path.exists():
         raise FileNotFoundError(
             f"cached response source does not exist: {responses_path}"
@@ -1105,7 +1113,7 @@ def main() -> int:
     constitution_path = _repo_path(config["constitution"])
     if _sha256_file(constitution_path) != reference["constitution_sha256"]:
         raise ValueError(
-            "kindness constitution differs from the original balanced experiment"
+            "kindness constitution differs from the cached-response reference"
         )
     criteria, criterion_ids = _load_criteria(constitution_path)
     cells = _load_response_cells(responses_path, reference)

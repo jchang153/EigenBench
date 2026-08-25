@@ -1,342 +1,350 @@
 {
-  "source_experiment": "d1-d3-balanced-matrix",
-  "sample_seed": 42,
+  "source_experiment": "reasoning_vs_instant_airisk_kindness_200",
+  "source_publication": "ValueArena reasoning-vs-instant/airisk-kindness-200",
+  "source_cache_sha256": "6cf2e628e33749dbf3bbbfbad9010018f2b182b112f7ac57f50fcee84258c0c1",
+  "sample_seed": null,
+  "sampling": {
+    "method": "first_n",
+    "start": 0,
+    "count": 10,
+    "shuffle": false
+  },
   "scenario_indices": [
-    30,
-    110,
-    121,
-    150,
-    236,
-    258,
-    289,
-    664,
-    764,
-    769
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
   ],
   "constitution_sha256": "ea1933e8f488aea4fa95649ce881d7963b5faf98ce3c96250edb40c3fa46d51c",
-  "dataset_sha256": "823599486ddbd12c148018c9797b2820ce0469ef419ad658ad855e2686c095b4",
+  "dataset_sha256": "21044238201e99b7444bcff5b071707a58061b1abf9ca0a7d0edc65687eaf982",
   "evaluees": [
     {
-      "name": "Claude 4 Sonnet",
-      "source_model_id": "claude-sonnet-4-20250514"
+      "name": "GPT-5.6 Luna (instant)",
+      "source_model_id": "openai/gpt-5.6-luna"
     },
     {
-      "name": "GPT 4.1",
-      "source_model_id": "gpt-4.1-2025-04-14"
+      "name": "Claude Haiku 4.5 (instant)",
+      "source_model_id": "anthropic/claude-haiku-4.5"
     },
     {
-      "name": "Gemini 2.5 Pro",
-      "source_model_id": "gemini-2.5-pro"
+      "name": "Grok 4.3 (instant)",
+      "source_model_id": "x-ai/grok-4.3"
     },
     {
-      "name": "Grok 4",
-      "source_model_id": "grok-4-0709"
+      "name": "DeepSeek V4 Flash 0423 (instant)",
+      "source_model_id": "deepseek/deepseek-v4-flash"
     },
     {
-      "name": "DeepSeek v3",
-      "source_model_id": "deepseek/deepseek-chat-v3-0324"
+      "name": "Gemini 3.1 Flash Lite (instant)",
+      "source_model_id": "google/gemini-3.1-flash-lite"
     }
   ],
   "inputs": [
     {
-      "scenario_index": 30,
-      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "a2056e666c1e7cdf652ef128e4f4da01ff658f7f854ccf2fc4849c390ab4348d"
+      "scenario_index": 0,
+      "scenario_sha256": "2828211cc35496d6f70bb424424c18551ec1365b03ae5a8c4e874bd37d9046ba",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "f92e028d096a6095fd735b340ccf4b4a49945bc1e857c7a307e21aef529da492"
     },
     {
-      "scenario_index": 30,
-      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "cf40a64e7bd6ac7e5bf0f7de58690096434b12ab138a7667b8f777f7826f9165"
+      "scenario_index": 0,
+      "scenario_sha256": "2828211cc35496d6f70bb424424c18551ec1365b03ae5a8c4e874bd37d9046ba",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "7b1f99fd1a98c865572ee91e8e18e9c4751604e648be783397eebb7e3cd1999b"
     },
     {
-      "scenario_index": 30,
-      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "28e819482e632d2bb7d0ece7ee6451dfb68d89677e7d83a2ef3e694cdf91dff0"
+      "scenario_index": 0,
+      "scenario_sha256": "2828211cc35496d6f70bb424424c18551ec1365b03ae5a8c4e874bd37d9046ba",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "fbbca4fed538af1a9835d4ca1a87cd155447649b789e35d2d17ed57f1bc6d693"
     },
     {
-      "scenario_index": 30,
-      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
-      "evaluee": "Grok 4",
-      "response_sha256": "d8b35a1e1fe0cb01bc02de8762154b5c6f8e9aa1cda103ee31caacf383b8d8ea"
+      "scenario_index": 0,
+      "scenario_sha256": "2828211cc35496d6f70bb424424c18551ec1365b03ae5a8c4e874bd37d9046ba",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "42c9fb67dd9dc2d81c37ff4a6486c3e7443b97d6edb80ab96c4bbca79b2e76e0"
     },
     {
-      "scenario_index": 30,
-      "scenario_sha256": "4e8e456c0048ee634309d8edcfdb52b6d42aedb1d1b4788bda3d2d8d08675c84",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "f18fb9327573d79adef76d3efaa2eb389da36c65df850f781dfac62ab8e9f0b1"
+      "scenario_index": 0,
+      "scenario_sha256": "2828211cc35496d6f70bb424424c18551ec1365b03ae5a8c4e874bd37d9046ba",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "92796fa55f4df6d5b5ba28dc260dcaee6acad3a237d00a80bb4f1b82750ea340"
     },
     {
-      "scenario_index": 110,
-      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "9e97016aec64c6e80dbfa3ee7882591d52e384eac1885cab2eb4f640a63b5a82"
+      "scenario_index": 1,
+      "scenario_sha256": "52353083734e08b1fcead4c4abdbcc5a8d562037e39222fb0778394f4ab1896b",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "bdfcd5232edd4e6074d66e5b9ee567f97db15115f0f2dbc5dc021b68826df40d"
     },
     {
-      "scenario_index": 110,
-      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "92bed5c56682232cbd4f49bd7fdbb253bd9069e4a359e7faa965849bbe18114b"
+      "scenario_index": 1,
+      "scenario_sha256": "52353083734e08b1fcead4c4abdbcc5a8d562037e39222fb0778394f4ab1896b",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "cb296140928fbfc2668fb3833058171bcfad775c1860781f1bc2a0954a21c498"
     },
     {
-      "scenario_index": 110,
-      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "2cc0dcf44c8d12c1c05b3b347ad563abd1459874245194a4ee03f86e370709ec"
+      "scenario_index": 1,
+      "scenario_sha256": "52353083734e08b1fcead4c4abdbcc5a8d562037e39222fb0778394f4ab1896b",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "9ae9845be5b6a251ec905afaefd7c5c9a587aa30895b29ce92478f1ea3015f5f"
     },
     {
-      "scenario_index": 110,
-      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
-      "evaluee": "Grok 4",
-      "response_sha256": "ce9349cec49cd7a54c3583519094c02d515aa6a1dcb1c7fad09ad390703b09f9"
+      "scenario_index": 1,
+      "scenario_sha256": "52353083734e08b1fcead4c4abdbcc5a8d562037e39222fb0778394f4ab1896b",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "ee819038fb6f229092794c4a9ee726a3c6c6bbb5769d6a8630fdaaf25fa3b2ad"
     },
     {
-      "scenario_index": 110,
-      "scenario_sha256": "481ed07ad26a62879f739a43e5d9b1d485e500618c453914066650c133002ca4",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "108ae0c1439ddd1003f185781de7d26bae6cbb0eb628b6948a730eb969f275b2"
+      "scenario_index": 1,
+      "scenario_sha256": "52353083734e08b1fcead4c4abdbcc5a8d562037e39222fb0778394f4ab1896b",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "761d9e63bea44678ac2f17df8398f461a80f822628c9d2695c013d2d1130cbb9"
     },
     {
-      "scenario_index": 121,
-      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "4dd47ae3422d900d69dfcae8e6ed4ae28c0ffadb7f96fe8f40cf81798b5a6585"
+      "scenario_index": 2,
+      "scenario_sha256": "20344e07b5824889268450e498c6ee2014d07f1a1ad530a5466eb7b375e117ca",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "c340003a54ba664adf48b000cd1c4b88dfa75f64cd86136c8267bdf634f1ffbb"
     },
     {
-      "scenario_index": 121,
-      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "e9507da0e6714d2cfcd88df9d492d32ca203f03e9dd3dd783c686c4e3ded266a"
+      "scenario_index": 2,
+      "scenario_sha256": "20344e07b5824889268450e498c6ee2014d07f1a1ad530a5466eb7b375e117ca",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "d14c235deab46eafb5bbf9d0aba99ca8dff27a8927238ebbbb620fa6b5366656"
     },
     {
-      "scenario_index": 121,
-      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "5988ac9f160fa5b063be67af8949a1059ebf50b0879630917d7bdad1dc175e14"
+      "scenario_index": 2,
+      "scenario_sha256": "20344e07b5824889268450e498c6ee2014d07f1a1ad530a5466eb7b375e117ca",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "523aa319d3b9752cf74356c23b757b422fa31ac51edaa926e0106508dc39c5fb"
     },
     {
-      "scenario_index": 121,
-      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
-      "evaluee": "Grok 4",
-      "response_sha256": "2c0bc11cfb4a321da66247e6e15e44931924e98a76452bcb663fced55ac44354"
+      "scenario_index": 2,
+      "scenario_sha256": "20344e07b5824889268450e498c6ee2014d07f1a1ad530a5466eb7b375e117ca",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "f367ebce751f30583cd392c56bd4f3e9a20e93dea6d008409365111af92888c4"
     },
     {
-      "scenario_index": 121,
-      "scenario_sha256": "808caa80a8d1e107921e7c65da1b276d6be3b0377bb9af8ff5b15faf8eb28e94",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "11cc359106b7e6456945fb9eaab4c4e222c8c1627aeadc6867cb3010cfc90a58"
+      "scenario_index": 2,
+      "scenario_sha256": "20344e07b5824889268450e498c6ee2014d07f1a1ad530a5466eb7b375e117ca",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "8460c62841677bbd39f06203c2f9b9a8c3299dfb16f5248e8b73b84bb6366fa3"
     },
     {
-      "scenario_index": 150,
-      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "13af8b34134b235491cd5d5a4d68e14854394f5161c319a1f3549ce5e58a9c36"
+      "scenario_index": 3,
+      "scenario_sha256": "243e009b175d118f249d83c1555687848e18a8dce663619aa68751ecf5396031",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "41c458e7a767f004fc0f7398460024de3674c38a12a131a0065eb9895a57ffe4"
     },
     {
-      "scenario_index": 150,
-      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "d80c09efa0949b59fb25fcd35453da68f51f3435cfeb6a063725b78d629f4f56"
+      "scenario_index": 3,
+      "scenario_sha256": "243e009b175d118f249d83c1555687848e18a8dce663619aa68751ecf5396031",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "125ac7614011c8411622d5f49baca3b6fd02e74769e4f8a86fe6f9925ea39ec5"
     },
     {
-      "scenario_index": 150,
-      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "1b7a9f75fbfcc32ee5aa34f4525e0bd7d9638f5da758a7a918cc58184ca36644"
+      "scenario_index": 3,
+      "scenario_sha256": "243e009b175d118f249d83c1555687848e18a8dce663619aa68751ecf5396031",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "161a404918ccfc003a5d54cc5a66a5c320835857cce5920ef1710901d25eb8e1"
     },
     {
-      "scenario_index": 150,
-      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
-      "evaluee": "Grok 4",
-      "response_sha256": "cff29907c5dad76f524baeb484a8c9e3cb18732ea8317e905aee930d25700e01"
+      "scenario_index": 3,
+      "scenario_sha256": "243e009b175d118f249d83c1555687848e18a8dce663619aa68751ecf5396031",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "1773e4e15ef11d4c12125865bab11ded1fd0ab3d1e7c5f6c2df7b8031806b897"
     },
     {
-      "scenario_index": 150,
-      "scenario_sha256": "2a911c35c69e0adb26da84f053e24233b3888d324b5b2a961d1bbce062024a3c",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "b65291b724b8b76c43136b7f7e2ef309f24d023f8662029f84565d7a3c342b23"
+      "scenario_index": 3,
+      "scenario_sha256": "243e009b175d118f249d83c1555687848e18a8dce663619aa68751ecf5396031",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "fbe9a048bf3ba459a94d70a5b4a31cb445269b7d7d7a68fe93941cb0b72f86c5"
     },
     {
-      "scenario_index": 236,
-      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "03ddb499ebbdcdbfb3321da9b36817c0d45ed205e5988af601e9855e3ef0bb94"
+      "scenario_index": 4,
+      "scenario_sha256": "31c378d1df79bf046a772b2f1193c078aa58adaa113eecd8b9fc60d6fa8df5bb",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "250625c90817314f4b6cf638538aa5cccb98dd232b9653cdc43ac5305033bd82"
     },
     {
-      "scenario_index": 236,
-      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "c58e6e50c91e5f59b8ebfa6ec5e26f9d06a7a1782ae24e4729ff931dfa9d4aac"
+      "scenario_index": 4,
+      "scenario_sha256": "31c378d1df79bf046a772b2f1193c078aa58adaa113eecd8b9fc60d6fa8df5bb",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "96ee5c980272f367765def0215abb956c7e0106c4a6dd2eb712cd8e4408b74e1"
     },
     {
-      "scenario_index": 236,
-      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "d6321c26916d79b23dfda5181a00acc699859719335f4ff38abfe9c9d20f5a6d"
+      "scenario_index": 4,
+      "scenario_sha256": "31c378d1df79bf046a772b2f1193c078aa58adaa113eecd8b9fc60d6fa8df5bb",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "55abe9e950100760ed02a0190ad74146067f6ebfa55a48cb561014a288bb8ded"
     },
     {
-      "scenario_index": 236,
-      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
-      "evaluee": "Grok 4",
-      "response_sha256": "bdded3c331c8207f7ac5a3ad03c8b41b613ed188d30c838fb49f7f516cc3dce6"
+      "scenario_index": 4,
+      "scenario_sha256": "31c378d1df79bf046a772b2f1193c078aa58adaa113eecd8b9fc60d6fa8df5bb",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "485a72f781dc5ccbd6f557070215e6e8ffd62ea8ccfd4fa96763367da1a09d07"
     },
     {
-      "scenario_index": 236,
-      "scenario_sha256": "46572cf83992f1dae6cc974c168a1796782dff4c10838117bb2efbfe85bec82f",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "af16a56c1cae04bd9bbacdd43dfced5441bcc5ebcd4ed44a03829ae2191d9844"
+      "scenario_index": 4,
+      "scenario_sha256": "31c378d1df79bf046a772b2f1193c078aa58adaa113eecd8b9fc60d6fa8df5bb",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "5fe87ebc9b8f83bdaba39510069756ff05bd6cf9478b42e45b2ed2d11c18330c"
     },
     {
-      "scenario_index": 258,
-      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "2ec692196cce41c701f6eb899762a0b91e4015e40c8be9a9b139689a840a1cae"
+      "scenario_index": 5,
+      "scenario_sha256": "72d228463e4fd27e43dfc87384864df7cacfa939440ebee2387cbd8f470bb207",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "c0265793d0952b5299c6e9115659282f6a8bf74ca7a7c3e13d101ce05702aa7d"
     },
     {
-      "scenario_index": 258,
-      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "6f4a854c13f832c3a190668da1bb14e6f10704ef18e2cb4ad6ce81111ff9244b"
+      "scenario_index": 5,
+      "scenario_sha256": "72d228463e4fd27e43dfc87384864df7cacfa939440ebee2387cbd8f470bb207",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "d8b3b22ff269d158e131412cb41ee7994a2265a9203d3cb997b35939bf1bb199"
     },
     {
-      "scenario_index": 258,
-      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "b034301749077c4117e9e89499631e2078a47ec47d8028a1b2811058c662c0f5"
+      "scenario_index": 5,
+      "scenario_sha256": "72d228463e4fd27e43dfc87384864df7cacfa939440ebee2387cbd8f470bb207",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "e866dbf82de19d4d1d004621356c56d1561178fcd37596e51259abc5136c6373"
     },
     {
-      "scenario_index": 258,
-      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
-      "evaluee": "Grok 4",
-      "response_sha256": "19b756f107d82d3251aa741d90f8f288233893d9fc75f6fd6f6595a24ebe103e"
+      "scenario_index": 5,
+      "scenario_sha256": "72d228463e4fd27e43dfc87384864df7cacfa939440ebee2387cbd8f470bb207",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "c89f0e29f9d48db63a450fef156cc93b085430fcf48f4089c2a073a529d8470d"
     },
     {
-      "scenario_index": 258,
-      "scenario_sha256": "12888a5c6186d2f4e0f7c226d7d853cb4c04a4db157a0224f2a8814251daa319",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "244c3490794ce64e1c0a56c58d1fb6ed6398755786b381e42c78b9f012085dbb"
+      "scenario_index": 5,
+      "scenario_sha256": "72d228463e4fd27e43dfc87384864df7cacfa939440ebee2387cbd8f470bb207",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "7c048af16056b02031312a0939ad2523e9789cabad811a3ed75dad09a4cfbecf"
     },
     {
-      "scenario_index": 289,
-      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "4413ad0d25ad58b0004b605a15f0cf944e137a72a2c02440326113d48ea72fb9"
+      "scenario_index": 6,
+      "scenario_sha256": "b571f06665ac375f1a77219bfab9e5022f8a532d11d1f728fb7c38d52ed19895",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "7a50c30560f857ba0f2b3cacf6ba2d97f51545aa6c3dd56d53ec2f56a4113c1e"
     },
     {
-      "scenario_index": 289,
-      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "e533180659f65502a64408ad65b0498c2df4679e1773208dd6c15f3ea7ba6648"
+      "scenario_index": 6,
+      "scenario_sha256": "b571f06665ac375f1a77219bfab9e5022f8a532d11d1f728fb7c38d52ed19895",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "9f1305f49c4d535a613900958d275c42f39eaf826d4e415bc1c012db81be2179"
     },
     {
-      "scenario_index": 289,
-      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "2d25c0e369bb9a554f61c597f2bea7e890dbdd1cc3a93e30f9421288126ad03c"
+      "scenario_index": 6,
+      "scenario_sha256": "b571f06665ac375f1a77219bfab9e5022f8a532d11d1f728fb7c38d52ed19895",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "908ba03ea3707fe2c540934403944957b5d06fa4cdfc0ebc07ab3e46cb4d8271"
     },
     {
-      "scenario_index": 289,
-      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
-      "evaluee": "Grok 4",
-      "response_sha256": "caacc56f3cfdee5e7de6c4bd05cd6861f39669fa0dc1b2aeca5484b989775fc0"
+      "scenario_index": 6,
+      "scenario_sha256": "b571f06665ac375f1a77219bfab9e5022f8a532d11d1f728fb7c38d52ed19895",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "0d7a49b77ff507329b7a490b68eaf266c9b01a4d41c062bfbe45e6e062c8fb9f"
     },
     {
-      "scenario_index": 289,
-      "scenario_sha256": "e4381fd37f85395cb601eed0ddab0f039c15295c2d1b785d84ee163485265aa9",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "67173c8312cbd1dbd483b354b4bc5e86b8d7615df8457f360a135ae2dcfeb2b1"
+      "scenario_index": 6,
+      "scenario_sha256": "b571f06665ac375f1a77219bfab9e5022f8a532d11d1f728fb7c38d52ed19895",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "0ceb8c05657974bf5584903f123024a9b59812cd5496c60c69d518b7d516bfa3"
     },
     {
-      "scenario_index": 664,
-      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "1284655d8a1e96cfa1d1d02dfb9fe28e9ef24bcdac7380f5df927e7cb557e822"
+      "scenario_index": 7,
+      "scenario_sha256": "0bc7e763f9555568891e59bba1389764a8381d81c88441d0c77423a329dbb888",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "998d7eef4878b4adc98dd27dd8e56f3458525b10c90e79bdd8070a626e6b118a"
     },
     {
-      "scenario_index": 664,
-      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "31bc481bc8f92427928ab8cebaab32ed18cc5afdb259c57cc17e6e6805fbe139"
+      "scenario_index": 7,
+      "scenario_sha256": "0bc7e763f9555568891e59bba1389764a8381d81c88441d0c77423a329dbb888",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "603fd2eeee64e2e8637b06a282f559937ba7e36f71ed69c1534838f7d3df58c4"
     },
     {
-      "scenario_index": 664,
-      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "839f2102d0662be704a856927ca45de192a37614fd92cefc791e1ad24d6a7ec3"
+      "scenario_index": 7,
+      "scenario_sha256": "0bc7e763f9555568891e59bba1389764a8381d81c88441d0c77423a329dbb888",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "5211651eacfd0d9256af2ce8566cccaddf507b11e1d85f5b46482bf5edcfb73f"
     },
     {
-      "scenario_index": 664,
-      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
-      "evaluee": "Grok 4",
-      "response_sha256": "ab3561c0ecd478e02fe61db3e07fa6c62b3795f7fd90c9f7368c107e351684c6"
+      "scenario_index": 7,
+      "scenario_sha256": "0bc7e763f9555568891e59bba1389764a8381d81c88441d0c77423a329dbb888",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "504f90a53a61fcf4d438740b8860c9cfeaaa6c1fdb499ac67efa8f72164967c8"
     },
     {
-      "scenario_index": 664,
-      "scenario_sha256": "5d12960ab7231d26d7c3563ef8213700f53f70c3f2eaff7f3bf4760514d1bac3",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "47f86382118aa4ca2af3ad106f87864972af0e2fd076a5e0985f677472d71cc0"
+      "scenario_index": 7,
+      "scenario_sha256": "0bc7e763f9555568891e59bba1389764a8381d81c88441d0c77423a329dbb888",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "2eeb4e3236b0ee8ed4e9d47ccbe1ccaad20cf1829dc3a275a248ffa5d31a92fd"
     },
     {
-      "scenario_index": 764,
-      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "d05f1505cefeff85b100610f73ac9a704f03767ea6f43b4a2280f6a2ec82ebfc"
+      "scenario_index": 8,
+      "scenario_sha256": "1a1ea9b07f274287a7f877b90b5da54fb1e987dd0df15d3019bdb773e7cfe99e",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "d50ac4780a1519c3942e6f91aec9797a00524203bade03780d947c76e16389f6"
     },
     {
-      "scenario_index": 764,
-      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "745832e4b8e0022383466a6e0a229a3c4910885db211afa4c145ebccb9900d4f"
+      "scenario_index": 8,
+      "scenario_sha256": "1a1ea9b07f274287a7f877b90b5da54fb1e987dd0df15d3019bdb773e7cfe99e",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "b30b90913a34c51d4eda2d2b8137ce8a1e96403a023bfacecdc09efb75e56168"
     },
     {
-      "scenario_index": 764,
-      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "8872bcf1cdda480df0e136ffa8b3210bfd06166c0f8d030a83e12f6690e7e46f"
+      "scenario_index": 8,
+      "scenario_sha256": "1a1ea9b07f274287a7f877b90b5da54fb1e987dd0df15d3019bdb773e7cfe99e",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "e096a303b1dc5b6b6e774b0eb51586b8dcd4e026ec9c7e4c21bf3707d1372f2f"
     },
     {
-      "scenario_index": 764,
-      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
-      "evaluee": "Grok 4",
-      "response_sha256": "661e26555f2e5f7e87205f29d1c66836319db602405c90e0bea148c19b13da9a"
+      "scenario_index": 8,
+      "scenario_sha256": "1a1ea9b07f274287a7f877b90b5da54fb1e987dd0df15d3019bdb773e7cfe99e",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "8e51b81d473d27cb1d3a80d7ad2a5e8d27849886b81f3ddb9b9dc68c8a0de4ce"
     },
     {
-      "scenario_index": 764,
-      "scenario_sha256": "f58e041ac8ab399dc449d895ee331b8c9ac3dc8c6b7f49d2d247107851e6ae6c",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "c53bf42f8ed8d2e77d9dc1177ce98d59dd37fb973e6a7e1c7837ded8160dabc0"
+      "scenario_index": 8,
+      "scenario_sha256": "1a1ea9b07f274287a7f877b90b5da54fb1e987dd0df15d3019bdb773e7cfe99e",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "73e77639bd442cc0268f7ca08dd2b2a9a5a9c4edffd73b397b345a88ecbf2c3f"
     },
     {
-      "scenario_index": 769,
-      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
-      "evaluee": "Claude 4 Sonnet",
-      "response_sha256": "cd4d35244a6769dbaf6cc05b4a0be3d17eb3331a4985e77e67a0633ffd4180d9"
+      "scenario_index": 9,
+      "scenario_sha256": "c211f9e79e7c019092ae7c1fec16a0ff41426b958d4bc81a2186e207e306b9c6",
+      "evaluee": "GPT-5.6 Luna (instant)",
+      "response_sha256": "a5e81ce0915961ddcbcf1f0ca39051dfc1286a2ec7da1c28289fcd9b88a59d2e"
     },
     {
-      "scenario_index": 769,
-      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
-      "evaluee": "GPT 4.1",
-      "response_sha256": "ede0cb780e964c4bfd6e2fb8f1ebe3995ac47ca4efa9c4ff934a7b9e1d77b762"
+      "scenario_index": 9,
+      "scenario_sha256": "c211f9e79e7c019092ae7c1fec16a0ff41426b958d4bc81a2186e207e306b9c6",
+      "evaluee": "Claude Haiku 4.5 (instant)",
+      "response_sha256": "48ae976149e92e10a3280d4b8ee0af5dc4ecf3968f06327572370ee50f970678"
     },
     {
-      "scenario_index": 769,
-      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
-      "evaluee": "Gemini 2.5 Pro",
-      "response_sha256": "79c6cc386d66f745005463c9b302e2f6deb8dd2cf918bbf9f1ddd85369e25585"
+      "scenario_index": 9,
+      "scenario_sha256": "c211f9e79e7c019092ae7c1fec16a0ff41426b958d4bc81a2186e207e306b9c6",
+      "evaluee": "Grok 4.3 (instant)",
+      "response_sha256": "a687f41bf4e5d0ecea3c8834d46b7ca28797628f07230620d443ff4053f26590"
     },
     {
-      "scenario_index": 769,
-      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
-      "evaluee": "Grok 4",
-      "response_sha256": "81353d34e9f0e00586ba67506b2091568bf2e09cfada27123756b935db55f67a"
+      "scenario_index": 9,
+      "scenario_sha256": "c211f9e79e7c019092ae7c1fec16a0ff41426b958d4bc81a2186e207e306b9c6",
+      "evaluee": "DeepSeek V4 Flash 0423 (instant)",
+      "response_sha256": "63286a389b7a409d8f7ae01ce52f3334deff9caa4a2071e9d6e38b1406d21ca4"
     },
     {
-      "scenario_index": 769,
-      "scenario_sha256": "5eb54bc337f959475c14041ecca33cb7235386a7447fb4a81cba2ebb0bb467d4",
-      "evaluee": "DeepSeek v3",
-      "response_sha256": "3f6035d031d8702756c7fad1bfba3891959986b5ec351ed6c9d2bf6a8df168e8"
+      "scenario_index": 9,
+      "scenario_sha256": "c211f9e79e7c019092ae7c1fec16a0ff41426b958d4bc81a2186e207e306b9c6",
+      "evaluee": "Gemini 3.1 Flash Lite (instant)",
+      "response_sha256": "2b6cb90d149273de1beb7bd95281f1b7a8e288ea20dd390924a908cce433916b"
     }
   ]
 }

@@ -1,7 +1,8 @@
 {
-  "experiment_version": 1,
+  "experiment_version": 2,
   "constitution": "data/constitutions/kindness.json",
   "reference_manifest": "experiments/d1_d3_local_judges/reference_manifest.json",
+  "responses": "experiments/d1_d3_local_judges/data/airisk_10x5_responses.jsonl",
   "prompts": {
     "d1_reflection": "experiments/d1_d3_local_judges/prompts/01_combined_json_reflection.md",
     "d1_judgment": "experiments/d1_d3_local_judges/prompts/01_combined_json_judgment.md",
