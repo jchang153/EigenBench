@@ -211,12 +211,6 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     upload_to_space = upload_enabled and upload_backend == "valuearena_space"
     upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
-    if upload_to_space and evaluation_mode == "direct_rating":
-        raise SystemExit(
-            "upload.backend='valuearena_space' is not supported for "
-            "evaluation.mode='direct_rating': use upload.backend='huggingface_dataset' "
-            "or update the Space to accept direct judgments."
-        )
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
     space_spec_path = None
     if upload_to_space:

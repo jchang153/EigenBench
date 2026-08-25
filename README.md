@@ -546,9 +546,9 @@ export SPACE_SECRET="your-secret"
 python scripts/run.py runs/my_run/spec.py
 ```
 
-When `upload.enabled=True`, local training is skipped. After collection, the evaluations and spec are sent to the Space which handles BTD training, bootstrap, EigenTrust, and upload to ValueArena in the background.
+When `upload.enabled=True`, local analysis is skipped. After collection, the evaluations and spec are sent to the Space, which handles protocol-specific analysis, bootstrap, EigenTrust, and upload to ValueArena in the background.
 
-The current ValueArena Space accepts pairwise BTD runs only. `upload.enabled=True` fails preflight for direct-rating specifications instead of submitting an incompatible run.
+The ValueArena Space accepts both pairwise BTD and direct-rating runs. It dispatches on `evaluation.mode`, using scenario-level bootstrap and direct trust-matrix aggregation for direct ratings.
 
 ### Manual upload
 
