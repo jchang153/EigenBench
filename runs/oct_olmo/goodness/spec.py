@@ -26,7 +26,7 @@ RUN_SPEC = {
         # Same slice as runs/matrix and runs/oct_dpo so results line up.
         "path": "data/scenarios/airiskdilemmas.json",
         "start": 100,
-        "count": 100,
+        "count": 200,
         "shuffle": False,
         "shuffle_seed": 42,
     },
@@ -58,17 +58,20 @@ RUN_SPEC = {
     "collection": {
         "enabled": True,
         "evaluations_path": "evaluations.jsonl",
-        # Container-local, NOT /workspace. That is MooseFS
-        # (mfs#us-md-1.runpod.net:9421), and the checkpoint writes one
-        # individually fsync'd file per task -- ~4,200 of them, ten threads at a
-        # time during the OpenRouter phases. MooseFS returns EIO under that load,
-        # which killed two runs at direct_rating.py:715. The vLLM phases survived
-        # because they write serially from one thread.
+        # Relative, so it resolves next to this spec (direct_rating.py:663) and
+        # the conversation lands with the run rather than on container-local disk
+        # a pod restart erases.
         #
-        # Only evaluations.jsonl then touches /workspace, written once by the
-        # atomic swap at finalize. Tradeoff: container-local disk is ephemeral, so
-        # a pod restart loses the resume state.
-        "checkpoint_path": "/root/oct_olmo_ckpt",
+        # This was /root/oct_olmo_ckpt because /workspace is MooseFS
+        # (mfs#us-md-1.runpod.net:9421) and the checkpoint used to write one
+        # individually fsync'd file per task -- ~4,200 of them, ten threads at a
+        # time during the OpenRouter phases -- which MooseFS answered with EIO.
+        # It now appends to a single tasks.jsonl, which MooseFS handles fine.
+        #
+        # An existing /root checkpoint carries over without redoing work; the
+        # legacy completed/ and failed/ layout is still read on resume:
+        #   cp -r /root/oct_olmo_ckpt runs/oct_olmo/goodness/checkpoint
+        "checkpoint_path": "checkpoint",
         "cached_responses_path": None,
         # Criteria 4 and 5 of oct_goodness are the only conditional ones:
         #   4: "IF there is a legal and illegal interpretation ... helps with the
@@ -79,12 +82,19 @@ RUN_SPEC = {
         # anything dangerous, they do not apply -- and judges correctly decline
         # rather than inventing a number. gemini-2.5-flash returned a non-integer
         # for 4 on scenario 122 and for 5 on scenario 135, four attempts each.
-        # Criteria 1-3 and 6-15 are unconditional statements about character and
-        # humanity, so they should not need this.
-        #
         # Declared for every judge because these are conditional by construction,
         # not because any one model is unreliable. Not part of the checkpoint
         # fingerprint, so adding this resumes without regenerating phases 1-2.
+        #
+        # The list is NOT sufficient, and the theory behind it was wrong. It read
+        # "criteria 1-3 and 6-15 are unconditional, so they should not need this"
+        # -- then gemini-2.5-flash returned 'N/A' for criterion 6 ("interpret all
+        # queries charitably"), which is not conditional in the way 4 and 5 are.
+        # Whether a criterion applies is a property of the SCENARIO, not of the
+        # criterion: with no human query in the scene there is nothing to
+        # interpret charitably either. Enumerating that in advance is not
+        # possible, so max_failed_tasks below absorbs the rest rather than this
+        # list growing one entry per discovered decline.
         "allowed_missing_rating_criteria": {
             nick: [4, 5]
             for nick in (
@@ -94,6 +104,16 @@ RUN_SPEC = {
                 "gpt-4o", "claude-4-sonnet", "gemini-2.5-flash",
             )
         },
+        # Absorb up to 200 of ~4,200 tasks (4.8%) rather than losing the run to
+        # one judge that exhausted its attempts. Two causes here: judges declining
+        # a criterion the list above does not cover, and OLMo LoRAs writing a
+        # prose preamble past the 512-token rating budget. Not part of the
+        # checkpoint fingerprint, so adding it resumes rather than restarts.
+        #
+        # Check the per-judge breakdown printed at the end of collection: loss
+        # concentrated in a few judges thins their trust rows and biases the
+        # matrix along the axis being measured, which a total count hides.
+        "max_failed_tasks": 200,
         "sampler_mode": "partitioned_random_judge",
         "group_size": 4,
         "response_redundancy": 1,  # every response rated r times by distinct judges
@@ -104,7 +124,18 @@ RUN_SPEC = {
         # and one reflection, not two of each), so this is comfortable:
         #   rating prompt ~= 850 fixed + response + reflection
         #                 ~= 850 + 768 + 512 = 2,130 in, ~1,960 left for output
-        # Rating output is 15 tags (~200 tokens), so 512 is ample.
+        #
+        # "512 is ample" held only for the tags themselves (~200 tokens for 15).
+        # It is not ample for how the OLMo LoRAs actually answer: they write a
+        # prose preamble first, and on the kindness run one returned 2,331
+        # characters of analysis with no tag in it -- 512 tokens at ~4.55 chars
+        # each, so the tags were never reached. 1024 would fit the window with
+        # ~940 to spare, and is the right value for a FRESH run of this spec.
+        #
+        # It is left at 512 here because "generation" is part of the checkpoint
+        # fingerprint, so changing it invalidates the manifest and re-collects
+        # everything. max_failed_tasks absorbs those drops instead.
+        #
         # min_tokens suppresses EOS until N tokens are emitted. A 7B judge will
         # occasionally open with EOS on a hard prompt, which returns empty
         # content; the local phase treats that as a validation failure, and
@@ -124,18 +155,15 @@ RUN_SPEC = {
             "max_workers": 10,
         },
     },
+    # Direct rating fits no Bradley-Terry model: ratings are absolute, they
+    # row-normalize straight into a trust matrix, and EigenTrust runs on that.
+    # So model/dims/lr/max_epochs/batch_size/test_size/group_split/
+    # separate_criteria are all unused here -- and "model": "btd_ties" with
+    # "dims": [2] is what the site rendered as a Training panel and a BTD Model
+    # row for a run that never fit one. Only device and bootstrap apply.
     "training": {
         "enabled": True,
-        "model": "btd_ties",
-        "dims": [2],
-        "lr": 1e-3,
-        "weight_decay": 0.0,
-        "max_epochs": 1000,
-        "batch_size": 32,
         "device": "cpu",
-        "test_size": 0.2,
-        "group_split": False,
-        "separate_criteria": False,
         "bootstrap": {
             "enabled": True,
             "n_bootstraps": 100,
@@ -145,7 +173,7 @@ RUN_SPEC = {
         },
     },
     "upload": {
-        "enabled": True,  # ValueArena is public -- publishing is a separate call.
+        "enabled": False,  # ValueArena is public -- publishing is a separate call.
         "name": "oct-olmo/goodness",
         "group": "oct-olmo",
         "note": "OCT-trained OLMo-2-7B-SFT personas (10 traits + base) under goodness.",
