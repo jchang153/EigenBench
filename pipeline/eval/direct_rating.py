@@ -155,6 +155,14 @@ def parse_direct_ratings(
             )
         value = int(raw_value)
         if not scale_min <= value <= scale_max:
+            # Same escape hatch as the non-integer branch, for the same reason.
+            # A judge signals "this criterion does not apply" in whatever
+            # notation it has: gemini writes 'N/A', the OLMo LoRAs write 0 --
+            # below scale_min, so it lands here instead. Both mean the tag might
+            # as well have been left out, and only the declared criteria get the
+            # benefit of the doubt.
+            if one_based in allowed_missing:
+                continue
             raise ValueError(
                 f"criterion {one_based} rating {value} is outside "
                 f"[{scale_min}, {scale_max}]"
@@ -1225,9 +1233,20 @@ def _run_local_tasks_for_phase(
                                             f"{validation_error[:120]}"
                                         )
                                     continue
+                                # Say whether the budget is why this stopped the
+                                # run. Without it an exhausted budget is
+                                # indistinguishable from no budget at all, and
+                                # the failure reads as unhandled when it was
+                                # handled 200 times already.
+                                spent = "" if failure_budget is None else (
+                                    f" Failure budget is spent "
+                                    f"({failure_budget.summary()}); raise "
+                                    f"collection.max_failed_tasks to tolerate "
+                                    f"more, or fix the cause."
+                                )
                                 raise RuntimeError(
                                     f"local generation validation failed after {max_attempts} attempts: "
-                                    f"task={task.identity}, error={validation_error}"
+                                    f"task={task.identity}, error={validation_error}.{spent}"
                                 )
                             retry.append(task)
                             continue
