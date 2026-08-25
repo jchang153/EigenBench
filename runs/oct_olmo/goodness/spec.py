@@ -60,10 +60,16 @@ RUN_SPEC = {
         #   rating prompt ~= 850 fixed + response + reflection
         #                 ~= 850 + 768 + 512 = 2,130 in, ~1,960 left for output
         # Rating output is 15 tags (~200 tokens), so 512 is ample.
+        # min_tokens suppresses EOS until N tokens are emitted. A 7B judge will
+        # occasionally open with EOS on a hard prompt, which returns empty
+        # content; the local phase treats that as a validation failure, and
+        # since retries resend the same prompt they all fail identically and the
+        # run dies. Observed on scenario 132, olmo-goodness rating
+        # gemini-2.5-flash.
         "generation": {
-            "response": {"max_tokens": 768, "temperature": 0.7},
-            "reflection": {"max_tokens": 512, "temperature": 0.2},
-            "direct_rating": {"max_tokens": 512, "temperature": 0.0},
+            "response": {"max_tokens": 768, "temperature": 0.7, "min_tokens": 16},
+            "reflection": {"max_tokens": 512, "temperature": 0.2, "min_tokens": 32},
+            "direct_rating": {"max_tokens": 512, "temperature": 0.0, "min_tokens": 64},
         },
         "openrouter": {
             "max_attempts": 4,

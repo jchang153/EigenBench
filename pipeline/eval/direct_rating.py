@@ -226,11 +226,24 @@ def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
         values = {
             "max_tokens": int(configured.get("max_tokens", phase_defaults["max_tokens"])),
             "temperature": float(configured.get("temperature", phase_defaults["temperature"])),
+            # vLLM suppresses EOS until min_tokens have been emitted. Without it a
+            # model that opens with EOS returns empty content, which the local
+            # phase treats as a validation failure -- and since the prompt is
+            # unchanged, all retries fail identically and the run dies. Defaults
+            # to 0 so existing runs are unaffected.
+            "min_tokens": int(configured.get("min_tokens", 0)),
         }
         if values["max_tokens"] <= 0:
             raise ValueError(f"collection.generation.{phase}.max_tokens must be positive")
         if values["temperature"] < 0:
             raise ValueError(f"collection.generation.{phase}.temperature must be non-negative")
+        if values["min_tokens"] < 0:
+            raise ValueError(f"collection.generation.{phase}.min_tokens must be non-negative")
+        if values["min_tokens"] > values["max_tokens"]:
+            raise ValueError(
+                f"collection.generation.{phase}.min_tokens ({values['min_tokens']}) "
+                f"exceeds max_tokens ({values['max_tokens']})"
+            )
         resolved[phase] = values
     return resolved
 
@@ -1009,6 +1022,7 @@ def _run_local_tasks_for_phase(
                     params = SamplingParams(
                         max_tokens=phase_cfg["max_tokens"],
                         temperature=phase_cfg["temperature"],
+                        min_tokens=phase_cfg.get("min_tokens", 0),
                     )
                     if verbose:
                         print(f"  vLLM {pending[0].identity['stage']}: judge/model={nick} n={len(pending)}")
