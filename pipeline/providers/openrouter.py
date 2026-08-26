@@ -371,12 +371,48 @@ def _validate_completion(
             request_id=request_id,
         )
         raise _AttemptFailure(details)
+    if finish_reason == "length":
+        details = OpenRouterErrorDetails(
+            model=model,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type="invalid_response",
+            message="OpenRouter response reached max_tokens before completion",
+            retryable=True,
+            request_id=request_id,
+        )
+        raise _AttemptFailure(details)
 
     message_obj = getattr(choice, "message", None) or choice_data.get("message")
     message_data = _object_to_dict(message_obj)
     content = getattr(message_obj, "content", None) if message_obj is not None else None
     if content is None:
         content = message_data.get("content")
+    refusal = getattr(message_obj, "refusal", None) if message_obj is not None else None
+    if refusal is None:
+        refusal = message_data.get("refusal")
+    if finish_reason == "content_filter":
+        details = OpenRouterErrorDetails(
+            model=model,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type="invalid_response",
+            message="OpenRouter response was blocked by a content filter",
+            retryable=True,
+            request_id=request_id,
+        )
+        raise _AttemptFailure(details)
+    if isinstance(refusal, str) and refusal.strip():
+        details = OpenRouterErrorDetails(
+            model=model,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            error_type="invalid_response",
+            message="Provider refused the request",
+            retryable=True,
+            request_id=request_id,
+        )
+        raise _AttemptFailure(details)
 
     if not isinstance(content, str) or not content.strip():
         details = OpenRouterErrorDetails(
