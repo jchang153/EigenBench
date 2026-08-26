@@ -418,9 +418,13 @@ def build_index_entry(name: str, meta: dict, summary: list[dict], group: str | N
     dataset_path = ds.get("path", "")
     scenario_name = Path(dataset_path).stem if dataset_path else str(ds.get("id") or "")
     scenario_name = scenario_name.removeprefix("oct_")
-    start = ds.get("start", 0)
-    count = ds.get("count", 0)
-    scenario_range = f"{scenario_name} [{start}-{start + count}]" if scenario_name else ""
+    start = int(ds.get("start", 0) or 0)
+    count_value = ds.get("count")
+    scenario_range = scenario_name
+    if scenario_name and count_value is not None:
+        count = int(count_value)
+        if count > 0:
+            scenario_range = f"{scenario_name} [{start}-{start + count - 1}]"
 
     mode = str(meta.get("evaluation_mode") or "pairwise_btd")
     direct_cfg = meta.get("evaluation", {}).get("direct_rating", {})
