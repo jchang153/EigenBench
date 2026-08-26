@@ -152,10 +152,12 @@ class VLLMEngineManager:
         base_model_id: str,
         enable_lora: bool = False,
         lora_count: int = 0,
+        max_model_len: int = 8192,
     ):
         self.base_model_id = base_model_id
         self.enable_lora = enable_lora
         self.lora_count = int(lora_count)
+        self.max_model_len = int(max_model_len)
         self.llm: Optional[LLM] = None
 
     def __enter__(self) -> LLM:
@@ -164,7 +166,7 @@ class VLLMEngineManager:
             "model": self.base_model_id,
             "gpu_memory_utilization": 0.9,
             "enforce_eager": True,
-            "max_model_len": 8192,
+            "max_model_len": self.max_model_len,
         }
         if self.enable_lora:
             engine_args.update({

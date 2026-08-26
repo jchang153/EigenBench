@@ -20,6 +20,7 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG = EXPERIMENT_DIR / "config.json"
 DEFAULT_OUTPUT_DIR = ROOT / "runs/d1_d3_local_judges"
 PROMPT_VERSION = "d1-d3-local-v1"
+OLMO_2_REPO_ID = "allenai/OLMo-2-1124-7B-Instruct"
 
 
 @dataclass(frozen=True)
@@ -829,7 +830,10 @@ def _run_judge(
 
     criteria_text = _criteria_payload(criteria, criterion_ids)
     print(f"\nJudge: {judge['name']} ({judge['model']['repo_id']})")
-    with VLLMEngineManager(base_info["base_model_path"]) as llm:
+    max_model_len = 4096 if judge["model"]["repo_id"] == OLMO_2_REPO_ID else 8192
+    with VLLMEngineManager(
+        base_info["base_model_path"], max_model_len=max_model_len
+    ) as llm:
         d1_reflections = _build_d1_reflection_tasks(
             judge, cells, templates["d1_reflection"], criteria_text
         )
