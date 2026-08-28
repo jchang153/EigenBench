@@ -262,7 +262,55 @@ def resolve_allowed_missing_rating_criteria(
     return resolved
 
 
-def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
+def _validated_phase_values(phase: str, configured: dict, defaults: dict, where: str) -> dict:
+    values = {
+        "max_tokens": int(configured.get("max_tokens", defaults["max_tokens"])),
+        "temperature": float(configured.get("temperature", defaults["temperature"])),
+        # vLLM suppresses EOS until min_tokens have been emitted. Without it a
+        # model that opens with EOS returns empty content, which the local
+        # phase treats as a validation failure -- and since the prompt is
+        # unchanged, all retries fail identically and the run dies. Defaults
+        # to 0 so existing runs are unaffected.
+        "min_tokens": int(configured.get("min_tokens", defaults.get("min_tokens", 0))),
+    }
+    if values["max_tokens"] <= 0:
+        raise ValueError(f"{where}.max_tokens must be positive")
+    if values["temperature"] < 0:
+        raise ValueError(f"{where}.temperature must be non-negative")
+    if values["min_tokens"] < 0:
+        raise ValueError(f"{where}.min_tokens must be non-negative")
+    if values["min_tokens"] > values["max_tokens"]:
+        raise ValueError(
+            f"{where}.min_tokens ({values['min_tokens']}) "
+            f"exceeds max_tokens ({values['max_tokens']})"
+        )
+    return values
+
+
+def resolve_direct_generation_settings(
+    collection_cfg: dict,
+    *,
+    model_nicks: list[str] | None = None,
+) -> dict[str, dict]:
+    """Resolve per-phase generation budgets, with optional per-model overrides.
+
+    A single budget per phase has to be legal for the tightest context window in
+    the run. OLMo-2's is 4096 covering prompt and completion, so a run mixing it
+    with OpenRouter judges caps those judges at a limit that has nothing to do
+    with them -- and the response budget shapes what every judge then rates.
+
+    ``generation.<phase>.per_model`` overrides the phase budget for named
+    models; anything unnamed keeps the phase value. The key is the model's nick
+    as written in ``models``, and the model it applies to is whichever one
+    produces that phase's text: the evaluee for ``response``, the judge for
+    ``reflection`` and ``direct_rating``.
+
+    ``per_model`` is only present in the returned settings when a spec actually
+    sets one. The resolved dict is part of the checkpoint fingerprint, so
+    emitting an empty key would invalidate every checkpoint written before this
+    existed.
+    """
+
     legacy_max_tokens = int(collection_cfg.get("max_tokens", 4096))
     has_legacy_max_tokens = "max_tokens" in collection_cfg
     generation = collection_cfg.get("generation", {}) or {}
@@ -280,29 +328,53 @@ def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
     resolved: dict[str, dict] = {}
     for phase, phase_defaults in defaults.items():
         configured = generation.get(phase, {}) or {}
-        values = {
-            "max_tokens": int(configured.get("max_tokens", phase_defaults["max_tokens"])),
-            "temperature": float(configured.get("temperature", phase_defaults["temperature"])),
-            # vLLM suppresses EOS until min_tokens have been emitted. Without it a
-            # model that opens with EOS returns empty content, which the local
-            # phase treats as a validation failure -- and since the prompt is
-            # unchanged, all retries fail identically and the run dies. Defaults
-            # to 0 so existing runs are unaffected.
-            "min_tokens": int(configured.get("min_tokens", 0)),
-        }
-        if values["max_tokens"] <= 0:
-            raise ValueError(f"collection.generation.{phase}.max_tokens must be positive")
-        if values["temperature"] < 0:
-            raise ValueError(f"collection.generation.{phase}.temperature must be non-negative")
-        if values["min_tokens"] < 0:
-            raise ValueError(f"collection.generation.{phase}.min_tokens must be non-negative")
-        if values["min_tokens"] > values["max_tokens"]:
+        values = _validated_phase_values(
+            phase, configured, phase_defaults, f"collection.generation.{phase}"
+        )
+
+        overrides = configured.get("per_model", {}) or {}
+        if not isinstance(overrides, dict):
             raise ValueError(
-                f"collection.generation.{phase}.min_tokens ({values['min_tokens']}) "
-                f"exceeds max_tokens ({values['max_tokens']})"
+                f"collection.generation.{phase}.per_model must be a mapping of "
+                "model nick to settings"
             )
+        per_model: dict[str, dict] = {}
+        for nick, override in overrides.items():
+            if model_nicks is not None and nick not in model_nicks:
+                raise ValueError(
+                    f"collection.generation.{phase}.per_model names {nick!r}, "
+                    f"which is not in models: {sorted(model_nicks)}"
+                )
+            if not isinstance(override, dict):
+                raise ValueError(
+                    f"collection.generation.{phase}.per_model[{nick!r}] must be a mapping"
+                )
+            # Each override inherits the phase value for anything it omits, so a
+            # spec can raise max_tokens alone without restating the temperature.
+            per_model[nick] = _validated_phase_values(
+                phase,
+                override,
+                values,
+                f"collection.generation.{phase}.per_model[{nick!r}]",
+            )
+        if per_model:
+            values["per_model"] = per_model
+
         resolved[phase] = values
     return resolved
+
+
+def phase_settings_for_cfg(phase_cfg: dict, nick: str) -> dict:
+    """The budget one model runs under, given a phase's resolved settings."""
+
+    override = phase_cfg.get("per_model", {}).get(nick)
+    return override if override is not None else phase_cfg
+
+
+def phase_settings_for(generation: dict[str, dict], phase: str, nick: str) -> dict:
+    """The budget one model runs under for one phase."""
+
+    return phase_settings_for_cfg(generation[phase], nick)
 
 
 def resolve_direct_sampling_settings(
@@ -661,7 +733,10 @@ def collect_direct_ratings(
         num_models=len(models),
         include_self=include_self,
     )
-    generation = resolve_direct_generation_settings(collection_cfg)
+    generation = resolve_direct_generation_settings(
+        collection_cfg,
+        model_nicks=list(models),
+    )
     settings = _fallback_openrouter_settings(collection_cfg)
     criteria_text = "\n".join(criteria)
     model_nicks = list(models)
@@ -776,15 +851,17 @@ def collect_direct_ratings(
                 "model": model_path,
                 "prompt_version": DIRECT_PROMPT_VERSION,
             }
+            # The evaluee writes the response, so it sets the budget.
+            phase_cfg = phase_settings_for(generation, "response", eval_nick)
             response_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, cfg=phase_cfg: _call_openrouter(
                         model_path,
                         messages,
-                        generation["response"]["max_tokens"],
+                        cfg["max_tokens"],
                         settings,
-                        temperature=generation["response"]["temperature"],
+                        temperature=cfg["temperature"],
                     ),
                 )
             )
@@ -873,15 +950,17 @@ def collect_direct_ratings(
                 "model": model_path,
                 "prompt_version": DIRECT_PROMPT_VERSION,
             }
+            # The judge writes the reflection, so it sets the budget.
+            phase_cfg = phase_settings_for(generation, "reflection", judge_nick)
             reflection_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, cfg=phase_cfg: _call_openrouter(
                         model_path,
                         messages,
-                        generation["reflection"]["max_tokens"],
+                        cfg["max_tokens"],
                         settings,
-                        temperature=generation["reflection"]["temperature"],
+                        temperature=cfg["temperature"],
                     ),
                 )
             )
@@ -956,15 +1035,17 @@ def collect_direct_ratings(
                 "model": model_path,
                 "prompt_version": DIRECT_PROMPT_VERSION,
             }
+            # The judge emits the ratings, so it sets the budget.
+            phase_cfg = phase_settings_for(generation, "direct_rating", judge_nick)
             rating_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages, validator=validator: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, validator=validator, cfg=phase_cfg: _call_openrouter(
                         model_path,
                         messages,
-                        generation["direct_rating"]["max_tokens"],
+                        cfg["max_tokens"],
                         settings,
-                        temperature=generation["direct_rating"]["temperature"],
+                        temperature=cfg["temperature"],
                         response_validator=validator,
                     ),
                 )
@@ -1134,6 +1215,9 @@ def _run_local_tasks_for_phase(
         ) as llm:
             lora_requests = prepare_lora_requests(llm, base_info.get("loras", {}))
             for nick in _models_in_local_group(base_info):
+                # Batches are already grouped per nick, so a per-model budget
+                # costs nothing here -- SamplingParams is built inside this loop.
+                nick_cfg = phase_settings_for_cfg(phase_cfg, nick)
                 phase_tasks = tasks_by_model.get(nick, [])
                 # Stable 1-based position in this judge's queue for this phase.
                 # phase_tasks derives from the assignment list, which the
@@ -1162,9 +1246,9 @@ def _run_local_tasks_for_phase(
                         for task in pending
                     ]
                     params = SamplingParams(
-                        max_tokens=phase_cfg["max_tokens"],
-                        temperature=phase_cfg["temperature"],
-                        min_tokens=phase_cfg.get("min_tokens", 0),
+                        max_tokens=nick_cfg["max_tokens"],
+                        temperature=nick_cfg["temperature"],
+                        min_tokens=nick_cfg.get("min_tokens", 0),
                     )
                     if verbose:
                         print(f"  vLLM {pending[0].identity['stage']}: judge/model={nick} n={len(pending)}")
@@ -1417,6 +1501,8 @@ __all__ = [
     "direct_rating_validator",
     "estimate_direct_calls",
     "parse_direct_ratings",
+    "phase_settings_for",
+    "phase_settings_for_cfg",
     "resolve_allowed_missing_rating_criteria",
     "resolve_direct_generation_settings",
     "resolve_direct_sampling_settings",
