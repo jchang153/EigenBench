@@ -34,7 +34,7 @@ RUN_SPEC = {
         # Same slice as runs/matrix and runs/oct_dpo so results line up.
         "path": "data/scenarios/airiskdilemmas.json",
         "start": 100,
-        "count": 100,
+        "count": 200,
         "shuffle": False,
         "shuffle_seed": 42,
     },
