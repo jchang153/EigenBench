@@ -237,7 +237,7 @@ RUN_SPEC = {
     },
     "upload": {
         "enabled": True,  # ValueArena is public -- publishing is a separate call.
-        "name": "oct-olmo/goodness",
+        "name": "oct-olmo/goodness-v2",
         "group": "oct-olmo",
         "note": "OCT-trained OLMo-2-7B-SFT personas (11 traits + base) under goodness.",
     },
