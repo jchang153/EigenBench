@@ -115,10 +115,23 @@ def parse_direct_ratings(
     scale_min: int = 1,
     scale_max: int = 10,
     allowed_missing_one_based: frozenset[int] = frozenset(),
+    min_rated: int = 0,
 ) -> dict[int, int]:
-    """Parse and strictly validate one rating response.
+    """Parse and validate one rating response.
 
     Returned keys are zero-based criterion indices.
+
+    ``min_rated`` is the floor for a partial answer. At 0 every criterion the
+    spec did not declare allowed-missing is required, and one absent rating
+    discards the response -- which discards the ratings that were present with
+    it. A judge that rated nine of ten criteria produced nine real judgments,
+    and the tenth being absent is recorded in ``missing_criterion_indices``
+    either way. Set it to the fewest ratings a judgment must carry to be worth
+    keeping, and anything at or above that is kept whole.
+
+    A floor rather than "accept anything" because a response carrying one
+    rating out of ten is a formatting failure wearing a judgment's clothes, and
+    its mean would sit on the same axis as a judgment built from all ten.
     """
 
     if not isinstance(response, str) or not response.strip():
@@ -186,13 +199,19 @@ def parse_direct_ratings(
     actual = set(parsed)
     missing = sorted((expected - actual) - allowed_missing)
     extra = sorted(actual - expected)
-    if missing or extra:
-        details = []
+    # A criterion number outside the declared range is always a format error --
+    # the judge answered a question that was not asked -- so it raises whatever
+    # the floor is.
+    if extra:
+        details = [f"unexpected criteria {extra}"]
         if missing:
-            details.append(f"missing criteria {missing}")
-        if extra:
-            details.append(f"unexpected criteria {extra}")
+            details.insert(0, f"missing criteria {missing}")
         raise ValueError("; ".join(details))
+    if missing and (min_rated <= 0 or len(parsed) < min_rated):
+        detail = f"missing criteria {missing}"
+        if min_rated > 0:
+            detail += f"; only {len(parsed)} of {num_criteria} rated, floor is {min_rated}"
+        raise ValueError(detail)
     return {criterion - 1: parsed[criterion] for criterion in sorted(parsed)}
 
 
@@ -201,6 +220,7 @@ def direct_rating_validator(
     scale_min: int = 1,
     scale_max: int = 10,
     allowed_missing_one_based: frozenset[int] = frozenset(),
+    min_rated: int = 0,
 ) -> Callable[[str], str | None]:
     def validate(response: str) -> str | None:
         try:
@@ -210,12 +230,51 @@ def direct_rating_validator(
                 scale_min=scale_min,
                 scale_max=scale_max,
                 allowed_missing_one_based=allowed_missing_one_based,
+                min_rated=min_rated,
             )
         except ValueError as exc:
             return str(exc)
         return None
 
     return validate
+
+
+def resolve_min_rated_criteria(collection_cfg: dict, num_criteria: int) -> int:
+    """How many ratings a judgment must carry to be kept.
+
+    Accepts a count, or ``"majority"`` for strictly more than half -- which is
+    ``num_criteria // 2 + 1`` at either parity, 6 of 10 and 5 of 8. Prefer the
+    word: it survives a change to ``constitution.num_criteria``, where a
+    hardcoded 6 would quietly stop being a majority if the count went up.
+
+    0 keeps the original rule: every criterion not declared allowed-missing is
+    required, and one absent rating discards the whole response. Not part of
+    the checkpoint fingerprint, so changing it resumes an interrupted run --
+    and because only completed tasks are replayed from the checkpoint, tasks
+    that failed under a stricter floor are retried under the looser one.
+    """
+
+    value = collection_cfg.get("min_rated_criteria", 0)
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        if value.strip().lower() != "majority":
+            raise ValueError(
+                "collection.min_rated_criteria must be a count or 'majority'; "
+                f"got {value!r}"
+            )
+        return num_criteria // 2 + 1
+    if isinstance(value, bool):
+        raise ValueError("collection.min_rated_criteria must be a count or 'majority'")
+    min_rated = int(value)
+    if min_rated < 0:
+        raise ValueError("collection.min_rated_criteria must be non-negative")
+    if min_rated > num_criteria:
+        raise ValueError(
+            f"collection.min_rated_criteria ({min_rated}) exceeds the "
+            f"{num_criteria} criteria in the constitution"
+        )
+    return min_rated
 
 
 def resolve_allowed_missing_rating_criteria(
@@ -745,6 +804,7 @@ def collect_direct_ratings(
         model_nicks=model_nicks,
         num_criteria=len(criteria),
     )
+    min_rated_criteria = resolve_min_rated_criteria(collection_cfg, len(criteria))
     # One budget for the whole run, so the limit bounds total loss rather than
     # loss per phase. 0 keeps the original behavior: any permanent failure stops
     # collection. Not part of the checkpoint fingerprint, so raising it resumes
@@ -997,6 +1057,7 @@ def collect_direct_ratings(
             scale_min,
             scale_max,
             allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
+            min_rated=min_rated_criteria,
         )
         for judge_nick in model_nicks
     }
@@ -1098,6 +1159,7 @@ def collect_direct_ratings(
                     scale_min=scale_min,
                     scale_max=scale_max,
                     allowed_missing_one_based=allowed_missing_by_judge[judge_nick],
+                    min_rated=min_rated_criteria,
                 )
             except ValueError as exc:
                 # Content that passed the validator when it was collected can
@@ -1504,6 +1566,7 @@ __all__ = [
     "phase_settings_for",
     "phase_settings_for_cfg",
     "resolve_allowed_missing_rating_criteria",
+    "resolve_min_rated_criteria",
     "resolve_direct_generation_settings",
     "resolve_direct_sampling_settings",
 ]

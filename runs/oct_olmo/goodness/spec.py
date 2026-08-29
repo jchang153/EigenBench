@@ -101,6 +101,10 @@ RUN_SPEC = {
         # concentrated in a few judges thins their trust rows and biases the
         # matrix along the axis being measured, which a total count hides.
         "max_failed_tasks": 200,
+        # Keep a judgment that rated more than half its criteria rather than
+        # discarding the ratings it did give; the rest go to
+        # missing_criterion_indices.
+        "min_rated_criteria": "majority",
         "sampler_mode": "partitioned_random_judge",
         "group_size": 4,
         "response_redundancy": 1,  # every response rated r times by distinct judges
