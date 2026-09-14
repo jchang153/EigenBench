@@ -190,7 +190,11 @@ def direct_rating_solver(
             )
             return output.completion
 
-        response = await response_pool.get((s_idx, eval_nick), make_response)
+        supplied = md.get("response")
+        if isinstance(supplied, str) and supplied.strip():
+            response = supplied
+        else:
+            response = await response_pool.get((s_idx, eval_nick), make_response)
 
         judge = resolve_model(judge_nick)
         reflection_messages = [
@@ -275,6 +279,43 @@ def criterion_label(index: int, criterion: str) -> str:
     if len(text) > 42:
         text = text[:41].rstrip() + "…"
     return f"{index + 1}. {text}" if text else f"Criterion {index + 1}"
+
+
+@solver
+def response_only_solver(
+    *,
+    resolve_model: Callable[[str], Model],
+    generation_cfg: dict,
+    max_attempts: int,
+    cache_enabled: bool,
+) -> Solver:
+    """Generate one evaluee response per sample, and nothing else."""
+
+    config = phase_config(generation_cfg)
+
+    async def solve(state: TaskState, generate: Generate) -> TaskState:
+        md = state.metadata
+        s_idx = int(md["scenario_index"])
+        eval_nick = md["eval_nick"]
+        messages = [
+            ChatMessageSystem(content=RESPONSE_SYSTEM_MESSAGE),
+            ChatMessageUser(content=md["scenario"]),
+        ]
+        output = await generate_validated(
+            resolve_model(eval_nick),
+            messages,
+            config=config,
+            max_attempts=max_attempts,
+            cache_enabled=cache_enabled,
+            validator=None,
+            identity=f"response scenario_index={s_idx} evaluee={eval_nick}",
+        )
+        state.messages = messages + [output.message]
+        state.output = output
+        state.store.set(STORE_RESPONSE, output.completion)
+        return state
+
+    return solve
 
 
 @scorer(metrics=[mean()])
