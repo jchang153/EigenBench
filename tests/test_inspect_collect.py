@@ -346,3 +346,36 @@ def test_phased_matches_single_task(run_dir):
     assert info["log_file"].endswith(".eval")
     # One log per judge.
     assert len(info.get("log_files", [info["log_file"]])) == len(NICKS)
+
+def test_pairwise_prompts_match_legacy():
+    """New pairwise records must be interchangeable with the legacy ones."""
+
+    import pipeline.eval.criteria_collectors as cc
+    from inspect_pipeline.pairwise import build_comparison_user, build_reflection_user
+
+    captured = []
+
+    def fake(model_name, messages, max_tokens=None, **kw):
+        captured.append(messages)
+        n = len(captured)
+        if n <= 2:
+            return f"RESP{n}"
+        if n <= 4:
+            return f"REFL{n - 2}"
+        return "<criterion_1_choice>1</criterion_1_choice>"
+
+    original = cc.get_model_response
+    cc.get_model_response = fake
+    try:
+        cc.collect_group_criteria_evaluations(
+            criteria=["c1"], scenario="SCENARIO", scenario_index=0,
+            models={"a": "x/a", "b": "x/b"}, judge_idx=0, eval_idxs=[0, 1],
+        )
+    finally:
+        cc.get_model_response = original
+
+    assert captured[2][1]["content"] == build_reflection_user("c1", "SCENARIO", "RESP1")
+    assert captured[4][1]["content"] == build_comparison_user(
+        "c1", "SCENARIO", "RESP1", "REFL1", "RESP2", "REFL2"
+    )
+
