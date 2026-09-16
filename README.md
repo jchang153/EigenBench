@@ -21,14 +21,14 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Mixed HF Local + OpenRouter](#spec-mode-mixed-hf-local--openrouter)
   - [Spec Mode: All-to-All Collection](#spec-mode-all-to-all-collection)
   - [Spec Mode: Direct Rating](#spec-mode-direct-rating)
-- [Inspect AI Collection Engine](#inspect-ai-collection-engine-direct-rating)
+- [Inspect AI Collection Engine](#inspect-ai-collection-engine)
 - [Bootstrap Resampling](#bootstrap-resampling)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
 - [ValueArena](#valuearena)
   - [Auto-upload via Space](#auto-upload-via-space)
-  - [Linking the Inspect log viewer](#linking-the-inspect-log-viewer)
+  - [The Inspect log viewer](#the-inspect-log-viewer)
   - [Manual upload](#manual-upload)
 - [Citation](#citation)
 
@@ -96,7 +96,7 @@ inspect eval inspect_pipeline/eigenbench.py -T spec=runs/my_run/spec.py \
     --log-dir runs/my_run/inspect_logs
 ```
 
-Collection runs as a native Inspect eval — same protocol and same `evaluations.jsonl`, but with Inspect's providers, retries, resume, and log viewer. See [Inspect AI Collection Engine](#inspect-ai-collection-engine-direct-rating).
+Collection runs as a native Inspect eval — same protocol and same `evaluations.jsonl`, but with Inspect's providers, retries, resume, and log viewer. See [Inspect AI Collection Engine](#inspect-ai-collection-engine).
 
 Mixed-model runs work out of the box — just prefix local model paths with `hf_local:` in your spec. The pipeline auto-detects and batches local models through vLLM while routing API models through OpenRouter.
 
@@ -437,7 +437,7 @@ does not use the pairwise `groups` setting.
 
 These are request counts, not token-cost estimates. A BTD comparison prompt contains two responses and two reflections, whereas a direct-rating prompt contains one of each; direct ratings also default to a smaller 512-token output ceiling. Provider retries can increase actual HTTP requests beyond the logical counts, while checkpoint resumption prevents completed tasks from being repeated.
 
-## Inspect AI Collection Engine (direct rating)
+## Inspect AI Collection Engine
 
 Direct-rating runs can be collected as a native [Inspect AI](https://inspect.aisi.org.uk) eval. The protocol is unchanged — sampling plans, prompts, and rating validation are imported from `pipeline/eval/direct_rating.py`, and the exported output is the same `evaluations.jsonl` — but Inspect replaces the transport: provider clients, concurrency, retries, caching, logs, and the transcript viewer.
 
@@ -488,6 +488,67 @@ python scripts/run_inspect.py runs/my_run/spec.py --estimate-calls   # plan only
 python scripts/run_inspect.py runs/my_run/spec.py
 ```
 
+### Adding a model to a finished run
+
+A finished run has already paid for its judge × evaluee count matrix. Adding a
+model only has to fill a new row and column:
+
+```bash
+# collect only the judgments the new model needs
+inspect eval inspect_pipeline/extend.py \
+    -T spec=runs/my_run/spec.py \
+    -T new_model="Claude Sonnet 4.5" \
+    -T model_id=anthropic/claude-sonnet-4-5 \
+    --log-dir runs/my_run/inspect_logs
+
+# add them to the run
+python scripts/export_evaluations.py runs/my_run/inspect_logs \
+    -o runs/my_run/evaluations.jsonl --append
+
+# add the new model to the spec's `models`, then redo the analysis: scores are
+# computed over the whole record set, so every model's Elo shifts
+python scripts/run.py runs/my_run/spec.py --collection-enabled false
+
+# publish to ValueArena
+python scripts/upload_results.py --name "my-run" --run-dir runs/my_run/
+```
+
+The plan is built from the run's existing records, so existing cells are never
+recollected. `scripts/add_model.py` runs both steps in one command, and
+`--dry-run` prints the plan without spending anything:
+
+```bash
+python scripts/add_model.py runs/my_run/spec.py \
+    --model "Claude Sonnet 4.5" --id anthropic/claude-sonnet-4-5 --dry-run
+```
+
+Both protocols work. The plan targets the two axes differently, because the
+samplers do: how often a model is *rated* is near-uniform by construction, so
+the new column matches the median existing column, while judging load varies a
+lot under random judge selection, so the new row matches the mean.
+
+**Direct rating.** The new model gets a row and a column. Where it acts as
+judge, the responses it rates already exist and are reused verbatim — a new
+judge has to see the same text the others saw, so regenerating would change
+what is being compared. Those edges then cost a reflection and a rating instead
+of a full generation. On a 15-model, 200-scenario run that is about 950
+generations against roughly 9,500 to rebuild the grid.
+
+**Pairwise BTD.** A comparison rates two models at once, so each one adds a
+count to two cells. Opponents are spread evenly to keep the new row and column
+on target. Note that this also raises the existing models' counts: you cannot
+compare against a model without rating it. The old records are untouched, but
+everyone's totals go up.
+
+Scenario placement for new edges is random over the scenarios available, not a
+copy of the original sampler's layout. Copying it is not possible anyway —
+both samplers depend on the model count, so re-running either with one extra
+model changes about 90% of the existing edges.
+
+`scripts/run_inspect.py` checks the spec covers every model in the records
+before handing off to the training stage, so a forgotten entry fails there
+rather than inside aggregation.
+
 ### Spec additions
 
 Specs are the same as for `scripts/run.py`, plus:
@@ -514,7 +575,7 @@ Specs are the same as for `scripts/run.py`, plus:
 - **Local models run phased.** A judgment needs both its evaluee and its judge, so the edge-per-sample task keeps every model live at once — free for hosted models, fatal on one GPU. When a spec has `hf_local:` models, collection instead runs every response (one model at a time), then every judgment (one judge at a time), terminating each vLLM server before the next starts. `collection.inspect.phased` forces it either way, and `tests/test_inspect_collect.py::test_phased_matches_single_task` pins both paths to identical records.
 - **Local models**: `hf_local:` refs map to Inspect's `vllm/` provider, which launches `vllm serve` (or attaches to `VLLM_BASE_URL`). LoRA adapters use the provider's `vllm/<base>:<adapter>[@revision]` syntax; adapter repos resolve their base from `adapter_config.json` (or an explicit `base_model_id`), and legacy subfolder adapters are snapshot-downloaded and referenced by local path. Throughput relies on the vLLM server's continuous batching rather than the legacy three-phase offline batching — benchmark on a real GPU run before switching large jobs.
 - **Downstream is unchanged**: the exported `evaluations.jsonl` feeds the same aggregation, EigenTrust, bootstrap, and ValueArena upload code.
-- **Pairwise BTD runs are not supported** by this engine; use `scripts/run.py`.
+- **Pairwise BTD**: a whole run still belongs to `scripts/run.py`; this engine collects pairwise only when [adding a model](#adding-a-model-to-a-finished-run) to a finished run. Its prompts and choice parsing come from `pipeline/eval/criteria_collectors.py` unchanged, so those records are interchangeable with the legacy ones.
 
 A committed example lives in `runs/example_inspect/`. `tests/test_inspect_collect.py` runs both paths end to end on scripted `mockllm` models and feeds the export through the legacy trust-matrix analysis.
 
@@ -594,6 +655,8 @@ EigenBench/
 │   ├── eigenbench.py             # the @task: `inspect eval inspect_pipeline/eigenbench.py`
 │   ├── phases.py                 # solvers: response (pooled) -> reflection -> rating
 │   ├── phased.py                 # per-model tasks for runs that cannot hold every model
+│   ├── pairwise.py               # pairwise BTD comparisons on the Inspect engine
+│   ├── extend.py                 # plan + collect one more model into a finished run
 │   ├── export.py                 # eval log -> evaluations.jsonl contract
 │   ├── model_mapping.py          # spec model refs -> Inspect provider names
 │   └── collect.py                # programmatic driver used by run_inspect.py
@@ -605,6 +668,7 @@ EigenBench/
 │   ├── run_inspect.py            # Inspect engine: collect + export + train in one
 │   ├── export_evaluations.py     # Inspect engine: eval log -> evaluations.jsonl
 │   ├── publish_inspect_bundle.py # Inspect engine: bundle logs into a static viewer
+│   ├── add_model.py              # Inspect engine: add a model to a finished run
 │   └── upload_results.py         # manual upload to ValueArena
 ├── notebooks/
 │   ├── mixed_openrouter_local_collection.ipynb  # legacy notebook (now integrated into CLI)

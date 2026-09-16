@@ -347,6 +347,71 @@ def test_phased_matches_single_task(run_dir):
     # One log per judge.
     assert len(info.get("log_files", [info["log_file"]])) == len(NICKS)
 
+
+def test_extend_adds_a_model(run_dir, monkeypatch):
+    """Adding a model fills a new row and column without redoing the rest."""
+
+    import numpy as np
+    from inspect_ai.model import ModelOutput, get_model
+
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import (
+        count_matrix, detect_mode, extend_run, model_names, plan_addition,
+        projected_counts,
+    )
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+    base = collect_direct_ratings_inspect(str(spec_path))
+    mode = detect_mode(base)
+    before = np.array(count_matrix(base, mode, len(model_names(base, mode))))
+
+    # The plan is decided before any inference, so it can be checked on its own.
+    plan = plan_addition(base, "delta", include_self=True, seed=7)
+    after_planned = np.array(projected_counts(base, plan))
+    assert after_planned.shape == (before.shape[0] + 1,) * 2
+    # Existing counts are untouched: no work is repeated.
+    assert (after_planned[:-1, :-1] == before).all()
+    # Edges where the new model judges reuse a response that already exists.
+    assert any(e.response is not None for e in plan.as_judge)
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            content = "[delta#1] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            content = "[delta] reflection"
+        else:
+            content = "\n".join(
+                f"<criterion_{i}_rating>5</criterion_{i}_rating>"
+                for i in range(1, NUM_CRITERIA + 1)
+            )
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    delta = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    result = extend_run(str(spec_path), "delta", delta, include_self=True, seed=7)
+
+    merged = [
+        json.loads(line)
+        for line in (tmp_path / "evaluations.jsonl").read_text().splitlines()
+    ]
+    assert len(merged) == len(base) + result["collected"]
+
+    names = model_names(merged, mode)
+    assert names[-1] == "delta"
+    after = np.array(count_matrix(merged, mode, len(names)))
+    assert (after[:-1, :-1] == before).all(), "existing cells must not change"
+    assert after[:, -1].sum() > 0 and after[-1, :].sum() > 0, "new row and column filled"
+
+    # Every new record is well formed for the analysis layer.
+    new = [r for r in merged if "delta" in (r["judge"]["name"], r["evaluee"]["name"])]
+    assert len(new) == result["collected"]
+    for r in new:
+        assert [e["criterion_index"] for e in r["ratings"]] == list(range(NUM_CRITERIA))
+
+
 def test_pairwise_prompts_match_legacy():
     """New pairwise records must be interchangeable with the legacy ones."""
 
@@ -379,3 +444,103 @@ def test_pairwise_prompts_match_legacy():
         "c1", "SCENARIO", "RESP1", "REFL1", "RESP2", "REFL2"
     )
 
+
+def test_pairwise_extend_collects(tmp_path):
+    """A pairwise run can be extended on the Inspect engine."""
+
+    import numpy as np
+    from inspect_ai.model import ModelOutput, get_model
+
+    from inspect_pipeline.extend import (
+        PAIRWISE, count_matrix, extend_run, model_names, plan_addition,
+    )
+
+    names = ["a", "b", "c"]
+    scenarios = [f"Scenario {i}: what do you do?" for i in range(4)]
+    records = []
+    for s, text in enumerate(scenarios):
+        for ji, j in enumerate(names):
+            for x in range(len(names)):
+                for y in range(x + 1, len(names)):
+                    records.append({
+                        "constitution": "c1", "scenario": text, "scenario_index": s,
+                        "eval1": x, "eval1_name": names[x],
+                        "eval1 response": f"{names[x]} on {s}", "eval1 reflection": "r",
+                        "eval2": y, "eval2_name": names[y],
+                        "eval2 response": f"{names[y]} on {s}", "eval2 reflection": "r",
+                        "judge": ji, "judge_name": j,
+                        "judge response": "<criterion_1_choice>1</criterion_1_choice>",
+                    })
+
+    constitution = tmp_path / "constitution.json"
+    constitution.write_text(json.dumps(["c1"]), encoding="utf-8")
+    scen_file = tmp_path / "scenarios.json"
+    scen_file.write_text(json.dumps(scenarios), encoding="utf-8")
+    evals = tmp_path / "evaluations.jsonl"
+    evals.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    spec = tmp_path / "spec.py"
+    spec.write_text(f"""
+from inspect_ai.model import ModelOutput, get_model
+
+
+def _mock(nick):
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            c = f"[{{nick}}] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            c = f"[{{nick}}] reflection"
+        else:
+            c = "<criterion_1_choice>1</criterion_1_choice>"
+        return ModelOutput.from_content(model="mockllm/model", content=c)
+
+    return get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+
+
+RUN_SPEC = {{
+    "name": "pw",
+    "models": {{n: _mock(n) for n in {names!r}}},
+    "evaluation": {{"mode": "pairwise_btd"}},
+    "dataset": {{"path": {str(scen_file)!r}, "count": {len(scenarios)}}},
+    "constitution": {{"path": {str(constitution)!r}, "num_criteria": 1}},
+    "collection": {{"evaluations_path": {str(evals)!r},
+                    "inspect": {{"cache": False, "display": "none"}}}},
+    "training": {{"enabled": False}},
+}}
+""", encoding="utf-8")
+
+    before = np.array(count_matrix(records, PAIRWISE, len(names)))
+    plan = plan_addition(records, "d", seed=3)
+    assert plan.mode == PAIRWISE
+    assert all(e.opponent for e in plan.edges), "every comparison needs an opponent"
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            content = "[d] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            content = "[d] reflection"
+        else:
+            content = "<criterion_1_choice>1</criterion_1_choice>"
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    d = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    result = extend_run(str(spec), "d", d, seed=3)
+
+    merged = [json.loads(line) for line in evals.read_text().splitlines()]
+    assert len(merged) == len(records) + result["collected"]
+
+    names_after = model_names(merged, PAIRWISE)
+    assert names_after[-1] == "d"
+    after = np.array(count_matrix(merged, PAIRWISE, len(names_after)))
+    assert after[:, -1].sum() > 0 and after[-1, :].sum() > 0
+
+    new = [r for r in merged if "d" in (r["judge_name"], r["eval1_name"], r["eval2_name"])]
+    for r in new:
+        assert r["judge response"], "a comparison must record a verdict"
+        assert r["eval1 response"] and r["eval2 response"]

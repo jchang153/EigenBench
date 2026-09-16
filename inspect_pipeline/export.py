@@ -220,8 +220,13 @@ def export_log(
     evaluations_path: str | Path | None = None,
     cached_responses_path: str | Path | None = None,
     strict: bool = True,
+    append: bool = False,
 ) -> tuple[list[dict], Path]:
-    """Export one eval log to evaluations.jsonl (+ optional response cache)."""
+    """Export one eval log to evaluations.jsonl (+ optional response cache).
+
+    ``append`` keeps whatever is already there, which is what a run extended
+    with a new model needs. A pairwise log is written in the pairwise schema.
+    """
 
     log = load_log(log)
     meta = eigenbench_metadata(log)
@@ -232,8 +237,21 @@ def export_log(
             "collection.evaluations_path in the run spec"
         )
 
-    records = records_from_log(log, strict=strict)
-    write_evaluations_atomic(target, records)
+    # A pairwise extension log carries comparisons, not single ratings.
+    if any("eval1_nick" in (s.metadata or {}) for s in (log.samples or [])):
+        from .pairwise import records_from_pairwise_log
+
+        records = records_from_pairwise_log(log, meta["criteria"], strict=strict)
+    else:
+        records = records_from_log(log, strict=strict)
+
+    if append:
+        from pipeline.utils import load_records
+
+        existing = load_records(str(target)) if target.exists() else []
+        write_evaluations_atomic(target, existing + records)
+    else:
+        write_evaluations_atomic(target, records)
     write_inspect_run_info(target.parent, log)
 
     cache_target = cached_responses_path or meta.get("cached_responses_path")
