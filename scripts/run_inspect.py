@@ -51,7 +51,11 @@ def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
         print("Stage: collect evaluations (Inspect engine)")
         from inspect_pipeline.collect import collect_direct_ratings_inspect
 
-        collect_direct_ratings_inspect(spec_ref)
+        if spec.get("extension"):
+            from inspect_pipeline.extend import extend_run
+            extend_run(spec_ref)
+        else:
+            collect_direct_ratings_inspect(spec_ref)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
 

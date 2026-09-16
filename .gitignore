@@ -18,6 +18,9 @@ runs/example/btd_d*/
 !runs/example_inspect/
 !runs/example_inspect/spec.py
 !runs/example_inspect/scenarios.json
+!runs/example_extension/
+runs/example_extension/*
+!runs/example_extension/spec.py
 **/inspect_logs/
 
 # Inspect AI default log dir

@@ -14,7 +14,7 @@ from pipeline.eval.criteria_collectors import (
 )
 from pipeline.utils.comparisons import validate_partial_criteria_response
 
-from .phases import RESPONSE_SYSTEM_MESSAGE, generate_validated, phase_config
+from .phases import RESPONSE_SYSTEM_MESSAGE, ResponsePool, generate_validated, phase_config
 
 STORE_EVAL1_RESPONSE = "eigenbench:eval1_response"
 STORE_EVAL2_RESPONSE = "eigenbench:eval2_response"
@@ -69,6 +69,8 @@ def pairwise_solver(
     # The comparison reuses the rating budget.
     comparison_config = phase_config(generation["direct_rating"])
 
+    response_pool = ResponsePool()
+
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         md = state.metadata
         scenario = md["scenario"]
@@ -81,13 +83,16 @@ def pairwise_solver(
                 ChatMessageSystem(content=RESPONSE_SYSTEM_MESSAGE),
                 ChatMessageUser(content=scenario),
             ]
-            out = await generate_validated(
-                resolve_model(nick), messages,
-                config=response_config, max_attempts=max_attempts,
-                cache_enabled=cache_enabled, validator=None,
-                identity=f"response scenario_index={s_idx} evaluee={nick}",
-            )
-            return out.completion
+            async def generate_response():
+                out = await generate_validated(
+                    resolve_model(nick), messages,
+                    config=response_config, max_attempts=max_attempts,
+                    cache_enabled=cache_enabled, validator=None,
+                    identity=f"response scenario_index={s_idx} evaluee={nick}",
+                )
+                return out.completion
+            return await response_pool.get((s_idx, nick), generate_response)
+
 
         judge = resolve_model(md["judge_nick"])
 
@@ -141,6 +146,8 @@ def pairwise_solver(
 def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) -> list[dict]:
     """Build legacy-shaped comparison records from an eval log."""
 
+    if strict and (log.status != "success" or not log.samples):
+        raise RuntimeError(f"pairwise eval did not complete successfully: {log.status}")
     criteria_text = "\n".join(criteria)
     failures = [
         f"sample {s.id}: {s.error.message}" for s in (log.samples or []) if s.error
@@ -153,6 +160,12 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
         if s.error is not None:
             continue
         md, store = s.metadata or {}, s.store or {}
+        keys = (STORE_EVAL1_RESPONSE, STORE_EVAL2_RESPONSE, STORE_EVAL1_REFLECTION,
+                STORE_EVAL2_REFLECTION, STORE_JUDGE_RESPONSE)
+        if not all(isinstance(store.get(k), str) and store[k].strip() for k in keys):
+            if strict:
+                raise RuntimeError(f"sample {s.id} is missing generated content")
+            continue
         records.append(
             {
                 "constitution": criteria_text,
@@ -183,7 +196,7 @@ def pairwise_edge_samples(plan, scenarios: dict[int, str], order: list[str]) -> 
     from inspect_ai.dataset import Sample
 
     index = {name: i for i, name in enumerate(order)}
-    index[plan.new_model] = len(order)
+    index.update({name: len(order) + i for i, name in enumerate(plan.new_models)})
 
     samples = []
     for k, e in enumerate(plan.edges):
@@ -216,7 +229,7 @@ def pairwise_edge_samples(plan, scenarios: dict[int, str], order: list[str]) -> 
 
 
 def eigenbench_pairwise_extend(
-    spec: str, *, new_model: str, plan, scenarios, order, models=None
+    spec: str, *, new_model: str, plan, scenarios, order, models=None, context=None
 ):
     """Task collecting a pairwise plan's comparisons."""
 
@@ -225,7 +238,7 @@ def eigenbench_pairwise_extend(
 
     from inspect_pipeline.eigenbench import _run_context
 
-    ctx = _run_context(spec, models)
+    ctx = context if context is not None else _run_context(spec, models, build_assignments=False)
     allow_ties = bool(ctx["collection_cfg"].get("allow_ties", True))
     return Task(
         dataset=MemoryDataset(

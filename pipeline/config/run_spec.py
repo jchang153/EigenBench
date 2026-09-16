@@ -176,6 +176,14 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
                     "collection.group_size < number of models"
                 )
 
+    if "extension" in normalized:
+        extension = normalized["extension"]
+        if not isinstance(extension, dict) or not extension.get("from_evaluations"):
+            raise ValueError("extension.from_evaluations must name the source records")
+        count = extension.get("additional_scenarios", 0)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("extension.additional_scenarios must be a non-negative integer")
+
     training = normalized.setdefault("training", {})
     if training.get("output_dir"):
         training["output_dir"] = _resolve_path_for_run(

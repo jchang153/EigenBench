@@ -149,7 +149,7 @@ def build_edge_samples(assignments: list[dict]) -> list[Sample]:
     return samples
 
 
-def _model_resolver(models: dict[str, object]):
+def _model_resolver(models: dict[str, object], *, memoize: bool = True):
     """Resolve nick -> Model lazily so tasks build without provider API keys."""
 
     # Validate the mapping eagerly; only client creation is deferred.
@@ -163,7 +163,7 @@ def _model_resolver(models: dict[str, object]):
         model = cache.get(nick)
         if model is None:
             ref = refs[nick]
-            model = ref if isinstance(ref, Model) else get_model(ref.name, **ref.model_args)
+            model = ref if isinstance(ref, Model) else get_model(ref.name, memoize=memoize, **ref.model_args)
             cache[nick] = model
         return model
 
@@ -209,7 +209,8 @@ def _samples_view(criteria: list[str]) -> TaskSamplesView:
     )
 
 
-def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None) -> dict:
+def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None,
+                 *, build_assignments: bool = True) -> dict:
     """Everything the three task entrypoints need from a run spec."""
 
     run_spec, run_dir = load_run_spec(resolve_spec_ref(spec))
@@ -231,7 +232,7 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
 
     selected, criteria = load_selection(run_spec, run_dir)
     generation = resolve_direct_generation_settings(collection_cfg)
-    if is_direct:
+    if is_direct and build_assignments:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
         )

@@ -78,6 +78,9 @@ def _write_space_safe_spec(spec: dict) -> str:
 
 def estimate_calls(spec_ref: str) -> dict:
     spec, run_dir = load_run_spec(spec_ref)
+    if spec.get("extension"):
+        from inspect_pipeline.extend import extend_run
+        return extend_run(spec_ref, dry_run=True)
     models = spec.get("models", {})
     dataset_cfg = spec.get("dataset", {})
     scenarios = load_dataset_scenarios_from_spec(dataset_cfg, run_dir=run_dir)
@@ -223,7 +226,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
         collection_cfg["enabled"] = collection_enabled
     cached_responses_path = collection_cfg.get("cached_responses_path")
 
-    if cached_responses_path and evaluation_mode != "direct_rating":
+    if cached_responses_path and evaluation_mode != "direct_rating" and not spec.get("extension"):
         print("Stage: collect responses cache")
         from run_collect_responses import main as run_collect_responses_main
 

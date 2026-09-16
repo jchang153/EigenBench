@@ -7,6 +7,7 @@ Space consume Inspect-collected output unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -17,6 +18,12 @@ from inspect_ai.log import EvalLog, read_eval_log
 from pipeline.eval.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
 
 from .phases import STORE_JUDGMENT_RAW, STORE_REFLECTION, STORE_RESPONSE
+
+
+def records_fingerprint(records: list[dict]) -> str:
+    """Hash logical records, independent of JSON whitespace/key ordering."""
+    encoded = json.dumps(records, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def load_log(log: str | Path | EvalLog) -> EvalLog:
@@ -237,6 +244,12 @@ def export_log(
             "collection.evaluations_path in the run spec"
         )
 
+    if meta.get("extension_phased"):
+        raise ValueError(
+            "a phased extension log contains only one judge; rerun scripts/extend_run.py "
+            "to collect and combine the complete extension"
+        )
+
     # A pairwise extension log carries comparisons, not single ratings.
     if any("eval1_nick" in (s.metadata or {}) for s in (log.samples or [])):
         from .pairwise import records_from_pairwise_log
@@ -245,10 +258,36 @@ def export_log(
     else:
         records = records_from_log(log, strict=strict)
 
+    if meta.get("extension_source") and not append:
+        raise ValueError("extension logs require --append to preserve the source records")
     if append:
         from pipeline.utils import load_records
 
-        existing = load_records(str(target)) if target.exists() else []
+        source = Path(meta["extension_source"]) if meta.get("extension_source") else None
+        if source:
+            if not source.is_file():
+                raise ValueError(f"extension source is missing: {source}; nothing exported")
+            source_records = load_records(str(source))
+            fingerprint = meta.get("extension_source_sha256")
+            if not fingerprint:
+                raise ValueError("extension log has no source fingerprint; cannot verify baseline")
+            if records_fingerprint(source_records) != fingerprint:
+                raise ValueError("extension source changed since planning; nothing exported")
+            expected = meta.get("extension_expected_edges")
+            if strict and expected is not None and len(records) != expected:
+                raise ValueError("extension log does not contain the complete plan; nothing exported")
+            if target.resolve() != source.resolve() and target.exists():
+                raise ValueError("extension output already exists; choose a new output path")
+            existing = source_records
+        else:
+            existing = load_records(str(target)) if target.exists() else []
+        def identity(r):
+            if r.get("record_type") == "direct_rating":
+                return (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+            return (r["scenario_index"], r["judge"], r["eval1"], r["eval2"])
+        existing_ids = {identity(r) for r in existing}
+        if any(identity(r) in existing_ids for r in records):
+            raise ValueError("extension records already exist in the destination")
         write_evaluations_atomic(target, existing + records)
     else:
         write_evaluations_atomic(target, records)
