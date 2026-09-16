@@ -11,6 +11,7 @@ resulting log to the legacy ``evaluations.jsonl`` with
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 # Inspect loads this file standalone (`inspect eval .../eigenbench.py`), so the
@@ -49,6 +50,7 @@ from inspect_pipeline.phases import (
     criterion_label,
     direct_rating_scorer,
     direct_rating_solver,
+    response_only_solver,
 )
 
 DEFAULT_MAX_ATTEMPTS = 4
@@ -122,9 +124,13 @@ def build_edge_samples(assignments: list[dict]) -> list[Sample]:
             samples.append(
                 Sample(
                     input=assignment["scenario"],
-                    id=(
-                        f"s{s_idx:04d} r{assignment.get('sampling_round', 0)} · "
-                        f"{assignment['judge_nick']} → {eval_nick}"
+                    id=_edge_sample_id(
+                        {
+                            "scenario_index": s_idx,
+                            "sampling_round": assignment.get("sampling_round", 0),
+                            "judge_nick": assignment["judge_nick"],
+                            "eval_nick": eval_nick,
+                        }
                     ),
                     metadata={
                         "edge_index": len(samples),
@@ -164,20 +170,47 @@ def _model_resolver(models: dict[str, object]):
     return resolve
 
 
-@task
-def eigenbench(
-    spec: str,
-    *,
-    models: dict[str, object] | None = None,
-    cache: bool | None = None,
-) -> Task:
-    """Direct-rating EigenBench task.
+def _edge_sample_id(edge: dict) -> str:
+    return (
+        f"s{int(edge['scenario_index']):04d} r{int(edge.get('sampling_round', 0))} · "
+        f"{edge['judge_nick']} → {edge['eval_nick']}"
+    )
 
-    Args:
-        spec: run spec module or path, e.g. ``runs/my_run/spec.py``.
-        models: optional override of the spec's models (Python callers only).
-        cache: override ``collection.inspect.cache``.
-    """
+
+def _samples_view(criteria: list[str]) -> TaskSamplesView:
+    scorer_name = "direct_rating_scorer"
+    return TaskSamplesView(
+        name="Judgments",
+        columns=[
+            TaskSamplesColumn(id="sampleId"),
+            TaskSamplesColumn(id="answer"),
+            TaskSamplesColumn.score(scorer_name, "mean"),
+            *[
+                TaskSamplesColumn.score(scorer_name, criterion_key(i))
+                for i in range(len(criteria))
+            ],
+            TaskSamplesColumn(id="input", visible=False),
+            TaskSamplesColumn(id="tokens", visible=False),
+        ],
+        # Weakest judgments first: the point of reading these is finding where a
+        # judge broke from the pack, not admiring the middle of the scale.
+        sort=[TaskSamplesSort.score(scorer_name, "mean", dir="asc")],
+        multiline=False,
+        compact_scores=True,
+        color_scales_enabled=True,
+        score_labels={
+            "mean": "Mean",
+            **{criterion_key(i): criterion_label(i, c) for i, c in enumerate(criteria)},
+        },
+        score_color_scales={
+            "mean": "good-high",
+            **{criterion_key(i): "good-high" for i in range(len(criteria))},
+        },
+    )
+
+
+def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None) -> dict:
+    """Everything the three task entrypoints need from a run spec."""
 
     run_spec, run_dir = load_run_spec(resolve_spec_ref(spec))
     if run_spec.get("evaluation", {}).get("mode") != "direct_rating":
@@ -218,7 +251,6 @@ def eigenbench(
         )
     )
 
-    # Seed the pool so cached responses are never regenerated.
     cached = _load_cached_responses(collection_cfg.get("cached_responses_path"))
     seed = {
         (int(s_idx), nick): text
@@ -227,69 +259,84 @@ def eigenbench(
         if nick in spec_models
     }
 
-    resolve_model = _model_resolver(spec_models)
-    pool = ResponsePool(seed=seed)
+    return {
+        "run_spec": run_spec,
+        "models": spec_models,
+        "selected": selected,
+        "criteria": criteria,
+        "assignments": assignments,
+        "generation": generation,
+        "sampling": sampling,
+        "include_self": include_self,
+        "scale_min": scale_min,
+        "scale_max": scale_max,
+        "cache_enabled": cache_enabled,
+        "max_attempts": max_attempts,
+        "collection_cfg": collection_cfg,
+        "resolve_model": _model_resolver(spec_models),
+        "seed": seed,
+        "meta": {
+            "run_name": run_spec["name"],
+            "criteria": criteria,
+            "model_order": list(spec_models),
+            "include_self": include_self,
+            "scale_min": scale_min,
+            "scale_max": scale_max,
+            "sampler_mode": sampling["sampler_mode"],
+            "evaluations_path": collection_cfg.get("evaluations_path"),
+            "cached_responses_path": collection_cfg.get("cached_responses_path"),
+            "num_scenarios": len(selected),
+        },
+    }
 
-    scorer_name = "direct_rating_scorer"
-    samples_view = TaskSamplesView(
-        name="Judgments",
-        columns=[
-            TaskSamplesColumn(id="sampleId"),
-            TaskSamplesColumn(id="answer"),
-            TaskSamplesColumn.score(scorer_name, "mean"),
-            *[
-                TaskSamplesColumn.score(scorer_name, criterion_key(i))
-                for i in range(len(criteria))
-            ],
-            TaskSamplesColumn(id="input", visible=False),
-            TaskSamplesColumn(id="tokens", visible=False),
-        ],
-        # Weakest judgments first: the point of reading these is finding where a
-        # judge broke from the pack, not admiring the middle of the scale.
-        sort=[TaskSamplesSort.score(scorer_name, "mean", dir="asc")],
-        multiline=False,
-        compact_scores=True,
-        color_scales_enabled=True,
-        score_labels={
-            "mean": "Mean",
-            **{criterion_key(i): criterion_label(i, c) for i, c in enumerate(criteria)},
-        },
-        score_color_scales={
-            "mean": "good-high",
-            **{criterion_key(i): "good-high" for i in range(len(criteria))},
-        },
+
+def has_local_models(models: dict[str, object]) -> bool:
+    """Whether any model needs a vLLM server, and so GPU memory."""
+
+    return any(
+        not isinstance(v, Model) and to_inspect_model(v).is_local for v in models.values()
     )
 
+
+def sanitize(nick: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", nick).strip("_") or "model"
+
+
+@task
+def eigenbench(
+    spec: str,
+    *,
+    models: dict[str, object] | None = None,
+    cache: bool | None = None,
+) -> Task:
+    """Direct-rating EigenBench, one sample per directed judge->evaluee edge.
+
+    Args:
+        spec: run spec module or path, e.g. ``runs/my_run/spec.py``.
+        models: optional override of the spec's models (Python callers only).
+        cache: override ``collection.inspect.cache``.
+    """
+
+    ctx = _run_context(spec, models, cache)
+    criteria = ctx["criteria"]
     return Task(
         dataset=MemoryDataset(
-            samples=build_edge_samples(assignments), name=f"eigenbench_{run_spec['name']}"
+            samples=build_edge_samples(ctx["assignments"]),
+            name=f"eigenbench_{ctx['run_spec']['name']}",
         ),
         solver=direct_rating_solver(
             criteria=criteria,
-            resolve_model=resolve_model,
-            response_pool=pool,
-            generation=generation,
-            max_attempts=max_attempts,
-            cache_enabled=cache_enabled,
-            scale_min=scale_min,
-            scale_max=scale_max,
+            resolve_model=ctx["resolve_model"],
+            response_pool=ResponsePool(seed=ctx["seed"]),
+            generation=ctx["generation"],
+            max_attempts=ctx["max_attempts"],
+            cache_enabled=ctx["cache_enabled"],
+            scale_min=ctx["scale_min"],
+            scale_max=ctx["scale_max"],
         ),
         scorer=direct_rating_scorer(),
-        viewer=ViewerConfig(task_samples_view=samples_view),
-        name=f"eigenbench_{run_spec['name']}",
-        display_name=f"EigenBench direct rating — {run_spec['name']}",
-        metadata={
-            "eigenbench": {
-                "run_name": run_spec["name"],
-                "criteria": criteria,
-                "model_order": list(spec_models),
-                "include_self": include_self,
-                "scale_min": scale_min,
-                "scale_max": scale_max,
-                "sampler_mode": sampling["sampler_mode"],
-                "evaluations_path": collection_cfg.get("evaluations_path"),
-                "cached_responses_path": collection_cfg.get("cached_responses_path"),
-                "num_scenarios": len(selected),
-            }
-        },
+        viewer=ViewerConfig(task_samples_view=_samples_view(criteria)),
+        name=f"eigenbench_{ctx['run_spec']['name']}",
+        display_name=f"EigenBench direct rating — {ctx['run_spec']['name']}",
+        metadata={"eigenbench": ctx["meta"]},
     )

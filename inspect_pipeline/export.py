@@ -127,6 +127,24 @@ def records_from_log(log: str | Path | EvalLog, *, strict: bool = True) -> list[
     return [record for _index, record in rows]
 
 
+def records_from_logs(logs, *, strict: bool = True) -> list[dict]:
+    """Merge the judge logs of a phased run back into one ordered record set."""
+
+    records: list[dict] = []
+    for log in logs:
+        records.extend(records_from_log(log, strict=strict))
+    seen = set()
+    for r in records:
+        edge = (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+        if edge in seen:
+            raise RuntimeError(f"duplicate directed edge across logs: {edge}")
+        seen.add(edge)
+    records.sort(
+        key=lambda r: (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+    )
+    return records
+
+
 def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
     """Per-scenario response maps, for the shared response cache."""
 
@@ -161,14 +179,18 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
     return rows
 
 
-def write_inspect_run_info(run_dir: str | Path, log: EvalLog) -> Path:
-    """Record which log produced a run, so the upload can carry it."""
+def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list) -> Path:
+    """Record which log(s) produced a run, so the upload can carry them."""
 
     path = Path(run_dir) / "inspect_run.json"
     info = {}
     if path.exists():
         info = json.loads(path.read_text(encoding="utf-8"))
-    info["log_file"] = Path(str(log.location)).name
+    logs = log if isinstance(log, list) else [log]
+    names = [Path(str(item.location)).name for item in logs]
+    info["log_file"] = names[0]
+    if len(names) > 1:
+        info["log_files"] = names
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return path

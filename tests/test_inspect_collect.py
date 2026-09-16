@@ -301,3 +301,48 @@ def test_model_mapping():
         to_inspect_model("inspect:no-slash")
     with pytest.raises(ValueError):
         to_inspect_model("")
+
+
+def test_phased_matches_single_task(run_dir):
+    """A phased run must produce exactly the records an edge-per-sample run does.
+
+    Phasing exists only to keep one model resident at a time; it must not change
+    the protocol or the output.
+    """
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+
+    single = collect_direct_ratings_inspect(str(spec_path))
+
+    # Re-run the same spec through the phased path.
+    (tmp_path / "evaluations.jsonl").unlink()
+    spec_text = spec_path.read_text().replace(
+        '"inspect": {"cache": False, "display": "none"}',
+        '"inspect": {"cache": False, "display": "none", "phased": True}',
+    )
+    spec_path.write_text(spec_text, encoding="utf-8")
+    phased = collect_direct_ratings_inspect(str(spec_path))
+
+    assert len(phased) == len(single)
+
+    def key(r):
+        return (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+
+    def normalize(r):
+        # The mock stamps a call counter into each response to prove pooling;
+        # the two paths generate in a different order, so only the identity of
+        # the responding model is comparable across them.
+        out = dict(r)
+        out["response"] = r["response"].split("#", 1)[0]
+        return out
+
+    for a, b in zip(sorted(single, key=key), sorted(phased, key=key)):
+        assert normalize(a) == normalize(b), f"phased record differs at {key(a)}"
+
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    assert info["log_file"].endswith(".eval")
+    # One log per judge.
+    assert len(info.get("log_files", [info["log_file"]])) == len(NICKS)
