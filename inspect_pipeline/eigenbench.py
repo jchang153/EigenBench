@@ -149,7 +149,7 @@ def build_edge_samples(assignments: list[dict]) -> list[Sample]:
     return samples
 
 
-def _model_resolver(models: dict[str, object]):
+def _model_resolver(models: dict[str, object], *, memoize: bool = True):
     """Resolve nick -> Model lazily so tasks build without provider API keys."""
 
     # Validate the mapping eagerly; only client creation is deferred.
@@ -163,7 +163,7 @@ def _model_resolver(models: dict[str, object]):
         model = cache.get(nick)
         if model is None:
             ref = refs[nick]
-            model = ref if isinstance(ref, Model) else get_model(ref.name, **ref.model_args)
+            model = ref if isinstance(ref, Model) else get_model(ref.name, memoize=memoize, **ref.model_args)
             cache[nick] = model
         return model
 
@@ -209,16 +209,12 @@ def _samples_view(criteria: list[str]) -> TaskSamplesView:
     )
 
 
-def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None) -> dict:
+def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None,
+                 *, build_assignments: bool = True) -> dict:
     """Everything the three task entrypoints need from a run spec."""
 
     run_spec, run_dir = load_run_spec(resolve_spec_ref(spec))
-    if run_spec.get("evaluation", {}).get("mode") != "direct_rating":
-        raise ValueError(
-            "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "
-            "only; use scripts/run.py for pairwise BTD runs."
-        )
-
+    is_direct = run_spec.get("evaluation", {}).get("mode") == "direct_rating"
     spec_models = models if models is not None else run_spec["models"]
     if not spec_models:
         raise ValueError("spec models must not be empty")
@@ -235,13 +231,16 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
         raise ValueError("direct rating collection currently uses the fixed 1-10 scale")
 
     selected, criteria = load_selection(run_spec, run_dir)
-    sampling = resolve_direct_sampling_settings(
-        collection_cfg, num_models=len(spec_models), include_self=include_self
-    )
     generation = resolve_direct_generation_settings(collection_cfg)
-    assignments = build_direct_assignments(
-        selected, spec_models, include_self=include_self, **sampling
-    )
+    if is_direct and build_assignments:
+        sampling = resolve_direct_sampling_settings(
+            collection_cfg, num_models=len(spec_models), include_self=include_self
+        )
+        assignments = build_direct_assignments(
+            selected, spec_models, include_self=include_self, **sampling
+        )
+    else:
+        sampling, assignments = {"sampler_mode": collection_cfg.get("sampler_mode")}, []
 
     inspect_cfg = collection_cfg.get("inspect", {}) or {}
     cache_enabled = bool(inspect_cfg.get("cache", True)) if cache is None else bool(cache)
@@ -260,6 +259,7 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
     }
 
     return {
+        "is_direct": is_direct,
         "run_spec": run_spec,
         "models": spec_models,
         "selected": selected,
@@ -318,6 +318,11 @@ def eigenbench(
     """
 
     ctx = _run_context(spec, models, cache)
+    if not ctx["is_direct"]:
+        raise ValueError(
+            "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "
+            "only; pairwise runs use inspect_pipeline.pairwise."
+        )
     criteria = ctx["criteria"]
     return Task(
         dataset=MemoryDataset(

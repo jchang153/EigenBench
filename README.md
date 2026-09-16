@@ -21,14 +21,15 @@ EigenBench is a black-box framework for quantifying value alignment across langu
   - [Spec Mode: Mixed HF Local + OpenRouter](#spec-mode-mixed-hf-local--openrouter)
   - [Spec Mode: All-to-All Collection](#spec-mode-all-to-all-collection)
   - [Spec Mode: Direct Rating](#spec-mode-direct-rating)
-- [Inspect AI Collection Engine](#inspect-ai-collection-engine-direct-rating)
+- [Inspect AI Collection Engine](#inspect-ai-collection-engine)
+  - [Adding models and scenarios to a finished run](#adding-models-and-scenarios-to-a-finished-run)
 - [Bootstrap Resampling](#bootstrap-resampling)
 - [Outputs](#outputs)
 - [Repo Layout](#repo-layout)
 - [Datasets Used in the Paper](#datasets-used-in-the-paper)
 - [ValueArena](#valuearena)
   - [Auto-upload via Space](#auto-upload-via-space)
-  - [Linking the Inspect log viewer](#linking-the-inspect-log-viewer)
+  - [The Inspect log viewer](#the-inspect-log-viewer)
   - [Manual upload](#manual-upload)
 - [Citation](#citation)
 
@@ -96,7 +97,7 @@ inspect eval inspect_pipeline/eigenbench.py -T spec=runs/my_run/spec.py \
     --log-dir runs/my_run/inspect_logs
 ```
 
-Collection runs as a native Inspect eval — same protocol and same `evaluations.jsonl`, but with Inspect's providers, retries, resume, and log viewer. See [Inspect AI Collection Engine](#inspect-ai-collection-engine-direct-rating).
+Collection runs as a native Inspect eval — same protocol and same `evaluations.jsonl`, but with Inspect's providers, retries, resume, and log viewer. See [Inspect AI Collection Engine](#inspect-ai-collection-engine).
 
 Mixed-model runs work out of the box — just prefix local model paths with `hf_local:` in your spec. The pipeline auto-detects and batches local models through vLLM while routing API models through OpenRouter.
 
@@ -437,7 +438,7 @@ does not use the pairwise `groups` setting.
 
 These are request counts, not token-cost estimates. A BTD comparison prompt contains two responses and two reflections, whereas a direct-rating prompt contains one of each; direct ratings also default to a smaller 512-token output ceiling. Provider retries can increase actual HTTP requests beyond the logical counts, while checkpoint resumption prevents completed tasks from being repeated.
 
-## Inspect AI Collection Engine (direct rating)
+## Inspect AI Collection Engine
 
 Direct-rating runs can be collected as a native [Inspect AI](https://inspect.aisi.org.uk) eval. The protocol is unchanged — sampling plans, prompts, and rating validation are imported from `pipeline/eval/direct_rating.py`, and the exported output is the same `evaluations.jsonl` — but Inspect replaces the transport: provider clients, concurrency, retries, caching, logs, and the transcript viewer.
 
@@ -488,6 +489,152 @@ python scripts/run_inspect.py runs/my_run/spec.py --estimate-calls   # plan only
 python scripts/run_inspect.py runs/my_run/spec.py
 ```
 
+### Adding models and scenarios to a finished run
+
+Create a new run folder and copy the original spec into it. Keep the original
+models and append as many new entries to `models` as desired. There is no
+`num_new_models` setting: the collector compares model names with the source
+records and treats names absent from those records as newcomers. All newcomers
+are planned together and can judge one another.
+
+Add an `extension` section. For example, to extend a 200-scenario run with two
+models and 50 more scenarios, make these changes to the copied spec:
+
+```python
+RUN_SPEC["name"] = "expanded"
+RUN_SPEC["models"].update({
+    "New model A": "provider/model-a",
+    "New model B": "provider/model-b",
+})
+RUN_SPEC["extension"] = {
+    "from_evaluations": "../previous/evaluations.jsonl",
+    "additional_scenarios": 50,
+}
+RUN_SPEC["dataset"]["count"] = 250
+RUN_SPEC["collection"]["evaluations_path"] = "evaluations.jsonl"
+RUN_SPEC["training"]["output_dir"] = "."
+```
+
+`from_evaluations` is relative to the new run folder (absolute paths also work).
+The combined records go to the new spec's `collection.evaluations_path`; the
+source run remains unchanged. Reset copied absolute output/log paths to the new
+folder, and adjust run-relative dataset/constitution paths to refer to the same
+source files. Keep the original dataset, start, shuffle seed, criteria and model
+names. The collector verifies the original scenario indices/text and criteria
+before making any model calls. The version-controlled
+[extension example](runs/example_extension/spec.py) extends the existing
+[Inspect example](runs/example_inspect/spec.py) from three models and four
+scenarios to five models and six scenarios. It reuses the same scenario file
+and constitution. Only the extension spec is tracked; generated evaluations,
+logs, and analysis outputs in its folder are ignored.
+
+To run those examples from the repository root:
+
+```bash
+# First collect the source example, unless it has already completed.
+python scripts/run_inspect.py runs/example_inspect/spec.py
+
+# Inspect the proposed extension, then collect it and analyze the combined run.
+python scripts/extend_run.py runs/example_extension/spec.py --dry-run
+python scripts/extend_run.py runs/example_extension/spec.py
+python scripts/run.py runs/example_extension/spec.py --collection-enabled false
+```
+
+`additional_scenarios` is the number of **unused** scenarios to select from the
+expanded spec's dataset selection. In the example, `dataset.count=250` exposes
+the original 200 plus 50 unused scenarios. Selection preserves dataset indices
+and follows the existing selection order. If fewer than 50 unused scenarios are
+available, the command fails before inference. Scenario text is loaded from the
+dataset; this feature does not generate new scenario prompts.
+
+To add only models, omit `additional_scenarios` or set it to zero. To add only
+scenarios, leave `models` unchanged. New scenarios always evaluate the **full
+expanded population**, including every existing model.
+
+```bash
+# Show the complete extension plan without inference or output writes.
+python scripts/extend_run.py runs/expanded/spec.py --dry-run
+
+# Collect and write the old + new records to the expanded run.
+python scripts/extend_run.py runs/expanded/spec.py
+
+# Analyze the combined records using the already-expanded model list.
+python scripts/run.py runs/expanded/spec.py --collection-enabled false
+```
+
+Alternatively, `python scripts/run.py runs/expanded/spec.py` recognizes the
+`extension` section and runs extension collection followed by the configured
+analysis/upload stages. `scripts/run_inspect.py` also recognizes direct-rating
+extensions. An existing output in a separate destination is rejected to avoid
+overwriting a completed extension; use a fresh run folder for the next extension
+and point `from_evaluations` at the most recent combined records.
+
+**Direct rating.** Every new model answers every old scenario. Each new response
+gets exactly one judge, balanced across the full expanded population; the judge
+can be itself when `evaluation.direct_rating.include_self` is true. Self-ratings
+occupy their own scenario assignments, not a second rating of a response. This
+one-rating rule also applies when the original run used denser sampling.
+
+Each new judge additionally rates saved responses from existing models until
+its old-scenario judging workload approaches the mean existing judge workload,
+counting judgments of itself and other newcomers toward that target. Saved
+responses are reused verbatim, and a directed edge is never repeated. On added
+scenarios, the balanced one-to-one sampler gives every model one response and
+one judging assignment per scenario. Extensions use this coverage policy even
+if the original spec selected another sampler or higher response redundancy.
+
+**Pairwise BTD.** Comparisons target the median existing column count and mean
+existing judging workload, subject to available unique pairs. New models can
+appear on either side and act as judges. Each comparison pair is collected in
+both presentation orders, matching the downstream inconsistency handling. New
+scenarios partition the full population into shuffled groups using
+`collection.group_size` (default 4); a trailing singleton joins the previous
+group. One judge evaluates all ordered pairs within each group. Judging load is
+balanced across groups. Response generation is shared across comparisons even
+when the Inspect generation cache is disabled. Pairwise counts may exceed their
+target slightly because both presentation orders are collected together.
+
+The legacy command remains available for extending an existing run in place.
+Repeat the paired options to add several models in one batch, then add those
+models to that run's spec before analysis:
+
+```bash
+python scripts/add_model.py runs/previous/spec.py \
+    --model "New model A" --id provider/model-a \
+    --model "New model B" --id provider/model-b --dry-run
+```
+
+API-only, non-phased runs can also use native Inspect and export separately:
+
+```bash
+inspect eval inspect_pipeline/extend.py -T spec=runs/expanded/spec.py \
+    --log-dir runs/expanded/inspect_logs
+python scripts/export_evaluations.py runs/expanded/inspect_logs \
+    -o runs/expanded/evaluations.jsonl --append
+```
+
+Extension logs record their source evaluations path and a fingerprint of the
+source records. `--append` includes that baseline when exporting to a fresh
+output. A missing or changed source, a log without a source fingerprint, or an
+export without `--append` is rejected before any output is written. JSON
+whitespace and object-key order do not affect the fingerprint. Existing
+records are preserved, although existing responses can receive additional
+judgments and every model's final score can change after reanalysis.
+
+**Local models and phased execution.** The extension command automatically uses
+phased execution for local models, or when `collection.inspect.phased` is true.
+It generates only missing responses, one model at a time, then performs the
+judgments, one judge at a time. Each model's client/server is closed before the
+next phase, including when a phase fails. Direct and pairwise extensions both
+use this path. An explicit `phased: false` opts into concurrent execution.
+
+Use `scripts/extend_run.py` (or `scripts/run.py`) for phased extensions. The native
+Inspect task rejects configurations requiring phasing rather than loading all
+models together. Individual judge logs cannot be exported as a complete
+extension; rerun the extension command after a failure. With Inspect caching
+enabled, completed generations can be reused. The combined evaluations file is
+written only after every phase completes successfully.
+
 ### Spec additions
 
 Specs are the same as for `scripts/run.py`, plus:
@@ -514,7 +661,7 @@ Specs are the same as for `scripts/run.py`, plus:
 - **Local models run phased.** A judgment needs both its evaluee and its judge, so the edge-per-sample task keeps every model live at once — free for hosted models, fatal on one GPU. When a spec has `hf_local:` models, collection instead runs every response (one model at a time), then every judgment (one judge at a time), terminating each vLLM server before the next starts. `collection.inspect.phased` forces it either way, and `tests/test_inspect_collect.py::test_phased_matches_single_task` pins both paths to identical records.
 - **Local models**: `hf_local:` refs map to Inspect's `vllm/` provider, which launches `vllm serve` (or attaches to `VLLM_BASE_URL`). LoRA adapters use the provider's `vllm/<base>:<adapter>[@revision]` syntax; adapter repos resolve their base from `adapter_config.json` (or an explicit `base_model_id`), and legacy subfolder adapters are snapshot-downloaded and referenced by local path. Throughput relies on the vLLM server's continuous batching rather than the legacy three-phase offline batching — benchmark on a real GPU run before switching large jobs.
 - **Downstream is unchanged**: the exported `evaluations.jsonl` feeds the same aggregation, EigenTrust, bootstrap, and ValueArena upload code.
-- **Pairwise BTD runs are not supported** by this engine; use `scripts/run.py`.
+- **Pairwise BTD**: a whole run still belongs to `scripts/run.py`; this engine collects pairwise only when [adding a model](#adding-models-and-scenarios-to-a-finished-run) to a finished run. Its prompts and choice parsing come from `pipeline/eval/criteria_collectors.py` unchanged, so those records are interchangeable with the legacy ones.
 
 A committed example lives in `runs/example_inspect/`. `tests/test_inspect_collect.py` runs both paths end to end on scripted `mockllm` models and feeds the export through the legacy trust-matrix analysis.
 
@@ -594,6 +741,9 @@ EigenBench/
 │   ├── eigenbench.py             # the @task: `inspect eval inspect_pipeline/eigenbench.py`
 │   ├── phases.py                 # solvers: response (pooled) -> reflection -> rating
 │   ├── phased.py                 # per-model tasks for runs that cannot hold every model
+│   ├── extension_phased.py       # missing responses then judgments, one model at a time
+│   ├── pairwise.py               # pairwise BTD comparisons on the Inspect engine
+│   ├── extend.py                 # plan + collect additional models and scenarios
 │   ├── export.py                 # eval log -> evaluations.jsonl contract
 │   ├── model_mapping.py          # spec model refs -> Inspect provider names
 │   └── collect.py                # programmatic driver used by run_inspect.py
@@ -605,11 +755,16 @@ EigenBench/
 │   ├── run_inspect.py            # Inspect engine: collect + export + train in one
 │   ├── export_evaluations.py     # Inspect engine: eval log -> evaluations.jsonl
 │   ├── publish_inspect_bundle.py # Inspect engine: bundle logs into a static viewer
+│   ├── add_model.py              # Inspect engine: add models in place
+│   ├── extend_run.py             # Inspect engine: extend a run from a full-population spec
 │   └── upload_results.py         # manual upload to ValueArena
 ├── notebooks/
 │   ├── mixed_openrouter_local_collection.ipynb  # legacy notebook (now integrated into CLI)
 │   ├── bootstrap_resampling.ipynb               # bootstrap analysis
 ├── runs/
+│   ├── example/spec.py           # original pipeline example
+│   ├── example_inspect/          # Inspect source run and sample scenarios
+│   ├── example_extension/spec.py # add two models and two scenarios to that run
 │   └── <run_name>/
 │       ├── spec.py            # per-run config
 │       ├── evaluations.jsonl  # collected judgments

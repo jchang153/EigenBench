@@ -47,6 +47,12 @@ def main() -> None:
         action="store_true",
         help="Export successful samples even if some failed (default: refuse)",
     )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Add to the existing evaluations.jsonl instead of replacing it "
+             "(used after extending a run with a new model)",
+    )
     args = parser.parse_args()
 
     records, target = export_log(
@@ -54,8 +60,10 @@ def main() -> None:
         evaluations_path=args.output,
         cached_responses_path=args.cached_responses,
         strict=not args.allow_incomplete,
+        append=args.append,
     )
-    print(f"Exported {len(records)} direct-rating records to {target}")
+    verb = "Appended" if args.append else "Exported"
+    print(f"{verb} {len(records)} records to {target}")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,9 @@ def _has_local_models(models: dict[str, object]) -> bool:
 
 def main(spec_ref: str):
     spec, run_dir = load_run_spec(spec_ref)
+    if spec.get("extension"):
+        from inspect_pipeline.extend import extend_run
+        return extend_run(spec_ref)
     verbose = bool(spec.get("verbose", False))
 
     models = spec["models"]

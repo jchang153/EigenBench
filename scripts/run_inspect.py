@@ -51,9 +51,25 @@ def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
         print("Stage: collect evaluations (Inspect engine)")
         from inspect_pipeline.collect import collect_direct_ratings_inspect
 
-        collect_direct_ratings_inspect(spec_ref)
+        if spec.get("extension"):
+            from inspect_pipeline.extend import extend_run
+            extend_run(spec_ref)
+        else:
+            collect_direct_ratings_inspect(spec_ref)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
+
+    # Analysis sizes its matrices from the spec's model list, so a run extended
+    # with scripts/add_model.py fails deep inside aggregation if the spec was
+    # never updated. Catch it here, before handing off.
+    if bool(spec.get("training", {}).get("enabled", True)):
+        from pipeline.utils import load_records
+
+        from inspect_pipeline.extend import check_spec_covers
+
+        records = load_records(collection_cfg["evaluations_path"])
+        if records:
+            check_spec_covers(spec.get("models", {}), records)
 
     # Training / aggregation / upload run on the legacy stages.
     from run import main as legacy_main
