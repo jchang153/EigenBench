@@ -12,12 +12,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DATASET_PATHS = {
     "reddit": Path("data/scenarios/reddit_questions.json"),
     "oasst": Path("data/scenarios/oasst_questions.json"),
-    "airisk": Path("data/scenarios/airiskdilemmas.json"),
 }
 
 
 def load_dataset_scenarios(dataset_id: str):
     key = dataset_id.strip().lower()
+    if key == "airisk":
+        from .airisk import load_airisk_scenarios
+
+        return load_airisk_scenarios()
     if key not in _DATASET_PATHS:
         raise ValueError(f"Unknown dataset_id: {dataset_id}")
     p = _REPO_ROOT / _DATASET_PATHS[key]
@@ -56,6 +59,12 @@ def _normalize_scenarios(payload: Any) -> list[str]:
     if all(isinstance(x, str) for x in payload):
         return payload
 
+    if any(isinstance(item, dict) and "dilemma" in item for item in payload):
+        raise ValueError(
+            "Raw AIRiskDilemmas action rows are not scenario data. "
+            "Run scripts/prepare_airiskdilemmas.py to collapse paired rows first."
+        )
+
     # Also accept list[dict] with common prompt keys.
     out = []
     for item in payload:
@@ -69,12 +78,9 @@ def _normalize_scenarios(payload: Any) -> list[str]:
             if "question" in item and isinstance(item["question"], str):
                 out.append(item["question"])
                 continue
-            if "dilemma" in item and isinstance(item["dilemma"], str):
-                out.append(item["dilemma"])
-                continue
         raise ValueError(
             "Scenario JSON list items must be strings, or dicts containing "
-            "'scenario', 'prompt', 'question', or 'dilemma' string fields."
+            "'scenario', 'prompt', or 'question' string fields."
         )
     return out
 
@@ -96,6 +102,10 @@ def load_dataset_scenarios_from_spec(
       - scenario
       - prompt
       - question
+
+    The airisk ID downloads and prepares a pinned dataset automatically;
+    start/count select unique questions after preparation. Explicit paths
+    continue to read the supplied file.
 
     Relative paths are resolved first against run_dir, then repo root.
     """
@@ -149,6 +159,8 @@ def select_scenarios(
     if count is not None and count < 0:
         raise ValueError("dataset.count must be >= 0 when provided")
 
+    if len(set(scenarios)) != len(scenarios):
+        raise ValueError("Duplicate scenario text found; prepare unique scenarios before sampling")
     indexed = list(enumerate(scenarios))
     if shuffle:
         rng = random.Random(shuffle_seed)
