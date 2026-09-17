@@ -138,10 +138,20 @@ async def generate_validated(
     )
 
 
-def phase_config(phase_cfg: dict) -> GenerateConfig:
+def phase_config(phase_cfg: dict, model: str | None = None) -> GenerateConfig:
+    """Generation settings for a phase, with any per-model override applied.
+
+    Context windows differ by an order of magnitude across a panel, so one
+    budget either truncates the verbose models or overruns the small ones.
+    """
+
+    cfg = dict(phase_cfg)
+    override = (phase_cfg.get("per_model") or {}).get(model or "")
+    if override:
+        cfg.update(override)
     return GenerateConfig(
-        max_tokens=int(phase_cfg["max_tokens"]),
-        temperature=float(phase_cfg["temperature"]),
+        max_tokens=int(cfg["max_tokens"]),
+        temperature=float(cfg["temperature"]),
     )
 
 
@@ -160,9 +170,6 @@ def direct_rating_solver(
     criteria_text = "\n".join(criteria)
     reflection_system = build_direct_reflection_prompt()
     rating_system = build_direct_rating_prompt()
-    response_config = phase_config(generation["response"])
-    reflection_config = phase_config(generation["reflection"])
-    rating_config = phase_config(generation["direct_rating"])
     validator = direct_rating_validator(len(criteria), scale_min, scale_max)
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
@@ -182,7 +189,7 @@ def direct_rating_solver(
             output = await generate_validated(
                 resolve_model(eval_nick),
                 response_messages,
-                config=response_config,
+                config=phase_config(generation["response"], eval_nick),
                 max_attempts=max_attempts,
                 cache_enabled=cache_enabled,
                 validator=None,
@@ -208,7 +215,7 @@ def direct_rating_solver(
         reflection_output = await generate_validated(
             judge,
             reflection_messages,
-            config=reflection_config,
+            config=phase_config(generation["reflection"], judge_nick),
             max_attempts=max_attempts,
             cache_enabled=cache_enabled,
             validator=None,
@@ -227,7 +234,7 @@ def direct_rating_solver(
         rating_output = await generate_validated(
             judge,
             rating_messages,
-            config=rating_config,
+            config=phase_config(generation["direct_rating"], judge_nick),
             max_attempts=max_attempts,
             cache_enabled=cache_enabled,
             validator=validator,
@@ -291,12 +298,11 @@ def response_only_solver(
 ) -> Solver:
     """Generate one evaluee response per sample, and nothing else."""
 
-    config = phase_config(generation_cfg)
-
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         md = state.metadata
         s_idx = int(md["scenario_index"])
         eval_nick = md["eval_nick"]
+        config = phase_config(generation_cfg, eval_nick)
         messages = [
             ChatMessageSystem(content=RESPONSE_SYSTEM_MESSAGE),
             ChatMessageUser(content=md["scenario"]),
