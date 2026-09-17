@@ -59,7 +59,11 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
         # provider; snapshot the repo and point at the local path (legacy parity).
         from huggingface_hub import snapshot_download
 
-        local_repo = snapshot_download(repo_id=ref.repo_id, revision=ref.revision)
+        local_repo = snapshot_download(
+            repo_id=ref.repo_id,
+            revision=ref.revision,
+            allow_patterns=[f"{ref.subfolder}/*"],
+        )
         adapter_ref = os.path.join(local_repo, ref.subfolder)
         if base_model_id is None:
             base_model_id = _base_model_from_adapter_config(
