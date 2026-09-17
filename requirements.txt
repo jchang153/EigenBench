@@ -1,3 +1,4 @@
+inspect-ai
 vllm
 torch
 numpy 
