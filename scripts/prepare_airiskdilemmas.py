@@ -6,33 +6,19 @@ import argparse
 import json
 from pathlib import Path
 
+import sys
 
-DATASET_ID = "kellycyy/AIRiskDilemmas"
-DATASET_REVISION = "8674d1f5844c3909b05e06d9f30bbc2b7c753f39"
+# Keep the optional materialization CLI and built-in dataset loader identical.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-
-def paired_dilemmas(rows) -> list[str]:
-    """Collapse each consecutive pair of action rows into one scenario."""
-
-    iterator = iter(rows)
-    scenarios: list[str] = []
-    while True:
-        try:
-            first = next(iterator)
-        except StopIteration:
-            break
-        try:
-            second = next(iterator)
-        except StopIteration as exc:
-            raise ValueError("AIRiskDilemmas contains an unpaired final action row") from exc
-        first_value = first.get("dilemma") if isinstance(first, dict) else None
-        second_value = second.get("dilemma") if isinstance(second, dict) else None
-        if not isinstance(first_value, str) or not first_value.strip():
-            raise ValueError("AIRiskDilemmas contains an empty or non-string dilemma")
-        if first_value != second_value:
-            raise ValueError("consecutive AIRiskDilemmas action rows have different dilemmas")
-        scenarios.append(first_value)
-    return scenarios
+from pipeline.config.airisk import (  # noqa: E402, F401
+    DATASET_ID,
+    DATASET_REVISION,
+    load_airisk_scenarios,
+    paired_dilemmas,
+)
 
 
 def main() -> None:
@@ -44,20 +30,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from huggingface_hub import hf_hub_download
-
-    source_path = hf_hub_download(
-        repo_id=DATASET_ID,
-        filename="model_eval.jsonl",
-        repo_type="dataset",
-        revision=DATASET_REVISION,
-    )
-    with Path(source_path).open("r", encoding="utf-8") as handle:
-        scenarios = paired_dilemmas(json.loads(line) for line in handle if line.strip())
-    if len(scenarios) < 120:
-        raise RuntimeError(
-            f"Expected at least 120 unique AIRiskDilemmas scenarios; found {len(scenarios)}"
-        )
+    scenarios = load_airisk_scenarios()
 
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
