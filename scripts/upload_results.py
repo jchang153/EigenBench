@@ -21,7 +21,10 @@ from typing import Any
 
 def parse_spec(spec_path: Path) -> dict:
     """Parse a spec.py file and return the RUN_SPEC dict."""
-    namespace = {"min": min, "max": max, "bool": bool, "True": True, "False": False}
+    namespace = {
+        "__file__": str(spec_path),
+        "min": min, "max": max, "bool": bool, "True": True, "False": False,
+    }
     with open(spec_path) as f:
         exec(f.read(), namespace)
     return namespace["RUN_SPEC"]
@@ -377,6 +380,19 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
         if source is not None and source.exists():
             shutil.copy2(source, dest / log_file)
             inspect_info = {"log_file": log_file}
+            if eval_path.exists():
+                try:
+                    repo_root = str(Path(__file__).resolve().parents[1])
+                    if repo_root not in sys.path:
+                        sys.path.insert(0, repo_root)
+                    from inspect_pipeline.coverage import build_collection_report
+
+                    report = build_collection_report(source, eval_path)
+                    report_name = "collection_report.json"
+                    (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+                    inspect_info["collection_report_file"] = report_name
+                except Exception as exc:
+                    print(f"Warning: omission report unavailable: {exc}", file=sys.stderr)
     meta = build_meta(
         name,
         spec,
