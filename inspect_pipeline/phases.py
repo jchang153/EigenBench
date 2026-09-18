@@ -94,12 +94,16 @@ class ResponsePool:
         return value
 
 
-def _cache_for_attempt(cache_enabled: bool, attempt: int) -> bool | CachePolicy:
+def _cache_for_attempt(cache_enabled: bool, attempt: int, model_identity: str) -> bool | CachePolicy:
     if not cache_enabled:
         return False
     # Never-expiring, attempt-scoped: reruns reuse valid outputs (checkpoint
     # semantics) while validation retries get a fresh key.
-    return CachePolicy(expiry=None, scopes={"attempt": str(attempt)})
+    return CachePolicy(expiry=None, scopes={
+        "attempt": str(attempt),
+        "eigenbench_cache_version": "2",
+        "model_identity": model_identity,
+    })
 
 
 async def generate_validated(
@@ -115,12 +119,15 @@ async def generate_validated(
     """Legacy retry contract: empty, truncated, filtered, or validator-rejected
     completions are retried up to ``max_attempts``."""
 
+    model_identity = getattr(model, "_eigenbench_cache_identity", None)
+    if cache_enabled and model_identity is None:
+        raise ValueError("Cached generation requires a model from the EigenBench resolver")
     last_error = "no attempts made"
     for attempt in range(1, max_attempts + 1):
         output = await model.generate(
             input=list(messages),
             config=config,
-            cache=_cache_for_attempt(cache_enabled, attempt),
+            cache=_cache_for_attempt(cache_enabled, attempt, model_identity or ""),
         )
         content = output.completion
         if not isinstance(content, str) or not content.strip():
