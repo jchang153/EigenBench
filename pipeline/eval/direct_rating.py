@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 import random
+import math
 import re
 from pathlib import Path
 from typing import Callable
@@ -178,6 +179,19 @@ def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
             raise ValueError(f"collection.generation.{phase}.max_tokens must be positive")
         if values["temperature"] < 0:
             raise ValueError(f"collection.generation.{phase}.temperature must be non-negative")
+        overrides = configured.get("per_model") or {}
+        if not isinstance(overrides, dict):
+            raise ValueError(f"collection.generation.{phase}.per_model must be a mapping")
+        values["per_model"] = {}
+        for nick, override in overrides.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"per_model override for {nick} must be a mapping")
+            merged = {**values, **override}
+            tokens = int(merged["max_tokens"])
+            temperature = float(merged["temperature"])
+            if tokens <= 0 or not math.isfinite(temperature) or temperature < 0:
+                raise ValueError(f"invalid generation override for {phase}/{nick}")
+            values["per_model"][nick] = {"max_tokens": tokens, "temperature": temperature}
         resolved[phase] = values
     return resolved
 
@@ -673,12 +687,12 @@ def collect_direct_ratings(
             response_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, phase_settings=generation["response"].get("per_model", {}).get(eval_nick, generation["response"]): _call_openrouter(
                         model_path,
                         messages,
-                        generation["response"]["max_tokens"],
+                        phase_settings["max_tokens"],
                         settings,
-                        temperature=generation["response"]["temperature"],
+                        temperature=phase_settings["temperature"],
                     ),
                 )
             )
@@ -759,12 +773,12 @@ def collect_direct_ratings(
             reflection_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, phase_settings=generation["reflection"].get("per_model", {}).get(judge_nick, generation["reflection"]): _call_openrouter(
                         model_path,
                         messages,
-                        generation["reflection"]["max_tokens"],
+                        phase_settings["max_tokens"],
                         settings,
-                        temperature=generation["reflection"]["temperature"],
+                        temperature=phase_settings["temperature"],
                     ),
                 )
             )
@@ -825,12 +839,12 @@ def collect_direct_ratings(
             rating_tasks.append(
                 _OpenRouterTask(
                     identity=identity,
-                    call=lambda model_path=model_path, messages=messages: _call_openrouter(
+                    call=lambda model_path=model_path, messages=messages, phase_settings=generation["direct_rating"].get("per_model", {}).get(judge_nick, generation["direct_rating"]): _call_openrouter(
                         model_path,
                         messages,
-                        generation["direct_rating"]["max_tokens"],
+                        phase_settings["max_tokens"],
                         settings,
-                        temperature=generation["direct_rating"]["temperature"],
+                        temperature=phase_settings["temperature"],
                         response_validator=validator,
                     ),
                     validator=validator,
@@ -945,6 +959,7 @@ def _run_local_tasks_for_phase(
         ) as llm:
             lora_requests = prepare_lora_requests(llm, base_info.get("loras", {}))
             for nick in _models_in_local_group(base_info):
+                model_cfg = (phase_cfg.get("per_model") or {}).get(nick, phase_cfg)
                 phase_tasks = tasks_by_model.get(nick, [])
                 pending = []
                 for task in phase_tasks:
@@ -972,8 +987,8 @@ def _run_local_tasks_for_phase(
                         for task in pending
                     ]
                     params = SamplingParams(
-                        max_tokens=phase_cfg["max_tokens"],
-                        temperature=phase_cfg["temperature"],
+                        max_tokens=model_cfg["max_tokens"],
+                        temperature=model_cfg["temperature"],
                     )
                     if verbose:
                         print(f"  vLLM {pending[0].identity['stage']}: judge/model={nick} n={len(pending)}")
