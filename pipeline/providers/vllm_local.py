@@ -153,6 +153,9 @@ class VLLMEngineManager:
         enable_lora: bool = False,
         lora_count: int = 0,
     ):
+        self.tensor_parallel_size = int(os.environ.get("EIGENBENCH_TENSOR_PARALLEL_SIZE", "1"))
+        if self.tensor_parallel_size < 1:
+            raise ValueError("EIGENBENCH_TENSOR_PARALLEL_SIZE must be a positive integer")
         self.base_model_id = base_model_id
         self.enable_lora = enable_lora
         self.lora_count = int(lora_count)
@@ -162,6 +165,7 @@ class VLLMEngineManager:
         print(f"\n--- Starting vLLM engine for {self.base_model_id} ---")
         engine_args = {
             "model": self.base_model_id,
+            "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": 0.9,
             "enforce_eager": True,
             "max_model_len": 8192,
