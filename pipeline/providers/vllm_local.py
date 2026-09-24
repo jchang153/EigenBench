@@ -169,7 +169,7 @@ class VLLMEngineManager:
         if self.enable_lora:
             engine_args.update({
                 "enable_lora": True,
-                "max_lora_rank": 64,
+                "max_lora_rank": 512,
                 "max_loras": 1,
                 "max_cpu_loras": max(1, self.lora_count),
             })
