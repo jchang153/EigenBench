@@ -81,7 +81,8 @@ def run_openrouter_tasks(
     *,
     checkpoint: CollectionCheckpoint,
     max_workers: int,
-) -> list[str]:
+    omit_invalid: bool = False,
+) -> list[str | None]:
     """Run bounded parallel tasks, checkpointing every success and failure."""
 
     if max_workers <= 0:
@@ -133,7 +134,10 @@ def run_openrouter_tasks(
                 except OpenRouterCallError as exc:
                     error = exc.to_dict()
                     checkpoint.save_failed(task.identity, error)
-                    failures.append((task.identity, error))
+                    if not (omit_invalid and error.get("error_type") == "invalid_response"):
+                        failures.append((task.identity, error))
+                    else:
+                        print(f"[Omitted] {task.identity}: invalid response after retries", flush=True)
                 except Exception as exc:
                     error = {
                         "error_type": "client_bug",
@@ -161,9 +165,9 @@ def run_openrouter_tasks(
             "from the checkpoint after resolving the failure."
         )
 
-    if any(result is None for result in results):
+    if not omit_invalid and any(result is None for result in results):
         raise RuntimeError("OpenRouter task scheduler exited with incomplete results")
-    return [result for result in results if result is not None]
+    return results
 
 
 # Backward-compatible private names for callers that used the old mixed module.

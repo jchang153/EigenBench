@@ -153,7 +153,7 @@ def run_direct_analysis(
     direct_cfg = evaluation_cfg.get("direct_rating", {})
     collection_cfg = collection_cfg or {}
     sampler_mode = str(collection_cfg.get("sampler_mode", "all_to_all")).strip().lower()
-    allow_sparse = sampler_mode != "all_to_all"
+    allow_sparse = sampler_mode != "all_to_all" or collection_cfg.get("failure_policy") == "omit_invalid_judgments"
     labels = list(models)
     result = build_direct_trust(
         records,

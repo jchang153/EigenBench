@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import json
 import random
 import math
 import re
@@ -582,6 +583,10 @@ def collect_direct_ratings(
         num_models=len(models),
         include_self=include_self,
     )
+    failure_policy = collection_cfg.get("failure_policy", "strict")
+    if failure_policy not in {"strict", "omit_invalid_judgments"}:
+        raise ValueError("Unknown collection.failure_policy")
+    omit_invalid = failure_policy == "omit_invalid_judgments"
     generation = resolve_direct_generation_settings(collection_cfg)
     settings = _fallback_openrouter_settings(collection_cfg)
     criteria_text = "\n".join(criteria)
@@ -614,6 +619,8 @@ def collect_direct_ratings(
         "generation": generation,
         "openrouter": settings,
     }
+    if omit_invalid:
+        context["failure_policy"] = failure_policy
     if checkpoint.has_manifest():
         assignments = checkpoint.initialize_or_resume(context=context)
     else:
@@ -788,9 +795,11 @@ def collect_direct_ratings(
             reflection_tasks,
             checkpoint=checkpoint,
             max_workers=settings["max_workers"],
+            omit_invalid=omit_invalid,
         )
         for (s_idx, judge_nick, eval_nick), content in zip(reflection_targets, responses):
-            reflections[s_idx][judge_nick][eval_nick] = content
+            if content is not None:
+                reflections[s_idx][judge_nick][eval_nick] = content
 
     _run_local_reflection_phase(
         assignments=assignments,
@@ -803,6 +812,7 @@ def collect_direct_ratings(
         phase_cfg=generation["reflection"],
         max_attempts=settings["max_attempts"],
         verbose=verbose,
+        omit_invalid=omit_invalid,
     )
 
     validator = direct_rating_validator(len(criteria), scale_min, scale_max)
@@ -816,6 +826,8 @@ def collect_direct_ratings(
         model_path = openrouter_models[judge_nick]
         system_prompt = build_direct_rating_prompt()
         for eval_nick in assignment["eval_nicks"]:
+            if eval_nick not in reflections[s_idx][judge_nick]:
+                continue
             messages = [
                 {"role": "system", "content": system_prompt},
                 {
@@ -858,9 +870,11 @@ def collect_direct_ratings(
             rating_tasks,
             checkpoint=checkpoint,
             max_workers=settings["max_workers"],
+            omit_invalid=omit_invalid,
         )
         for (s_idx, judge_nick, eval_nick), content in zip(rating_targets, responses):
-            rating_responses[s_idx][judge_nick][eval_nick] = content
+            if content is not None:
+                rating_responses[s_idx][judge_nick][eval_nick] = content
 
     _run_local_rating_phase(
         assignments=assignments,
@@ -875,13 +889,20 @@ def collect_direct_ratings(
         max_attempts=settings["max_attempts"],
         validator=validator,
         verbose=verbose,
+        omit_invalid=omit_invalid,
     )
 
     records = []
+    omissions = []
     for assignment in assignments:
         s_idx = assignment["scenario_index"]
         judge_nick = assignment["judge_nick"]
         for eval_idx, eval_nick in zip(assignment["eval_idxs"], assignment["eval_nicks"]):
+            if eval_nick not in rating_responses[s_idx][judge_nick]:
+                omissions.append({"scenario_index": s_idx, "judge": judge_nick, "evaluee": eval_nick,
+                                  "stage": "reflection" if eval_nick not in reflections[s_idx][judge_nick] else "direct_rating",
+                                  "reason": "invalid_response_after_retries"})
+                continue
             raw_rating = rating_responses[s_idx][judge_nick][eval_nick]
             parsed = parse_direct_ratings(
                 raw_rating,
@@ -918,8 +939,12 @@ def collect_direct_ratings(
             )
 
     expected = sum(len(assignment["eval_nicks"]) for assignment in assignments)
-    if len(records) != expected:
+    if not omit_invalid and len(records) != expected:
         raise RuntimeError(f"incomplete direct rating set: expected {expected}, got {len(records)}")
+    if omit_invalid:
+        Path(evaluations_path).with_name("omitted_samples.json").write_text(json.dumps({
+            "planned": expected, "completed": len(records), "omitted": len(omissions), "samples": omissions}, indent=2))
+        print(f"Judgment coverage: {len(records)}/{expected}; omitted {len(omissions)}", flush=True)
     checkpoint.finalize(evaluations_path, records)
     print(f"Direct collection complete. {len(records)} ratings saved to {evaluations_path}")
     return records
@@ -943,6 +968,7 @@ def _run_local_tasks_for_phase(
     max_attempts: int,
     consume: Callable[[_LocalTask, str], None],
     verbose: bool,
+    omit_invalid: bool = False,
 ) -> None:
     if not local_groups:
         return
@@ -1029,6 +1055,9 @@ def _run_local_tasks_for_phase(
                                         "exhausted": True,
                                     },
                                 )
+                                if omit_invalid:
+                                    print(f"[Omitted] {task.identity}: invalid response after retries", flush=True)
+                                    continue
                                 raise RuntimeError(
                                     f"local generation validation failed after {max_attempts} attempts: "
                                     f"task={task.identity}, error={validation_error}"
@@ -1149,6 +1178,8 @@ def _run_local_rating_phase(**kwargs) -> None:
             continue
         s_idx = assignment["scenario_index"]
         for eval_nick in assignment["eval_nicks"]:
+            if eval_nick not in reflections[s_idx][judge_nick]:
+                continue
             tasks_by_model[judge_nick].append(
                 _LocalTask(
                     identity={

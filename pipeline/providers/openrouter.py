@@ -513,6 +513,8 @@ def get_openrouter_response(
         attempt_history: list[OpenRouterErrorDetails] = []
         for attempt in range(1, max_attempts + 1):
             _SHARED_RETRY_COOLDOWN.wait()
+            started = time.monotonic()
+            print(f"[API] OpenRouter model={model} attempt={attempt}/{max_attempts} started max_tokens={max_tokens}", flush=True)
             try:
                 response = client.chat.completions.create(
                     model=model,
@@ -527,6 +529,10 @@ def get_openrouter_response(
                     max_attempts=max_attempts,
                     response_validator=response_validator,
                 )
+                usage = getattr(response, "usage", None)
+                print(f"[API] OpenRouter model={model} attempt={attempt}/{max_attempts} completed "
+                      f"seconds={time.monotonic()-started:.1f} prompt_tokens={getattr(usage, 'prompt_tokens', None)} "
+                      f"completion_tokens={getattr(usage, 'completion_tokens', None)}", flush=True)
                 return response if return_full_response else completion.content
             except _AttemptFailure as exc:
                 details = exc.details
@@ -538,6 +544,9 @@ def get_openrouter_response(
                     max_attempts=max_attempts,
                 )
 
+            print(f"[API] OpenRouter model={model} attempt={attempt}/{max_attempts} failed "
+                  f"seconds={time.monotonic()-started:.1f} error={details.error_type} status={details.status_code} "
+                  f"retry={details.retryable and attempt < max_attempts}", flush=True)
             attempt_history.append(details)
 
             if not details.retryable:
