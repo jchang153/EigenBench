@@ -57,7 +57,6 @@ from inspect_pipeline.phases import (
 )
 
 DEFAULT_MAX_ATTEMPTS = 4
-# What `inspect eval inspect_pipeline/eigenbench.py` runs without -T spec.
 DEFAULT_SPEC = "runs/default/spec.py"
 
 
@@ -316,11 +315,7 @@ def sanitize(nick: str) -> str:
 
 
 def _eval_model() -> Model | None:
-    """The model given to ``inspect eval --model`` (or ``eval(model=...)``), if any.
-
-    Inspect makes it the active model before creating the task. A task built outside an eval
-    (``scripts/run_inspect.py``) has none, and an eval without ``--model`` runs ``none/none``.
-    """
+    """Read Inspect's active model, excluding its ``none/none`` placeholder."""
 
     from inspect_ai.model._model import active_model
 
@@ -331,12 +326,7 @@ def _eval_model() -> Model | None:
 
 
 def with_eval_model(spec: str, models: dict[str, object] | None) -> dict[str, object] | None:
-    """Add the ``--model`` model to the panel as one more evaluee and judge.
-
-    EigenBench ranks a panel against itself, so ``--model`` cannot replace it; it joins it,
-    named by its Inspect model name. A matching entry keeps its nickname and uses the
-    active model, provided any explicit provider arguments agree.
-    """
+    """Join the CLI model to the panel, retaining matching nicknames and settings."""
 
     model = _eval_model()
     if model is None:
@@ -356,11 +346,10 @@ def with_eval_model(spec: str, models: dict[str, object] | None) -> dict[str, ob
                     )
                 panel[nick] = model
                 return panel
-    nick = name
-    suffix = 1
+    nick = name if name not in panel else f"{name} (--model)"
+    suffix = 2
     while nick in panel:
-        label = "--model" if suffix == 1 else f"--model {suffix}"
-        nick = f"{name} ({label})"
+        nick = f"{name} (--model {suffix})"
         suffix += 1
     return {**panel, nick: model}
 

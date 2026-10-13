@@ -318,7 +318,6 @@ def test_default_spec_builds_without_arguments(monkeypatch):
     assert len(ctx["criteria"]) == 8 and ctx["include_self"]
 
     task = eigenbench()
-    # all_to_all with self-ratings: every judge rates every evaluee on every scenario
     assert len(task.dataset) == 100 * len(models) ** 2
 
     import contextvars
@@ -334,7 +333,7 @@ def test_default_spec_builds_without_arguments(monkeypatch):
 
     assert panel_with("none") is None  # inspect eval without --model: the spec's panel
     existing = panel_with("openrouter/openai/gpt-4.1-nano")
-    assert list(existing) == list(models)  # already in the panel, keeping its nickname
+    assert list(existing) == list(models)
     assert str(existing["GPT-4.1 nano"]) == "openrouter/openai/gpt-4.1-nano"
     assert list(panel_with("mockllm/model")) == [*models, "mockllm/model"]
 

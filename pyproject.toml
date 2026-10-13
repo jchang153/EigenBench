@@ -10,8 +10,6 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-# The same set as requirements.txt, except vLLM, which is only imported to serve local models
-# and does not install on macOS or machines without CUDA: it is the `local` extra.
 dependencies = [
     "inspect-ai>=0.3.268",
     "torch",
@@ -33,8 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local Hugging Face models and LoRA adapters (hf_local: references), served with vLLM,
-# which publishes Linux wheels only.
+# vLLM serves hf_local models and LoRA adapters on Linux.
 local = ["vllm; sys_platform == 'linux'"]
 
 [project.urls]
@@ -45,5 +42,5 @@ Repository = "https://github.com/jchang153/eigenbench"
 include = ["pipeline*", "inspect_pipeline*", "scripts*"]
 
 [tool.uv]
-# Resolving the optional Linux extra must not execute CUDA-only sdist builds on hosted-model machines.
+# uv also resolves optional extras. vLLM source builds require CUDA.
 no-build-package = ["vllm"]

@@ -24,10 +24,7 @@ from pipeline.providers.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_m
 
 INSPECT_PREFIX = "inspect:"
 
-# The native engine's vLLM settings (pipeline/providers/vllm_local.py), so a local model
-# starts the same way under both engines. Without them vLLM serves a model at its full context
-# window and reserves KV cache for all of it: a 27B model with a 256k window runs natively on one
-# 80 GB GPU but cannot start under Inspect. max_model_len is lowered to a shorter model window.
+# Match pipeline/providers/vllm_local.py and limit KV-cache allocation.
 VLLM_SERVER_DEFAULTS = {
     "max_model_len": DEFAULT_MAX_MODEL_LEN,
     "gpu_memory_utilization": 0.9,

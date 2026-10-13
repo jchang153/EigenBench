@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-# The window both engines ask vLLM for. vLLM otherwise reserves KV cache for a model's whole
-# trained window (256k for some current models), which does not fit beside a large model.
+# Limit KV-cache allocation for models with large context windows.
 DEFAULT_MAX_MODEL_LEN = 8192
 
 
@@ -13,13 +12,9 @@ DEFAULT_MAX_MODEL_LEN = 8192
 def resolve_max_model_len(
     model_id: str, revision: str | None = None, requested: int = DEFAULT_MAX_MODEL_LEN
 ) -> int:
-    """``requested``, or the model's own window when that is shorter.
+    """Cap the requested context at the model's window, including multimodal text configs.
 
-    vLLM refuses to start when max_model_len exceeds the model's
-    max_position_embeddings (OLMo-2-7B is 4096). Going above the trained window is not
-    offered: vLLM warns it gives NaNs under RoPE or out-of-bounds errors under absolute
-    position encodings. Multimodal models keep the window in their text config. If the
-    config cannot be read (offline, gated, custom code) ``requested`` is used.
+    Keep ``requested`` if the config is unavailable or has no usable limit.
     """
 
     try:
@@ -57,8 +52,8 @@ def resolve_max_model_len(
             # OLMo-2 stores max_position_embeddings as a float.
             if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
                 limits.append(int(value))
-    if not limits or min(limits) >= requested:
+    window = min(limits, default=requested)
+    if window >= requested:
         return requested
-    window = min(limits)
     print(f"  Capping max_model_len {requested} -> {window} (the window of {model_id})")
     return window
