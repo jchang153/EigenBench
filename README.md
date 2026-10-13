@@ -249,6 +249,29 @@ scenario indexing.
 
 ### Native Inspect command
 
+After `uv sync`, run the default direct-rating task with `OPENROUTER_API_KEY` set
+
+```bash
+uv run inspect eval inspect_pipeline/eigenbench.py@eigenbench
+```
+
+The [default spec](runs/default/spec.py) uses GPT-4.1 nano, Gemini 2.5 Flash-Lite,
+Llama 4 Scout and Mistral Small 3.2 through OpenRouter. They evaluate the first
+100 scenarios from the pinned AIRiskDilemmas dataset against the eight-criterion
+kindness constitution. Every model judges every response, including its own,
+for 400 responses and 1,600 judgments.
+
+An Inspect `--model` joins the configured panel as both judge and evaluee
+
+```bash
+uv run inspect eval inspect_pipeline/eigenbench.py@eigenbench \
+  --model openai/gpt-5-nano
+```
+
+A new fifth model increases the plan to 500 responses and 2,500 judgments.
+The added model uses its Inspect provider and credentials. To score its exported
+records with the analysis scripts, include it in the spec's `models` mapping.
+
 For direct control over Inspect flags, collect a single-task direct-rating run:
 
 ```bash
@@ -257,8 +280,8 @@ inspect eval inspect_pipeline/eigenbench.py \
   --log-dir runs/my_run/inspect_logs
 ```
 
-Models come from the spec; no `--model` argument is needed. Export and score the
-result using the commands above. The wrapper handles phased local collection;
+Without `--model`, the panel comes from the spec. Export and score the result
+using the commands above. The wrapper handles phased local collection;
 use it for a panel that cannot fit in GPU memory together. Individual phased
 extension logs must be combined by the extension runner, not exported alone.
 

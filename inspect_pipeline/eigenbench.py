@@ -334,7 +334,8 @@ def with_eval_model(spec: str, models: dict[str, object] | None) -> dict[str, ob
     """Add the ``--model`` model to the panel as one more evaluee and judge.
 
     EigenBench ranks a panel against itself, so ``--model`` cannot replace it; it joins it,
-    named by its Inspect model name. A model the panel already has is not added twice.
+    named by its Inspect model name. A matching entry keeps its nickname and uses the
+    active model, provided any explicit provider arguments agree.
     """
 
     model = _eval_model()
@@ -342,10 +343,25 @@ def with_eval_model(spec: str, models: dict[str, object] | None) -> dict[str, ob
         return models
     panel = dict(models if models is not None else load_run_spec(resolve_spec_ref(spec))[0]["models"])
     name = str(ModelName(model))
-    for value in panel.values():
-        if value is model or (not isinstance(value, Model) and to_inspect_model(value).name == name):
+    for nick, value in panel.items():
+        if value is model:
             return panel
-    nick = name if name not in panel else f"{name} (--model)"
+        if not isinstance(value, Model):
+            ref = to_inspect_model(value)
+            if ref.name == name:
+                if ref.model_args and ref.model_args != model.model_args:
+                    raise ValueError(
+                        f"--model {name} conflicts with the settings of panel member {nick!r}. "
+                        "Configure this model in the spec and omit --model, or use matching model arguments."
+                    )
+                panel[nick] = model
+                return panel
+    nick = name
+    suffix = 1
+    while nick in panel:
+        label = "--model" if suffix == 1 else f"--model {suffix}"
+        nick = f"{name} ({label})"
+        suffix += 1
     return {**panel, nick: model}
 
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -43,3 +43,7 @@ Repository = "https://github.com/jchang153/eigenbench"
 
 [tool.setuptools.packages.find]
 include = ["pipeline*", "inspect_pipeline*", "scripts*"]
+
+[tool.uv]
+# Resolving the optional Linux extra must not execute CUDA-only sdist builds on hosted-model machines.
+no-build-package = ["vllm"]

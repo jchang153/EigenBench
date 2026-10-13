@@ -42,7 +42,17 @@ def resolve_max_model_len(
 
     limits = []
     for candidate in configs:
-        for attr in ("max_position_embeddings", "model_max_length"):
+        for attr in (
+            "max_position_embeddings",
+            "n_positions",
+            "max_seq_len",
+            "seq_length",
+            "model_max_length",
+            "max_target_positions",
+            "max_sequence_length",
+            "max_seq_length",
+            "seq_len",
+        ):
             value = getattr(candidate, attr, None)
             # OLMo-2 stores max_position_embeddings as a float.
             if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:

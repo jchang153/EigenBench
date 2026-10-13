@@ -305,6 +305,7 @@ def test_model_mapping():
 
 def test_default_spec_builds_without_arguments(monkeypatch):
     """`inspect eval inspect_pipeline/eigenbench.py` needs no -T spec."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-key")
     import pipeline.config.airisk as airisk
     from inspect_pipeline.eigenbench import DEFAULT_SPEC, _run_context, eigenbench
 
@@ -332,8 +333,79 @@ def test_default_spec_builds_without_arguments(monkeypatch):
         return contextvars.copy_context().run(run)
 
     assert panel_with("none") is None  # inspect eval without --model: the spec's panel
-    assert panel_with("openrouter/openai/gpt-4.1-nano") == models  # already in the panel
+    existing = panel_with("openrouter/openai/gpt-4.1-nano")
+    assert list(existing) == list(models)  # already in the panel, keeping its nickname
+    assert str(existing["GPT-4.1 nano"]) == "openrouter/openai/gpt-4.1-nano"
     assert list(panel_with("mockllm/model")) == [*models, "mockllm/model"]
+
+
+def test_matching_eval_model_uses_requested_outputs(run_dir):
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.model import ModelOutput, get_model
+    from inspect_pipeline.export import records_from_log
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec()
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text
+        if system.startswith("Without making any mention"):
+            content = "requested target response"
+        elif system.startswith("You are acting as a judge. Carefully consider the following response"):
+            content = "requested target reflection"
+        else:
+            content = "\n".join(f"<criterion_{i}_rating>7</criterion_{i}_rating>" for i in range(1, NUM_CRITERIA + 1))
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    under_test = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    log = inspect_eval(
+        f"{REPO_ROOT}/inspect_pipeline/eigenbench.py@eigenbench",
+        task_args={"spec": str(spec_path), "models": {"target": "inspect:mockllm/model"}, "cache": False},
+        model=under_test,
+        display="none",
+        log_dir=str(tmp_path / "logs"),
+    )[0]
+    assert log.status == "success"
+    records = records_from_log(log)
+    assert len(records) == SCENARIO_COUNT
+    assert {r["judge"]["name"] for r in records} == {"target"}
+    assert {r["evaluee"]["name"] for r in records} == {"target"}
+    assert all(r["response"] == "requested target response" for r in records)
+    assert all(r["reflection"] == "requested target reflection" for r in records)
+    assert all(entry["rating"] == 7 for r in records for entry in r["ratings"])
+
+
+def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
+    from inspect_ai.model import get_model
+    import inspect_pipeline.eigenbench as task_module
+    import inspect_pipeline.model_mapping as mapping
+
+    monkeypatch.setattr(mapping, "resolve_max_model_len", lambda *args: 8192)
+    ref = {"provider": "hf_local", "repo_id": "org/base", "revision": "pinned"}
+    under_test = get_model("vllm/org/base", revision="changed", memoize=False)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
+    with pytest.raises(ValueError, match="conflicts with the settings"):
+        task_module.with_eval_model("unused", {"pinned": ref})
+
+    matching = get_model("vllm/org/base", memoize=False, **mapping.to_inspect_model(ref).model_args)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: matching)
+    assert task_module.with_eval_model("unused", {"pinned": ref}) == {"pinned": matching}
+
+
+def test_eval_model_keeps_panel_members_when_nicknames_collide(monkeypatch):
+    from inspect_ai.model import get_model
+    import inspect_pipeline.eigenbench as task_module
+
+    under_test = get_model("mockllm/model", memoize=False)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
+    panel = {
+        "mockllm/model": "inspect:mockllm/first",
+        "mockllm/model (--model)": "inspect:mockllm/second",
+    }
+    joined = task_module.with_eval_model("unused", panel)
+    assert len(joined) == len(panel) + 1
+    assert all(joined[nick] == value for nick, value in panel.items())
+    assert joined["mockllm/model (--model 2)"] is under_test
 
 
 def test_eval_model_joins_the_panel(run_dir):

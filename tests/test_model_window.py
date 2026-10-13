@@ -27,6 +27,16 @@ def test_shorter_window_wins_and_float_windows_are_read(configs):
     assert resolve_max_model_len("allenai/OLMo-2-1124-7B") == 4096
 
 
+def test_mpt_window_caps_native_and_inspect_models(configs):
+    from transformers import MptConfig
+    from inspect_pipeline.model_mapping import to_inspect_model
+
+    model_id = "mosaicml/mpt-7b-instruct"
+    configs[(model_id, None)] = MptConfig(max_seq_len=2048)
+    assert resolve_max_model_len(model_id) == 2048
+    assert to_inspect_model(f"hf_local:{model_id}").model_args["max_model_len"] == 2048
+
+
 def test_longer_windows_keep_the_default(configs):
     configs[("Qwen/Qwen2.5-7B-Instruct", "abc")] = SimpleNamespace(max_position_embeddings=32768)
     assert resolve_max_model_len("Qwen/Qwen2.5-7B-Instruct", "abc") == DEFAULT_MAX_MODEL_LEN
