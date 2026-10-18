@@ -10,7 +10,7 @@ def manager():
     path=Path(__file__).parents[1]/'pipeline/providers/vllm_local.py'
     tree=ast.parse(path.read_text())
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='VLLMEngineManager')
-    scope={'os':os,'Optional':Optional,'LLM':lambda **kwargs:kwargs}
+    scope={'os':os,'Optional':Optional,'LLM':lambda **kwargs:kwargs,'resolve_max_model_len':lambda model_id:8192}
     exec(compile(ast.Module(body=[cls],type_ignores=[]),str(path),'exec'),scope)
     return scope['VLLMEngineManager']
 

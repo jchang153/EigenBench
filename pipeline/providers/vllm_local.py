@@ -17,6 +17,7 @@ from vllm import LLM
 from vllm.lora.request import LoRARequest
 
 from pipeline.model_refs import is_hf_local_model, parse_hf_local_model
+from pipeline.providers.model_window import resolve_max_model_len
 
 
 def group_models_for_vllm(
@@ -168,7 +169,7 @@ class VLLMEngineManager:
             "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": 0.9,
             "enforce_eager": True,
-            "max_model_len": 8192,
+            "max_model_len": resolve_max_model_len(self.base_model_id),
         }
         if self.enable_lora:
             engine_args.update({

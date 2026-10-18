@@ -20,8 +20,16 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
+from pipeline.providers.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
 
 INSPECT_PREFIX = "inspect:"
+
+# Match pipeline/providers/vllm_local.py and limit KV-cache allocation.
+VLLM_SERVER_DEFAULTS = {
+    "max_model_len": DEFAULT_MAX_MODEL_LEN,
+    "gpu_memory_utilization": 0.9,
+    "enforce_eager": True,
+}
 
 
 @dataclass(frozen=True)
@@ -44,9 +52,34 @@ def _base_model_from_adapter_config(adapter_config_path: str) -> str:
     return base_model_id.strip()
 
 
+def vllm_server_args(model_id: str | None = None, revision: str | None = None) -> dict:
+    """``vllm serve`` arguments for a local model.
+
+    The native defaults, with max_model_len lowered to the model's own window when shorter,
+    the native engine's ``EIGENBENCH_TENSOR_PARALLEL_SIZE``, then any overrides in
+    ``EIGENBENCH_VLLM_SERVER_ARGS`` (a JSON object; ``null`` removes a default), e.g.
+    ``{"max_model_len": 32768}``.
+    """
+
+    args = dict(VLLM_SERVER_DEFAULTS)
+    tensor_parallel_size = int(os.environ.get("EIGENBENCH_TENSOR_PARALLEL_SIZE", "1"))
+    if tensor_parallel_size < 1:
+        raise ValueError("EIGENBENCH_TENSOR_PARALLEL_SIZE must be a positive integer")
+    if tensor_parallel_size > 1:
+        args["tensor_parallel_size"] = tensor_parallel_size
+    overrides = os.environ.get("EIGENBENCH_VLLM_SERVER_ARGS")
+    overrides = json.loads(overrides) if overrides else {}
+    if not isinstance(overrides, dict):
+        raise ValueError("EIGENBENCH_VLLM_SERVER_ARGS must be a JSON object")
+    if model_id and "max_model_len" not in overrides:
+        args["max_model_len"] = resolve_max_model_len(model_id, revision, args["max_model_len"])
+    args.update(overrides)
+    return {key: value for key, value in args.items() if value is not None}
+
+
 def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
     if not ref.expects_lora:
-        model_args: dict = {}
+        model_args: dict = vllm_server_args(ref.repo_id, ref.revision)
         if ref.revision:
             model_args["revision"] = ref.revision
         return InspectModelRef(
@@ -81,7 +114,7 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
             base_model_id = _base_model_from_adapter_config(config_path)
         adapter_ref = ref.repo_id + (f"@{ref.revision}" if ref.revision else "")
 
-    model_args = {}
+    model_args = vllm_server_args(base_model_id, ref.base_revision)
     if ref.base_revision:
         model_args["revision"] = ref.base_revision
     return InspectModelRef(

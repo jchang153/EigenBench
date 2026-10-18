@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eigenbench"
+version = "0.1.0"
+description = "EigenBench: a comparative behavioral measure of value alignment"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "inspect-ai>=0.3.268",
+    "torch",
+    "numpy",
+    "scikit-learn",
+    "matplotlib",
+    "tqdm",
+    "python-dotenv",
+    "openai",
+    "scipy",
+    "pandas",
+    "anthropic",
+    "google-genai",
+    "accelerate",
+    "transformers",
+    "datasets",
+    "huggingface_hub",
+    "gradio_client",
+]
+
+[project.optional-dependencies]
+# vLLM serves hf_local models and LoRA adapters on Linux.
+local = ["vllm; sys_platform == 'linux'"]
+
+[project.urls]
+Paper = "https://arxiv.org/abs/2509.01938"
+Repository = "https://github.com/jchang153/eigenbench"
+
+[tool.setuptools.packages.find]
+include = ["pipeline*", "inspect_pipeline*", "scripts*"]
+
+[tool.uv]
+# uv also resolves optional extras. vLLM source builds require CUDA.
+no-build-package = ["vllm"]
