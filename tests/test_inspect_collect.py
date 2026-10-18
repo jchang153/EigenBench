@@ -528,8 +528,11 @@ def test_phased_matches_single_task(run_dir):
 
     info = json.loads((tmp_path / "inspect_run.json").read_text())
     assert info["log_file"].endswith(".eval")
-    # One log per judge.
-    assert len(info.get("log_files", [info["log_file"]])) == len(NICKS)
+    # Every log: one per judge, the primary first, and one per responding model.
+    [part] = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
+    roles = {entry["file"]: entry["role"] for entry in part["logs"]}
+    assert info["log_files"][0] == info["log_file"] and roles[info["log_file"]] == "judgments"
+    assert sorted(roles[name] for name in info["log_files"]) == ["judgments"] * len(NICKS) + ["responses"] * len(NICKS)
 
 
 @pytest.mark.parametrize("include_self", [True, False])
@@ -1044,8 +1047,20 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
     assert normalized(actual) == normalized(single)
     assert not active and len(closed) == 10  # Five response phases, five judges.
     info = json.loads((tmp_path / "inspect_run.json").read_text())
-    assert len(info["log_files"]) == 5
-    judge_log = tmp_path / "inspect_logs" / info["log_files"][0]
+    # The run keeps its earlier logs and adds the extension's five judge and five response logs.
+    # The collection, the single-task extension, then this one, each with its own logs.
+    parts = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
+    assert [part["kind"] for part in parts] == ["collection", "extension", "extension"]
+    extension = parts[-1]
+    assert extension["status"] == "exported"
+    assert sorted(entry["role"] for entry in extension["logs"]) == ["judgments"] * 5 + ["responses"] * 5
+    offset = 0
+    for part in parts:  # log_files keeps every earlier log, in order
+        files = {entry["file"] for entry in part["logs"]}
+        assert set(info["log_files"][offset:offset + len(files)]) == files
+        offset += len(files)
+    assert offset == len(info["log_files"])
+    judge_log = tmp_path / "inspect_logs" / info["log_file"]
     with pytest.raises(ValueError, match="only one judge"):
         export_log(judge_log, evaluations_path=tmp_path / "partial.jsonl", append=True)
     target.write_bytes(baseline)

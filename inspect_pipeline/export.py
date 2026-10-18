@@ -51,11 +51,8 @@ def eigenbench_metadata(log: EvalLog) -> dict:
 def is_invalid_judgment(error) -> bool:
     """Whether a sample error is a judgment still invalid after every attempt."""
 
-    name = InvalidJudgmentError.__name__
-    if error.message.startswith(f"{name}("):
-        return True
-    lines = [line for line in (error.traceback or "").splitlines() if line.strip()]
-    return bool(lines) and name in lines[-1]
+    # Inspect records a sample error as the exception's repr.
+    return error.message.startswith(f"{InvalidJudgmentError.__name__}(")
 
 
 def _sample_label(sample) -> str:
@@ -268,8 +265,12 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
     return rows
 
 
-def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list) -> Path:
-    """Record which log(s) produced a run, so the upload can carry them."""
+def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False) -> Path:
+    """Record which log(s) produced a run, so the upload can carry them.
+
+    ``log_files`` lists every log; ``append`` (an extension) adds to the run's earlier ones.
+    ``log_file`` stays the latest primary log, for the log viewer.
+    """
 
     path = Path(run_dir) / "inspect_run.json"
     info = {}
@@ -277,9 +278,9 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list) -> Path:
         info = json.loads(path.read_text(encoding="utf-8"))
     logs = log if isinstance(log, list) else [log]
     names = [Path(str(item.location)).name for item in logs]
+    earlier = (info.get("log_files") or [info["log_file"]] if info.get("log_file") else []) if append else []
     info["log_file"] = names[0]
-    if len(names) > 1:
-        info["log_files"] = names
+    info["log_files"] = list(dict.fromkeys(earlier + names))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return path
@@ -421,7 +422,7 @@ def export_log(
         if direct:
             write_omissions(target, planned=planned or len(log.samples or []), records=records,
                             omissions=omissions)
-    write_inspect_run_info(target.parent, log)
+    write_inspect_run_info(target.parent, log, append=append)
 
     cache_target = cached_responses_path or meta.get("cached_responses_path")
     if cache_target:

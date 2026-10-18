@@ -43,9 +43,11 @@ async def _close_loaded(loaded):
             await close()
 
 
-def _run_one(task, loaded, eval_kwargs):
+def _run_one(task, loaded, eval_kwargs, seen_logs: list | None = None):
     try:
         logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kwargs)
+        if seen_logs is not None:
+            seen_logs.extend(logs)
         if len(logs) != 1 or logs[0].status != "success":
             raise RuntimeError("phased extension task did not complete; nothing appended")
         log = logs[0]
@@ -56,7 +58,10 @@ def _run_one(task, loaded, eval_kwargs):
         anyio.run(_close_loaded, loaded)
 
 
-def collect_phased_extension(prepared, eval_kwargs):
+def collect_phased_extension(prepared, eval_kwargs, seen_logs: list | None = None):
+    """Collect an extension one model at a time; every log written goes to ``seen_logs``."""
+
+    seen_logs = seen_logs if seen_logs is not None else []
     plan = prepared["plan"]
     responses = response_index(prepared["records"], plan.mode)
     required = defaultdict(set)
@@ -90,7 +95,7 @@ def collect_phased_extension(prepared, eval_kwargs):
             ),
             metadata={"eigenbench_phase": "response", "evaluee": nick},
         )
-        log = _run_one(task, loaded, eval_kwargs)
+        log = _run_one(task, loaded, eval_kwargs, seen_logs)
         for sample in log.samples:
             value = (sample.store or {}).get(STORE_RESPONSE)
             if not isinstance(value, str) or not value.strip():
@@ -114,7 +119,7 @@ def collect_phased_extension(prepared, eval_kwargs):
             {**prepared, "plan": portion}, context=ctx, task_label=f"judge_{sanitize(nick)}",
         )
         task.metadata["eigenbench"]["extension_phased"] = True
-        log = _run_one(task, loaded, eval_kwargs)
+        log = _run_one(task, loaded, eval_kwargs, seen_logs)
         if plan.mode == DIRECT:
             records.extend(records_from_log(log))
         else:

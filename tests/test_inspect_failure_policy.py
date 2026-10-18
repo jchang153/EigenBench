@@ -97,6 +97,13 @@ def write_spec(tmp_path):
     return write
 
 
+COUNTS = ("planned", "logged", "exported", "failed", "omitted", "unstarted")
+
+
+def counts(report):
+    return {name: report[name] for name in COUNTS}
+
+
 def collect(spec_path):
     from inspect_pipeline.collect import collect_direct_ratings_inspect
 
@@ -117,6 +124,20 @@ def test_invalid_judgment_is_omitted_and_recorded(write_spec, tmp_path, fault, s
     assert (row["stage"], row["reason"]) == (stage, "invalid_response_after_retries")
     assert len((tmp_path / "evaluations.jsonl").read_text().splitlines()) == PLANNED - 1
 
+    # The run's report covers every log, responses included when phased.
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    assert (report["schema_version"], report["failure_policy"]) == (2, "omit_invalid_judgments")
+    assert counts(report) == {"planned": PLANNED, "logged": PLANNED, "exported": PLANNED - 1,
+                              "failed": 1, "omitted": 1, "unstarted": 0}
+    [part] = report["collections"]
+    assert (part["kind"], part["status"], part["unstarted_judgments"]) == ("collection", "exported", [])
+    assert part["omissions"][0]["error"].startswith("InvalidJudgmentError(")
+    assert sorted({entry["role"] for entry in part["logs"]}) == (["judgments", "responses"] if phased else ["judgments"])
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    assert info["collection_report_file"] == "collection_report.json"
+    assert info["log_files"][0] == info["log_file"]
+    assert set(info["log_files"]) == {entry["file"] for entry in part["logs"]}
+
     # A finished run with omissions short-circuits instead of looking incomplete.
     assert collect(write_spec(fault=fault, phased=phased)) == records
 
@@ -136,6 +157,9 @@ def test_reexport_follows_the_run_policy(write_spec, tmp_path):
 
     with pytest.raises(RuntimeError, match="failure_policy=strict"):
         export_log(log.name, evaluations_path=tmp_path / "again.jsonl", failure_policy="strict")
+    # A misspelt policy is refused rather than quietly treated as strict.
+    with pytest.raises(ValueError, match="Unknown failure_policy 'omit'"):
+        export_log(log.name, evaluations_path=tmp_path / "again.jsonl", failure_policy="omit")
 
 
 @pytest.mark.parametrize("phased", [False, True])
@@ -160,6 +184,13 @@ def test_strict_refuses_an_invalid_judgment(write_spec, tmp_path, phased):
     assert "judge=a evaluee=b" in message
     assert not (tmp_path / "evaluations.jsonl").exists()
     assert not (tmp_path / "omitted_samples.json").exists()
+
+    # The refused run is still reported: everything ran, nothing was exported.
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    [part] = report["collections"]
+    assert part["status"] == "refused" and "failure_policy=strict" in part["error"]
+    assert counts(report) == {"planned": PLANNED, "logged": PLANNED, "exported": 0,
+                              "failed": 1, "omitted": PLANNED, "unstarted": 0}
 
 
 @pytest.mark.parametrize("phased", [False, True])
@@ -186,6 +217,18 @@ def test_failed_responses_stop_the_run(write_spec, tmp_path, policy, phased):
         assert "response(s) failed; no judgments run" in message and "Models involved: b" in message
     assert not (tmp_path / "evaluations.jsonl").exists()
     assert not (tmp_path / "omitted_samples.json").exists()
+
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    [part] = report["collections"]
+    assert part["status"] == "refused"
+    if phased:
+        # Stopped after the response phase: no judgment started.
+        assert (report["planned"], report["logged"], report["unstarted"]) == (PLANNED, 0, PLANNED)
+        assert {entry["role"] for entry in part["logs"]} == {"responses"}
+    else:
+        # Both judges of b's missing response failed inside their judgment samples.
+        assert counts(report) == {"planned": PLANNED, "logged": PLANNED, "exported": 0,
+                                  "failed": 2, "omitted": PLANNED, "unstarted": 0}
 
 
 @pytest.mark.parametrize("policy", ["strict", "omit_invalid_judgments"])
@@ -217,6 +260,40 @@ def test_every_judgment_invalid_exports_nothing(write_spec, tmp_path):
     assert not (tmp_path / "evaluations.jsonl").exists()
 
 
-def test_unknown_policy_is_rejected(write_spec):
-    with pytest.raises(ValueError, match="failure_policy"):
-        collect(write_spec(policy="omit_everything"))
+@pytest.mark.parametrize("phased", [False, True])
+def test_unknown_policy_is_rejected_before_any_model_call(write_spec, tmp_path, phased):
+    with pytest.raises(ValueError, match="Unknown collection.failure_policy 'omit_everything'"):
+        collect(write_spec(policy="omit_everything", phased=phased))
+    assert not list(tmp_path.glob("inspect_logs/*.eval"))
+
+
+def test_refused_extension_is_added_to_the_report(write_spec, tmp_path):
+    import re
+
+    from inspect_ai.model import ModelOutput, get_model
+    from inspect_pipeline.extend import extend_run
+
+    spec = write_spec(policy="strict")
+    base = collect(spec)
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text
+        if system.startswith("Without making any mention"):
+            scenario = re.search(r"Scenario number (\d)", input[1].text).group(1)
+            return ModelOutput.from_content(model="mockllm/model", content=f"[c] answer {scenario}")
+        if system.startswith("You are acting as a judge. Carefully consider the following response"):
+            return ModelOutput.from_content(model="mockllm/model", content="reflection")
+        raise PermissionError("401 Unauthorized: invalid API key")
+
+    with pytest.raises(RuntimeError, match="401 Unauthorized"):
+        extend_run(spec, "c", get_model("mockllm/model", custom_outputs=outputs, memoize=False),
+                   include_self=True, seed=7)
+
+    assert len((tmp_path / "evaluations.jsonl").read_text().splitlines()) == len(base)
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    first, extension = report["collections"]
+    assert (first["kind"], first["status"], first["exported"]) == ("collection", "exported", PLANNED)
+    assert (extension["kind"], extension["status"], extension["exported"]) == ("extension", "refused", 0)
+    assert "401 Unauthorized" in extension["error"] and extension["failed"] > 0
+    assert extension["planned"] == extension["logged"] + extension["unstarted"]
+    assert counts(report) == {name: first[name] + extension[name] for name in COUNTS}
