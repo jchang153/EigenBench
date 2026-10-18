@@ -47,10 +47,10 @@ def _run_one(task, loaded, eval_kwargs):
     try:
         logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kwargs)
         if len(logs) != 1 or logs[0].status != "success":
-            raise RuntimeError("phased extension task did not complete; nothing appended")
+            raise RuntimeError("phased task did not complete; nothing exported")
         log = logs[0]
         if len(log.samples or []) != len(task.dataset) or any(s.error for s in log.samples):
-            raise RuntimeError("phased extension task has incomplete samples; nothing appended")
+            raise RuntimeError("phased task has incomplete samples; nothing exported")
         return log
     finally:
         anyio.run(_close_loaded, loaded)
@@ -79,15 +79,20 @@ def collect_phased_extension(prepared, eval_kwargs):
         samples = [Sample(
             input=prepared["scenarios"][s], id=f"s{s} {nick}",
             metadata={"scenario_index": s, "scenario": prepared["scenarios"][s],
-                      "eval_nick": nick},
+                      "eval_nick": nick, "response_group": f"s{s:04d}:extension"},
         ) for s in sorted(required[nick])]
+        if plan.mode == DIRECT:
+            response_solver = response_only_solver(
+                resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
+                max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
+            )
+        else:
+            from .pairwise_collect import _group_responses
+            response_solver = _group_responses(ctx)
         task = Task(
             name=f"extension_responses_{sanitize(nick)}",
             dataset=MemoryDataset(samples),
-            solver=response_only_solver(
-                resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
-                max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
-            ),
+            solver=response_solver,
             metadata={"eigenbench_phase": "response", "evaluee": nick},
         )
         log = _run_one(task, loaded, eval_kwargs)

@@ -16,6 +16,11 @@ RUN_SPEC["collection"]["generation"] = {
 
 `api-judge` must match a key in `RUN_SPEC["models"]`. Unspecified settings inherit
 phase defaults. Overrides are validated before collection and used for each model
-in Inspect direct, response-only, and pairwise solvers, as well as legacy API and
+in Inspect direct-rating and response-only solvers, as well as legacy API and
 local generation. Extension tasks use those same solvers. This changes neither
 the selected models nor the experiment's sampling plan.
+
+Native pairwise overrides use `collection.pairwise_generation` with `response`,
+`reflection` and `comparison` phases. Their default profile uses temperature 1.0
+and 4096 tokens throughout. Pairwise runs ignore `collection.generation`, as the
+original OpenRouter collector did. See the [protocol reference](pairwise-protocol.md).
