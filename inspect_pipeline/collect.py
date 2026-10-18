@@ -25,12 +25,14 @@ from pipeline.utils import load_records
 from .eigenbench import eigenbench, has_local_models, load_selection
 from .phased import eigenbench_judge, eigenbench_responses
 from .export import (
+    check_complete,
     export_log,
     records_from_logs,
     write_evaluations_atomic,
     write_inspect_run_info,
+    write_omissions,
 )
-from .phases import STORE_RESPONSE
+from .phases import FAILURE_POLICIES, STORE_RESPONSE
 
 
 def write_call_estimate(spec: dict, run_dir: Path) -> dict:
@@ -126,6 +128,7 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict) -> list[dict]:
         responses[s_idx][nick] = text
 
     judge_logs = []
+    response_errors: dict[tuple[int, str], str] = {}
 
     def close(nick: str) -> None:
         anyio.run(_close_model, nick, resolve_model)
@@ -145,7 +148,31 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict) -> list[dict]:
             content = (sample.store or {}).get(STORE_RESPONSE)
             if isinstance(content, str) and content.strip():
                 responses[int(sample.metadata["scenario_index"])][nick] = content
+            elif sample.error is not None:
+                response_errors[(int(sample.metadata["scenario_index"]), nick)] = sample.error.message
+        if logs[0].error is not None:
+            for s in missing:
+                response_errors.setdefault((int(s), nick), logs[0].error.message)
         close(nick)
+
+    # Every policy needs every response: a judgment cannot be made without one.
+    needed = sorted({
+        (int(a["scenario_index"]), eval_nick)
+        for a in ctx["assignments"]
+        for eval_nick in a["eval_nicks"]
+        if eval_nick not in responses[int(a["scenario_index"])]
+    })
+    if needed:
+        shown = "\n  ".join(
+            f"scenario_index={s} evaluee={nick}: {response_errors.get((s, nick), 'no response in the log')}"
+            for s, nick in needed[:10]
+        )
+        more = f"\n  ... and {len(needed) - 10} more" if len(needed) > 10 else ""
+        involved = ", ".join(sorted({nick for _, nick in needed}))
+        raise RuntimeError(
+            f"{len(needed)} response(s) failed; no judgments run and nothing exported. "
+            f"Models involved: {involved}\n  {shown}{more}"
+        )
 
     edges_by_judge: dict[str, list[dict]] = defaultdict(list)
     for a in ctx["assignments"]:
@@ -194,6 +221,9 @@ def collect_direct_ratings_inspect(
     collection_cfg = spec.get("collection", {})
     evaluations_path = Path(collection_cfg["evaluations_path"])
     inspect_cfg = collection_cfg.get("inspect", {}) or {}
+    failure_policy = collection_cfg.get("failure_policy", "strict")
+    if failure_policy not in FAILURE_POLICIES:
+        raise ValueError(f"Unknown collection.failure_policy {failure_policy!r}")
 
     log_dir = Path(inspect_cfg.get("log_dir") or "inspect_logs")
     if not log_dir.is_absolute():
@@ -204,7 +234,12 @@ def collect_direct_ratings_inspect(
     expected = estimate["rating_tasks"]
     if evaluations_path.exists() and evaluations_path.stat().st_size > 0:
         existing = load_records(str(evaluations_path))
-        if len(existing) == expected:
+        omitted_path = evaluations_path.with_name("omitted_samples.json")
+        if len(existing) == expected or (
+            failure_policy == "omit_invalid_judgments"
+            and omitted_path.exists()
+            and len(existing) + json.loads(omitted_path.read_text(encoding="utf-8"))["omitted"] == expected
+        ):
             print(f"Direct collection already complete: {len(existing)} ratings")
             return existing
         raise RuntimeError(
@@ -218,6 +253,8 @@ def collect_direct_ratings_inspect(
         f"{estimate['reflection_tasks']} reflections, {estimate['rating_tasks']} ratings)"
     )
 
+    # The estimate counts the spec's own models, so check completeness against it only then.
+    planned = expected if models is None else None
     eval_kw = eval_kwargs(inspect_cfg, log_dir)
     spec_models = models if models is not None else spec["models"]
     phased = bool(inspect_cfg.get("phased", has_local_models(spec_models)))
@@ -227,8 +264,13 @@ def collect_direct_ratings_inspect(
 
         ctx = _run_context(spec_ref, models)
         judge_logs = _run_phased(spec_ref, spec_models, ctx, eval_kw)
-        records = records_from_logs(judge_logs)
+        omissions: list[dict] = []
+        records = records_from_logs(judge_logs, failure_policy=failure_policy, omissions=omissions)
+        if planned is not None:
+            check_complete(planned=planned, records=records, omissions=omissions)
         write_evaluations_atomic(evaluations_path, records)
+        write_omissions(evaluations_path, planned=planned or len(records) + len(omissions),
+                        records=records, omissions=omissions)
         write_inspect_run_info(evaluations_path.parent, judge_logs)
         target = evaluations_path
     else:
@@ -238,6 +280,8 @@ def collect_direct_ratings_inspect(
             logs[0],
             evaluations_path=str(evaluations_path),
             cached_responses_path=collection_cfg.get("cached_responses_path"),
+            failure_policy=failure_policy,
+            planned=planned,
         )
 
     print(f"Direct collection complete. {len(records)} ratings saved to {target}")

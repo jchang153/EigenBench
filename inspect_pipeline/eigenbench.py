@@ -48,6 +48,7 @@ from pipeline.eval.direct_rating import (
 
 from inspect_pipeline.model_mapping import to_inspect_model
 from inspect_pipeline.phases import (
+    FAILURE_POLICIES,
     ResponsePool,
     criterion_key,
     criterion_label,
@@ -262,6 +263,13 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
         )
     )
 
+    failure_policy = collection_cfg.get("failure_policy", "strict")
+    if failure_policy not in FAILURE_POLICIES:
+        raise ValueError(
+            f"Unknown collection.failure_policy {failure_policy!r}; "
+            f"expected one of {', '.join(FAILURE_POLICIES)}"
+        )
+
     cached = _load_cached_responses(collection_cfg.get("cached_responses_path"))
     seed = {
         (int(s_idx), nick): text
@@ -298,6 +306,7 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             "evaluations_path": collection_cfg.get("evaluations_path"),
             "cached_responses_path": collection_cfg.get("cached_responses_path"),
             "num_scenarios": len(selected),
+            "failure_policy": failure_policy,
         },
     }
 
