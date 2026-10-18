@@ -7,6 +7,7 @@ logs alone, with planned and unstarted unknown (null).
 from __future__ import annotations
 
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 
@@ -78,60 +79,107 @@ def _log_entry(log) -> dict:
     }
 
 
+def _models(key) -> list[str]:
+    return list(key[3:4] if key[0] == "direct" else key[3:5])
+
+
+def _epochs(log) -> int:
+    epochs = getattr(getattr(log.eval, "config", None), "epochs", None)
+    return epochs if isinstance(epochs, int) and epochs > 0 else 1
+
+
+def _omission(key, sample, log_file: str | None) -> dict:
+    """One omitted judgment; ``sample`` is None when it is one of several identical ones."""
+
+    md = (sample.metadata or {}) if sample is not None else {}
+    error = sample.error if sample is not None else None
+    return {
+        "sample_id": str(sample.id) if sample is not None else None,
+        "log_file": log_file,
+        "scenario_index": key[1],
+        "scenario": md.get("scenario", ""),
+        "judge": key[2],
+        "models": _models(key),
+        "round": key[4] if key[0] == "direct" else None,
+        "epoch": getattr(sample, "epoch", None) if sample is not None else None,
+        "reason": "sample_error" if error is not None else "not_exported",
+        # Messages only: don't publish stack traces or request headers.
+        "error": error.message[:2000] if error is not None else None,
+    }
+
+
 def collection_part(kind: str, *, planned: list[dict] | None, logs, records: list[dict],
                     status: str = "exported", error: str | None = None) -> dict:
-    """Coverage of one collection or extension: its plan against every log it wrote."""
+    """Coverage of one collection or extension: its plan against every log it wrote.
 
-    exported_keys = {_exported_key(row) for row in records} - {None}
-    logged: dict = {}
+    Samples are matched to exported records by judgment (scenario, judge, evaluees and
+    round) and counted, so a pair that recurs in the plan, or a judgment repeated across
+    Inspect epochs, is counted exactly even though the records cannot say which repeat
+    they came from. A count that cannot be reconciled is unknown (None), never 0.
+    """
+
+    logged: dict = defaultdict(list)
+    judgment_logs = []
     for log in logs:
         log_file = Path(str(log.location)).name
+        has_judgments = False
         for sample in log.samples or []:
             key = judgment_key(sample.metadata or {})
             if key is None:
                 continue  # Response samples are not judgments.
-            if key in logged:
-                raise ValueError("Repeated judgment keys in Inspect logs; coverage is ambiguous")
-            logged[key] = (sample, log_file)
+            logged[key].append((sample, log_file))
+            has_judgments = True
+        if has_judgments:
+            judgment_logs.append(log)
 
+    exported_counts = Counter(_exported_key(row) for row in records)
+    # An export holding records the logs cannot account for cannot be reconciled.
+    resolved = exported_counts.pop(None, 0) == 0 and set(exported_counts) <= set(logged)
+    exported = 0
     omissions = []
-    for key, (sample, log_file) in logged.items():
-        if key in exported_keys:
+    for key, entries in logged.items():
+        ok = [(sample, log_file) for sample, log_file in entries if sample.error is None]
+        count = exported_counts.get(key, 0)
+        omissions.extend(_omission(key, sample, log_file) for sample, log_file in entries
+                         if sample.error is not None)
+        if count > len(ok):
+            resolved = False
             continue
-        md = sample.metadata or {}
-        omissions.append({
-            "sample_id": str(sample.id),
-            "log_file": log_file,
-            "scenario_index": md.get("scenario_index"),
-            "scenario": md.get("scenario", ""),
-            "judge": md["judge_nick"],
-            "models": list(key[3:4] if key[0] == "direct" else key[3:5]),
-            "reason": "sample_error" if sample.error is not None else "not_exported",
-            # Messages only: don't publish stack traces or request headers.
-            "error": sample.error.message[:2000] if sample.error is not None else None,
-        })
+        exported += count
+        if count == 0:
+            omissions.extend(_omission(key, sample, log_file) for sample, log_file in ok)
+        else:
+            # Which of these identical judgments went unexported cannot be told apart.
+            omissions.extend(_omission(key, None, None) for _ in range(len(ok) - count))
+    failed = sum(sample.error is not None for entries in logged.values() for sample, _ in entries)
+    if not resolved:
+        omissions = [row for row in omissions if row["reason"] == "sample_error"]
 
-    unstarted = None
-    if planned is not None:
-        unstarted = []
-        for entry in planned:
-            key = judgment_key(entry)
-            if key is not None and key not in logged:
-                unstarted.append({
-                    "scenario_index": key[1],
-                    "judge": key[2],
-                    "models": list(key[3:4] if key[0] == "direct" else key[3:5]),
-                })
+    epochs = {_epochs(log) for log in judgment_logs}
+    multiplier = epochs.pop() if len(epochs) == 1 else (1 if not epochs else None)
+    planned_count = unstarted = None
+    if planned is not None and multiplier is not None:
+        planned_keys = Counter(judgment_key(entry) for entry in planned)
+        planned_keys.pop(None, None)
+        planned_count = sum(planned_keys.values()) * multiplier
+        # Judgments outside the plan, or more of one than planned, leave unstarted unknown.
+        if all(len(logged[key]) <= planned_keys.get(key, 0) * multiplier for key in logged):
+            unstarted = [
+                {"scenario_index": key[1], "judge": key[2], "models": _models(key)}
+                for key, times in planned_keys.items()
+                for _ in range(times * multiplier - len(logged.get(key, [])))
+            ]
 
+    logged_count = sum(len(entries) for entries in logged.values())
     return {
         "kind": kind,
         "status": status,
         "error": error[:2000] if error else None,
-        "planned": len(planned) if planned is not None else None,
-        "logged": len(logged),
-        "exported": len(logged) - len(omissions),
-        "failed": sum(sample.error is not None for sample, _ in logged.values()),
-        "omitted": len(omissions),
+        "planned": planned_count,
+        "logged": logged_count,
+        "exported": exported if resolved else None,
+        "failed": failed,
+        "omitted": logged_count - exported if resolved else None,
         "unstarted": len(unstarted) if unstarted is not None else None,
         "logs": [_log_entry(log) for log in logs],
         "omissions": omissions,

@@ -39,16 +39,90 @@ def test_report_preserves_failure_details_and_counts_unstarted():
                              "status": "success", "samples": 3, "failed": 1}]
 
 
-def test_report_supports_pairwise_and_rejects_ambiguous_keys():
+def pair(sample_id, error=None, **extra):
+    md = {"scenario_index": 1, "scenario": "q", "judge_nick": "j", "eval1_nick": "a", "eval2_nick": "b", **extra}
+    return NS(id=sample_id, error=NS(message=error) if error else None, metadata=md)
+
+
+PAIR_RECORD = {"scenario_index": 1, "judge_name": "j", "eval1_name": "a", "eval2_name": "b"}
+PAIR_PLAN = {"scenario_index": 1, "judge_nick": "j", "eval1_nick": "a", "eval2_nick": "b"}
+
+
+def test_recurring_pairs_are_counted_not_rejected():
     from inspect_pipeline.coverage import collection_part
 
-    pair = NS(id="p1", error=None, metadata={"scenario_index": 1, "scenario": "q", "judge_nick": "j",
-                                             "eval1_nick": "a", "eval2_nick": "b"})
-    records = [{"scenario_index": 1, "judge_name": "j", "eval1_name": "a", "eval2_name": "b"}]
-    part = collection_part("extension", planned=None, logs=[log("pair.eval", [pair])], records=records)
-    assert (part["logged"], part["exported"], part["omitted"]) == (1, 1, 0)
-    with pytest.raises(ValueError, match="ambiguous"):
-        collection_part("extension", planned=None, logs=[log("pair.eval", [pair, pair])], records=records)
+    # The plan asks for the same comparison twice; one of the two was exported.
+    part = collection_part("extension", planned=[PAIR_PLAN, PAIR_PLAN],
+                           logs=[log("pair.eval", [pair("p1"), pair("p2")])], records=[PAIR_RECORD])
+    assert (part["planned"], part["logged"], part["exported"], part["omitted"], part["unstarted"]) == (2, 2, 1, 1, 0)
+    # Which of the two identical samples went unexported cannot be told, so none is named.
+    [row] = part["omissions"]
+    assert (row["sample_id"], row["log_file"], row["models"], row["reason"]) == (None, None, ["a", "b"], "not_exported")
+
+    # A failed repeat is the one omitted, and is named.
+    part = collection_part("extension", planned=[PAIR_PLAN, PAIR_PLAN],
+                           logs=[log("pair.eval", [pair("p1"), pair("p2", "timed out")])], records=[PAIR_RECORD])
+    assert (part["exported"], part["failed"], part["omitted"]) == (1, 1, 1)
+    assert [(row["sample_id"], row["error"]) for row in part["omissions"]] == [("p2", "timed out")]
+
+    # Two exported copies of a comparison that only succeeded once cannot be reconciled.
+    part = collection_part("extension", planned=None, logs=[log("pair.eval", [pair("p1"), pair("p2", "timed out")])],
+                           records=[PAIR_RECORD, PAIR_RECORD])
+    assert (part["exported"], part["omitted"], part["failed"]) == (None, None, 1)
+
+
+def test_epochs_multiply_the_plan():
+    from inspect_pipeline.coverage import collection_part
+
+    def epochs_log(name, samples, epochs):
+        return NS(location=f"/logs/{name}", status="success", samples=samples,
+                  eval=NS(metadata={}, config=NS(epochs=epochs)))
+
+    samples = [NS(**vars(sample(0)), epoch=epoch) for epoch in (1, 2)]
+    planned = [{"scenario_index": 0, "judge_nick": "judge", "eval_nick": "model"}]
+    part = collection_part("collection", planned=planned, logs=[epochs_log("run.eval", samples, 2)], records=[direct(0)])
+    assert (part["planned"], part["logged"], part["exported"], part["omitted"], part["unstarted"]) == (2, 2, 1, 1, 0)
+    assert part["omissions"][0]["epoch"] is None  # one of two identical epochs, not named
+
+    # A failed epoch is named, with its epoch.
+    failing = [NS(**vars(sample(0)), epoch=1), NS(**vars(sample(0, "timed out")), epoch=2)]
+    part = collection_part("collection", planned=planned, logs=[epochs_log("run.eval", failing, 2)], records=[direct(0)])
+    assert [(row["epoch"], row["reason"]) for row in part["omissions"]] == [(2, "sample_error")]
+
+    # Logs run with different epochs leave the plan's size unknown.
+    logs = [epochs_log("a.eval", samples[:1], 1), epochs_log("b.eval", [NS(**vars(sample(1)), epoch=1)], 2)]
+    part = collection_part("collection", planned=planned, logs=logs, records=[direct(0)])
+    assert (part["planned"], part["unstarted"]) == (None, None)
+
+
+def test_rounds_are_told_apart():
+    from inspect_pipeline.coverage import collection_part
+
+    samples = [sample(0, sampling_round=0), NS(**{**vars(sample(0, sampling_round=1)), "id": "r1"})]
+    records = [{**direct(0), "sampling": {"round": 1}}]
+    part = collection_part("collection", planned=None, logs=[log("run.eval", samples)], records=records)
+    assert (part["logged"], part["exported"], part["omitted"]) == (2, 1, 1)
+    [row] = part["omissions"]
+    assert (row["sample_id"], row["round"]) == ("0", 0)
+
+
+def test_unreconcilable_counts_are_unknown_never_zero():
+    from inspect_pipeline.coverage import build_report, collection_part
+
+    logs = [log("run.eval", [sample(0), sample(1, "timed out"), sample(2)])]
+    # The export holds a judgment no log accounts for: exported and omitted are unknown.
+    part = collection_part("collection", planned=None, logs=logs, records=[direct(0), direct(7)])
+    assert (part["exported"], part["omitted"], part["logged"], part["failed"]) == (None, None, 3, 1)
+    # Failures are still listed; an unexported judgment is not, since the count is unknown.
+    assert [row["reason"] for row in part["omissions"]] == ["sample_error"]
+    report = build_report([part], failure_policy="strict")
+    assert (report["exported"], report["omitted"], report["failed"]) == (None, None, 1)
+
+    # The logs hold judgments the plan never asked for: unstarted is unknown.
+    planned = [{"scenario_index": 0, "judge_nick": "judge", "eval_nick": "model"}]
+    part = collection_part("collection", planned=planned, logs=logs, records=[direct(0)])
+    assert (part["planned"], part["unstarted"], part["unstarted_judgments"]) == (1, None, None)
+    assert (part["exported"], part["omitted"]) == (1, 2)
 
 
 def test_extending_a_run_without_a_report_keeps_its_totals_unknown(tmp_path):
