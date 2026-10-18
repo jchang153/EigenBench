@@ -29,6 +29,8 @@ PLANNED = SCENARIOS * len(NICKS) ** 2  # all_to_all with self-ratings
 #   error: the provider raises, like an authentication failure
 #   response: evaluee "b" never answers scenario 0
 #   all_ratings: every judge's rating is unparseable
+#   truncated: a well-formed rating cut off at max_tokens on every attempt
+#   interrupt: the run is interrupted (Ctrl-C) during that rating
 SPEC_TEMPLATE = '''
 import re
 from inspect_ai.model import ModelOutput, get_model
@@ -53,6 +55,11 @@ def _mock(nick):
             return ModelOutput.from_content(model="mockllm/model", content="reflection")
         if failing and FAULT == "error":
             raise PermissionError("401 Unauthorized: invalid API key")
+        if failing and FAULT == "interrupt":
+            raise KeyboardInterrupt
+        if failing and FAULT == "truncated":
+            return ModelOutput.from_content(model="mockllm/model", content="<criterion_1_rating>7</criterion_1_rating>",
+                                            stop_reason="max_tokens")
         if (failing and FAULT == "rating") or FAULT == "all_ratings":
             return ModelOutput.from_content(model="mockllm/model", content="I would rather not rate this.")
         return ModelOutput.from_content(model="mockllm/model", content="<criterion_1_rating>7</criterion_1_rating>")
@@ -111,7 +118,8 @@ def collect(spec_path):
 
 
 @pytest.mark.parametrize("phased", [False, True])
-@pytest.mark.parametrize("fault,stage", [("rating", "direct_rating"), ("reflection", "reflection")])
+@pytest.mark.parametrize("fault,stage", [("rating", "direct_rating"), ("reflection", "reflection"),
+                                         ("truncated", "direct_rating")])
 def test_invalid_judgment_is_omitted_and_recorded(write_spec, tmp_path, fault, stage, phased):
     records = collect(write_spec(fault=fault, phased=phased))
 
@@ -132,6 +140,8 @@ def test_invalid_judgment_is_omitted_and_recorded(write_spec, tmp_path, fault, s
     [part] = report["collections"]
     assert (part["kind"], part["status"], part["unstarted_judgments"]) == ("collection", "exported", [])
     assert part["omissions"][0]["error"].startswith("InvalidJudgmentError(")
+    if fault == "truncated":
+        assert "stop_reason='max_tokens'" in part["omissions"][0]["error"]
     assert sorted({entry["role"] for entry in part["logs"]}) == (["judgments", "responses"] if phased else ["judgments"])
     info = json.loads((tmp_path / "inspect_run.json").read_text())
     assert info["collection_report_file"] == "collection_report.json"
@@ -297,3 +307,34 @@ def test_refused_extension_is_added_to_the_report(write_spec, tmp_path):
     assert "401 Unauthorized" in extension["error"] and extension["failed"] > 0
     assert extension["planned"] == extension["logged"] + extension["unstarted"]
     assert counts(report) == {name: first[name] + extension[name] for name in COUNTS}
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_interrupted_collection_exports_nothing(write_spec, tmp_path, phased):
+    # The interrupt stops collection before any policy applies.
+    with pytest.raises(KeyboardInterrupt):
+        collect(write_spec(fault="interrupt", phased=phased))
+    assert not (tmp_path / "evaluations.jsonl").exists()
+    assert not (tmp_path / "omitted_samples.json").exists()
+
+
+def test_interrupted_log_is_refused_on_reexport(write_spec, tmp_path):
+    from inspect_ai.log import list_eval_logs, read_eval_log
+    from inspect_pipeline.export import export_log
+
+    with pytest.raises(KeyboardInterrupt):
+        collect(write_spec(fault="interrupt"))
+    [info] = list_eval_logs(str(tmp_path / "inspect_logs"))
+    log = read_eval_log(info.name)
+    assert log.status != "success" and len(log.samples or []) < PLANNED
+
+    for policy in ("strict", "omit_invalid_judgments"):
+        with pytest.raises(RuntimeError, match="did not complete successfully"):
+            export_log(info.name, evaluations_path=tmp_path / "evaluations.jsonl", failure_policy=policy)
+    assert not (tmp_path / "evaluations.jsonl").exists()
+
+    # --allow-incomplete exports what finished, and the coverage file shows the full plan.
+    records, _ = export_log(info.name, evaluations_path=tmp_path / "evaluations.jsonl", strict=False)
+    coverage = json.loads((tmp_path / "omitted_samples.json").read_text())
+    assert (coverage["planned"], coverage["completed"]) == (PLANNED, len(records))
+    assert len(records) < PLANNED

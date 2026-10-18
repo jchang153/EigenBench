@@ -286,6 +286,17 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: 
     return path
 
 
+def _logged_plan(log: EvalLog) -> int:
+    """The judgments a log's task set out to make, even if the run stopped early."""
+
+    dataset = getattr(log.eval, "dataset", None)
+    samples = getattr(dataset, "samples", None)
+    if not isinstance(samples, int):
+        return len(log.samples or [])
+    epochs = getattr(getattr(log.eval, "config", None), "epochs", None)
+    return samples * (epochs if isinstance(epochs, int) and epochs > 0 else 1)
+
+
 def check_complete(*, planned: int, records: list[dict], omissions: list[dict]) -> None:
     """Refuse an export that does not account for every planned judgment."""
 
@@ -420,7 +431,7 @@ def export_log(
             check_complete(planned=planned, records=records, omissions=omissions)
         write_evaluations_atomic(target, records)
         if direct:
-            write_omissions(target, planned=planned or len(log.samples or []), records=records,
+            write_omissions(target, planned=planned or _logged_plan(log), records=records,
                             omissions=omissions)
     write_inspect_run_info(target.parent, log, append=append)
 

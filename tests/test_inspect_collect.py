@@ -685,10 +685,12 @@ def test_pairwise_prompts_match_legacy():
     )
 
 
-@pytest.mark.parametrize("phased", [False, True])
-@pytest.mark.parametrize("new_names, extra_count", [(["d"], 0), (["d", "e"], 2)])
-def test_pairwise_extend_collects(tmp_path, new_names, extra_count, phased):
-    """A pairwise run can be extended on the Inspect engine."""
+@pytest.mark.parametrize("new_names, extra_count, phased, recurring", [
+    (["d"], 0, False, False), (["d"], 0, True, False), (["d", "e"], 2, False, False), (["d", "e"], 2, True, False),
+    (["d"], 0, False, True), (["d"], 0, True, True),
+])
+def test_pairwise_extend_collects(tmp_path, monkeypatch, new_names, extra_count, phased, recurring):
+    """A pairwise run can be extended on the Inspect engine, even when a comparison recurs."""
 
     import numpy as np
     from inspect_ai.model import ModelOutput, get_model
@@ -774,6 +776,18 @@ RUN_SPEC = {{
             content = "<criterion_1_choice>1</criterion_1_choice>"
         return ModelOutput.from_content(model="mockllm/model", content=content)
 
+    if recurring:
+        # The plan asks for its first comparison twice.
+        import dataclasses
+        import inspect_pipeline.extend as extend_module
+
+        plan_pairwise = extend_module._plan_pairwise
+        def with_repeat(plan, *args, **kwargs):
+            result = plan_pairwise(plan, *args, **kwargs)
+            plan.as_evaluee.append(dataclasses.replace(plan.as_evaluee[0]))
+            return result
+        monkeypatch.setattr(extend_module, "_plan_pairwise", with_repeat)
+
     d = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
     result = extend_run(str(spec), new_models=dict.fromkeys(new_names, d),
                         additional_scenarios=extra_count, seed=3)
@@ -790,6 +804,18 @@ RUN_SPEC = {{
     for r in new:
         assert r["judge response"], "a comparison must record a verdict"
         assert r["eval1 response"] and r["eval2 response"]
+
+    # The run's report accounts for every planned comparison, a repeated one included.
+    extension = json.loads((tmp_path / "collection_report.json").read_text())["collections"][-1]
+    assert extension["kind"] == "extension" and extension["status"] == "exported"
+    assert extension["planned"] == extension["logged"] == extension["exported"] == result["collected"]
+    assert (extension["omitted"], extension["unstarted"], extension["omissions"]) == (0, 0, [])
+    if recurring:
+        from collections import Counter
+
+        key = lambda r: (r["scenario_index"], r["judge_name"], r["eval1_name"], r["eval2_name"])
+        counts = Counter(key(r) for r in new)
+        assert sorted(counts.values())[-1] == 2, "the repeated comparison is collected twice"
 
 
 @pytest.mark.parametrize("native", [False, True])
