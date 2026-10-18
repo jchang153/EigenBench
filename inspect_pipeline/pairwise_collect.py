@@ -99,10 +99,9 @@ def _collect_phased(spec_ref, models, task, eval_kw):
         judge_task.metadata["eigenbench"]["pairwise_phased"] = True
         log = _run_one(judge_task, loaded, eval_kw)
         ordered = sorted(log.samples, key=lambda sample: sample.metadata["edge_index"])
-        ordered_log = log.model_copy(update={"samples": ordered})
         records.extend(zip(
             [sample.metadata["edge_index"] for sample in ordered],
-            records_from_pairwise_log(ordered_log, task.metadata["eigenbench"]["criteria"]),
+            records_from_pairwise_log(log, task.metadata["eigenbench"]["criteria"]),
         ))
         logs.append(log)
     return [record for _, record in sorted(records, key=lambda item: item[0])], logs

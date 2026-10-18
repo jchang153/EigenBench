@@ -31,8 +31,6 @@ from pipeline.config import load_run_spec  # noqa: E402
 def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
     spec, _run_dir = load_run_spec(spec_ref)
     mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
-    if mode not in {"direct_rating", "pairwise_btd"}:
-        raise SystemExit(f"Unknown evaluation mode {mode!r}")
 
     collection_cfg = spec.get("collection", {})
     if collection_enabled is not None:

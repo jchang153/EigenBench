@@ -15,17 +15,12 @@ PAIRWISE_PLAN_VERSION = 1
 
 PAIRWISE_PHASES = ("response", "reflection", "comparison")
 
-# ``get_openrouter_response`` defaults (temperature=1.0) with the
-# ``collect_core_evaluations`` default ``max_tokens=4096``, used for every call.
-# ``scripts/run_collect.py`` never forwarded ``collection.max_tokens`` or
-# ``collection.generation`` to that path, so neither applies here.
+# Defaults from the original OpenRouter group collector.
 PAIRWISE_GENERATION_DEFAULTS = {
     phase: {"max_tokens": 4096, "temperature": 1.0} for phase in PAIRWISE_PHASES
 }
 
-# The spec block holding explicit pairwise overrides. ``collection.generation``
-# is the direct-rating block (see runs/example/spec.py) and is ignored, so a
-# historical pairwise spec that carries it reproduces the original settings.
+# Keep historical direct-rating settings from changing pairwise runs.
 PAIRWISE_GENERATION_KEY = "pairwise_generation"
 
 PREPLANNED_SAMPLERS = ("random_judge_group", "uniform")
@@ -55,7 +50,7 @@ def resolve_pairwise_generation_settings(collection_cfg: dict | None) -> dict[st
                 "max_tokens": configured.get("max_tokens", defaults["max_tokens"]),
                 "temperature": configured.get("temperature", defaults["temperature"]),
             },
-            f"{phase}",
+            phase,
         )
         overrides = configured.get("per_model")
         overrides = {} if overrides is None else overrides
@@ -139,10 +134,6 @@ class PairwiseGroup:
     eval_nicks: tuple[str, ...]
 
 
-def pairwise_group_id(scenario_index: int, sampling_round: int) -> str:
-    return f"s{int(scenario_index):04d}:r{int(sampling_round)}"
-
-
 def plan_pairwise_groups(
     selected,
     model_nicks,
@@ -176,7 +167,7 @@ def plan_pairwise_groups(
                     scenario_index=scenario_index,
                     scenario=scenario,
                     sampling_round=sampling_round,
-                    group_id=pairwise_group_id(scenario_index, sampling_round),
+                    group_id=f"s{scenario_index:04d}:r{sampling_round}",
                     judge_idx=judge_idx,
                     judge_nick=nicks[judge_idx],
                     eval_idxs=tuple(int(i) for i in eval_idxs),
@@ -187,13 +178,7 @@ def plan_pairwise_groups(
 
 
 def pairwise_comparisons(groups: list[PairwiseGroup]) -> list[dict]:
-    """Ordered comparisons, exactly as ``collect_group_criteria_evaluations`` loops.
-
-    Every ordered pair (j, k), j != k, in eval-index order: both presentation
-    orders of every pair, with ``j`` shown first. Each group's responses and
-    reflections are shared by its comparisons only (``response_group`` and
-    ``group_id`` are the group itself).
-    """
+    """Expand each group into ordered pairs in the reference loop order."""
 
     rows: list[dict] = []
     for group in groups:
@@ -221,16 +206,14 @@ def pairwise_comparisons(groups: list[PairwiseGroup]) -> list[dict]:
     return rows
 
 
-def pairwise_call_counts(comparisons: list[dict], cached: dict | None = None) -> dict:
-    """Logical generations a plan needs: one response per group and evaluee
-    unless cached, one reflection per group judge and evaluee, one per comparison."""
+def pairwise_call_counts(comparisons: list[dict]) -> dict:
+    """Count generations after cached responses have been added to the samples."""
 
-    cached = cached or {}
     responses, reflections = set(), set()
     for row in comparisons:
         for side in ("eval1", "eval2"):
             nick = row[f"{side}_nick"]
-            text = row.get(f"{side}_response") or cached.get((int(row["scenario_index"]), nick))
+            text = row.get(f"{side}_response")
             if not (isinstance(text, str) and text.strip()):
                 responses.add((row["response_group"], nick))
             reflections.add((row["group_id"], row["judge_nick"], nick))

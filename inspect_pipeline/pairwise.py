@@ -83,11 +83,7 @@ def build_comparison_user(
 
 
 def pairwise_cache_scope(kind: str, *parts) -> str:
-    """Inspect cache scope of one pairwise generation unit.
-
-    ``pairwise_cache_scope("response", response_group, nick)`` is the scope a
-    phased response task must use to share cache entries with the single task.
-    """
+    """Use the same generation scopes in single-task and phased collection."""
 
     return ":".join(["pairwise", kind, *(str(part) for part in parts)])
 
@@ -102,16 +98,7 @@ def pairwise_solver(
     cache_enabled: bool,
     allow_ties: bool = True,
 ) -> Solver:
-    """One ordered comparison, sharing responses and reflections with its group.
-
-    ``generation`` is ``resolve_pairwise_generation_settings`` output, with
-    ``response``, ``reflection`` and ``comparison`` phases.
-
-    A verdict with no valid criterion 1 tag is retried up to ``max_attempts``
-    (the existing Inspect contract). The original collector recorded such
-    verdicts unretried and dropped them at analysis. Failure-policy parity with
-    the original belongs to issue #33.
-    """
+    """Compare one ordered pair, sharing responses and reflections within its group."""
 
     criteria_text = "\n".join(criteria)
     reflection_system = build_reflection_prompt()
@@ -119,7 +106,6 @@ def pairwise_solver(
     response_cfg = generation["response"]
     reflection_cfg = generation["reflection"]
     comparison_cfg = generation["comparison"]
-    validator = validate_partial_criteria_response
 
     response_pool = ResponsePool()
     reflection_pool = ResponsePool()
@@ -170,7 +156,6 @@ def pairwise_solver(
                 )
                 return out.completion
 
-            # The response text is part of the key: one reflection per response.
             return await reflection_pool.get(
                 (state.epoch, group_id, judge_nick, nick, response), generate_reflection
             )
@@ -190,7 +175,7 @@ def pairwise_solver(
             judge, messages,
             config=phase_config(comparison_cfg, judge_nick),
             max_attempts=max_attempts, cache_enabled=cache_enabled,
-            validator=validator,
+            validator=validate_partial_criteria_response,
             identity=f"comparison scenario_index={s_idx} group={group_id} judge={judge_nick} "
                      f"{md['eval1_nick']} vs {md['eval2_nick']}",
             cache_scope=pairwise_cache_scope(
@@ -236,12 +221,7 @@ CHOICE_SCORE_KEYS = ("valid", "parsed", "tie", "first", "second")
 # A metric per value key: a list here would collapse the dict to one number.
 @scorer(metrics={key: [mean()] for key in CHOICE_SCORE_KEYS})
 def pairwise_choice_scorer(num_criteria: int):
-    """Parsed criterion choices and validity of one comparison.
-
-    Values are fractions of the ``num_criteria`` criterion slots (0 when the
-    verdict is invalid), so their means are run-level parse, tie and
-    first/second preference rates. Rankings stay with the BTD analysis.
-    """
+    """Report judgment validity and choice fractions over the requested criteria."""
 
     num_criteria = int(num_criteria)
 
@@ -322,15 +302,6 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
     return [record for _key, record in rows]
 
 
-def _comparison_sample(md: dict) -> Sample:
-    return Sample(
-        input=md["scenario"],
-        id=(f"s{int(md['scenario_index']):04d} r{int(md.get('sampling_round', 0))} · "
-            f"{md['judge_nick']}: {md['eval1_nick']} vs {md['eval2_nick']}"),
-        metadata=md,
-    )
-
-
 def pairwise_comparison_samples(
     comparisons: list[dict],
     *,
@@ -351,7 +322,12 @@ def pairwise_comparison_samples(
             text = cached.get((int(md["scenario_index"]), nick))
             if isinstance(text, str) and text.strip():
                 md[f"{side}_response"] = text
-        samples.append(_comparison_sample(md))
+        samples.append(Sample(
+            input=md["scenario"],
+            id=(f"s{int(md['scenario_index']):04d} r{int(md.get('sampling_round', 0))} · "
+                f"{md['judge_nick']}: {md['eval1_nick']} vs {md['eval2_nick']}"),
+            metadata=md,
+        ))
     return samples
 
 
@@ -364,12 +340,7 @@ def build_pairwise_task(
     samples: list[Sample] | None = None,
     name: str | None = None,
 ) -> Task:
-    """The initial pairwise task for a run spec (plain factory, no registration).
-
-    ``samples`` replaces the planned dataset (a phased judge's share of the
-    plan, with responses filled in) and ``name`` the task name; ``Task.name``
-    is read-only in inspect-ai 0.3.268.
-    """
+    """Build the initial task or a phased judge's share of its samples."""
 
     from inspect_pipeline.eigenbench import _run_context, sanitize
 

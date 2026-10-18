@@ -31,6 +31,7 @@ from inspect_pipeline.pairwise import (  # noqa: E402
     eigenbench_pairwise_extend,
     pairwise_cache_scope,
     pairwise_edge_samples,
+    pairwise_comparison_samples,
     parse_pairwise_choices,
     records_from_pairwise_log,
 )
@@ -179,7 +180,8 @@ def test_comparisons_cover_both_orders_in_original_loop_order():
         "total_logical_generations": 12,
     }
     cached = {(3, "a"): "cached"}
-    assert pairwise_call_counts(rows, cached)["response_tasks"] == 2
+    samples = pairwise_comparison_samples(rows, cached=cached)
+    assert pairwise_call_counts([sample.metadata for sample in samples])["response_tasks"] == 2
 
 
 def test_sampling_settings_match_collect_core_evaluations():

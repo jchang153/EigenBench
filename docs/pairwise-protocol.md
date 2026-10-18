@@ -21,8 +21,7 @@ The grouped criterion collector predates the module refactor. Its predecessor,
 The March 1 refactor
 [`4f1f421`](https://github.com/jchang153/EigenBench/commit/4f1f42134c081626ef9a5e0c3e2188b3bea17ab3)
 described its scripts path as OpenRouter-only. The current `mixed_collect.py`
-module was added later. This history supports the compatibility reference,
-without resolving which historical collector produced each paper figure.
+module was added later.
 
 For each selected scenario and sampling round, the reference selects one judge
 and a group of evaluees. Each selected evaluee generates one response. That
@@ -61,3 +60,7 @@ direct-rating settings from silently changing its protocol.
 The Inspect scorer records criterion choices and judgment validity. These are
 collection diagnostics. EigenTrust and BTD scores still come from the existing
 analysis pipeline, pending native aggregate metrics in issue #34.
+
+Invalid verdicts are retried under the existing Inspect validation contract.
+The original collector recorded them unretried and dropped them during analysis.
+Failure-policy parity remains in issue #33.
