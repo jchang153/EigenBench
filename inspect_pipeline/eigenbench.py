@@ -243,7 +243,11 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
         raise ValueError("direct rating collection currently uses the fixed 1-10 scale")
 
     selected, criteria = load_selection(run_spec, run_dir)
-    generation = resolve_direct_generation_settings(collection_cfg)
+    if is_direct:
+        generation = resolve_direct_generation_settings(collection_cfg)
+    else:
+        from inspect_pipeline.pairwise_plan import resolve_pairwise_generation_settings
+        generation = resolve_pairwise_generation_settings(collection_cfg)
     if is_direct and build_assignments:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
@@ -262,7 +266,9 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
         )
     )
 
-    cached = _load_cached_responses(collection_cfg.get("cached_responses_path"))
+    cached = _load_cached_responses(
+        collection_cfg.get("cached_responses_path"), merge_rows=is_direct,
+    )
     seed = {
         (int(s_idx), nick): text
         for s_idx, responses in cached.items()
