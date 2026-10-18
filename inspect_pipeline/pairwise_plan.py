@@ -15,12 +15,15 @@ PAIRWISE_PLAN_VERSION = 1
 
 PAIRWISE_PHASES = ("response", "reflection", "comparison")
 
-# Defaults from the original OpenRouter group collector.
+# Original OpenRouter collection used 4096 tokens and inherited temperature 1.0
+# from get_openrouter_response. collection.max_tokens was never forwarded.
 PAIRWISE_GENERATION_DEFAULTS = {
     phase: {"max_tokens": 4096, "temperature": 1.0} for phase in PAIRWISE_PHASES
 }
 
-# Keep historical direct-rating settings from changing pairwise runs.
+# Historical pairwise specs can contain a direct-rating collection.generation
+# block that the original collector ignored. Use a separate override key so
+# those settings do not silently change the pairwise protocol.
 PAIRWISE_GENERATION_KEY = "pairwise_generation"
 
 PREPLANNED_SAMPLERS = ("random_judge_group", "uniform")
@@ -178,7 +181,15 @@ def plan_pairwise_groups(
 
 
 def pairwise_comparisons(groups: list[PairwiseGroup]) -> list[dict]:
-    """Expand each group into ordered pairs in the reference loop order."""
+    """Match ``collect_group_criteria_evaluations`` ordering and group sharing.
+
+    Iterate j then k in the group's sampled order, skipping j == k, with j
+    shown first. This emits both presentation orders of every distinct pair.
+    Set ``response_group`` and ``group_id`` to the group's identity so its
+    comparisons reuse the same generated responses and judge reflections.
+    Separate groups draw independently, though an explicit response cache
+    can supply the same response text to several groups.
+    """
 
     rows: list[dict] = []
     for group in groups:
@@ -207,7 +218,11 @@ def pairwise_comparisons(groups: list[PairwiseGroup]) -> list[dict]:
 
 
 def pairwise_call_counts(comparisons: list[dict]) -> dict:
-    """Count generations after cached responses have been added to the samples."""
+    """Count generations after cached responses have been added to the samples.
+
+    Count one response per response group and evaluee unless supplied, one
+    reflection per group, judge and evaluee, and one verdict per comparison.
+    """
 
     responses, reflections = set(), set()
     for row in comparisons:

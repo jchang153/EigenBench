@@ -83,7 +83,12 @@ def build_comparison_user(
 
 
 def pairwise_cache_scope(kind: str, *parts) -> str:
-    """Use the same generation scopes in single-task and phased collection."""
+    """Use the same generation scopes in single-task and phased collection.
+
+    Response calls pass ``response_group`` and the evaluee nickname in both
+    layouts. Matching scopes lets them reuse checkpoints while separate
+    groups retain independent draws even when their prompts are identical.
+    """
 
     return ":".join(["pairwise", kind, *(str(part) for part in parts)])
 
@@ -98,7 +103,16 @@ def pairwise_solver(
     cache_enabled: bool,
     allow_ties: bool = True,
 ) -> Solver:
-    """Compare one ordered pair, sharing responses and reflections within its group."""
+    """Compare one ordered pair using the resolved generation profiles.
+
+    ``generation`` contains response, reflection and comparison settings.
+    Responses share a ``response_group`` and reflections share a ``group_id``.
+    Both pools include the Inspect epoch so repeated epochs draw independently.
+
+    Invalid criterion 1 verdicts are retried under the existing Inspect
+    contract. The original collector recorded them unretried and dropped them
+    during analysis. Failure-policy parity remains in issue #33.
+    """
 
     criteria_text = "\n".join(criteria)
     reflection_system = build_reflection_prompt()
@@ -156,6 +170,7 @@ def pairwise_solver(
                 )
                 return out.completion
 
+            # Different supplied response text needs a fresh reflection.
             return await reflection_pool.get(
                 (state.epoch, group_id, judge_nick, nick, response), generate_reflection
             )
@@ -221,7 +236,14 @@ CHOICE_SCORE_KEYS = ("valid", "parsed", "tie", "first", "second")
 # A metric per value key: a list here would collapse the dict to one number.
 @scorer(metrics={key: [mean()] for key in CHOICE_SCORE_KEYS})
 def pairwise_choice_scorer(num_criteria: int):
-    """Report judgment validity and choice fractions over the requested criteria."""
+    """Report judgment validity and choice fractions over the requested criteria.
+
+    ``valid`` is 1 when criterion 1 has a valid choice. ``parsed``, ``tie``,
+    ``first`` and ``second`` divide their counts by the requested number of
+    criteria, including missing criteria in the denominator. Inspect means
+    summarize these collection diagnostics. Panel rankings remain in the
+    existing BTD and EigenTrust analysis.
+    """
 
     num_criteria = int(num_criteria)
 
@@ -340,7 +362,12 @@ def build_pairwise_task(
     samples: list[Sample] | None = None,
     name: str | None = None,
 ) -> Task:
-    """Build the initial task or a phased judge's share of its samples."""
+    """Build the initial task or a phased judge's share of its samples.
+
+    ``samples`` can restrict the dataset to one judge with responses already
+    supplied. ``name`` labels that judge's task at construction because
+    Inspect's ``Task.name`` is read-only.
+    """
 
     from inspect_pipeline.eigenbench import _run_context, sanitize
 
