@@ -379,6 +379,11 @@ def export_log(
             "a phased extension log contains only one judge; rerun scripts/extend_run.py "
             "to collect and combine the complete extension"
         )
+    if meta.get("pairwise_phased"):
+        raise ValueError(
+            "a phased pairwise log contains only one judge; use scripts/run_inspect.py "
+            "to collect and combine the complete plan"
+        )
 
     omissions: list[dict] = []
     direct = True
