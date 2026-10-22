@@ -37,14 +37,16 @@ def eigenbench_responses(
     *,
     model_nick: str,
     models: dict[str, object] | None = None,
+    scenario_indices: list[int] | None = None,
 ) -> Task:
-    """One evaluee's responses, in isolation.
+    """One evaluee's responses, in isolation, for ``scenario_indices`` (default: all).
 
     Phase one of a local run: only this model is needed, so only its server has
     to be resident.
     """
 
     ctx = _run_context(spec, models)
+    wanted = None if scenario_indices is None else {int(s) for s in scenario_indices}
     samples = [
         Sample(
             input=scenario,
@@ -56,6 +58,7 @@ def eigenbench_responses(
             },
         )
         for s_idx, scenario in ctx["selected"]
+        if wanted is None or int(s_idx) in wanted
     ]
     safe = sanitize(model_nick)
     return Task(
