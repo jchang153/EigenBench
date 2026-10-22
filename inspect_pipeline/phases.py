@@ -46,6 +46,19 @@ STORE_RATINGS = "eigenbench:ratings"
 _RETRYABLE_STOP_REASONS = {"max_tokens", "model_length", "content_filter"}
 
 
+# collection.failure_policy values, as in pipeline.eval.direct_rating.
+FAILURE_POLICIES = ("strict", "omit_invalid_judgments")
+
+
+class InvalidJudgmentError(RuntimeError):
+    """A judge's reflection or rating was still invalid after every attempt.
+
+    collection.failure_policy="omit_invalid_judgments" omits these samples, as the native
+    engine does. Any other sample error, such as a failed response, an authentication
+    error or a bug, still stops the export.
+    """
+
+
 class ResponsePool:
     """One response per (scenario, evaluee), shared by every judge of it.
 
@@ -115,9 +128,10 @@ async def generate_validated(
     cache_enabled: bool,
     validator: Callable[[str], str | None] | None,
     identity: str,
+    exhausted: type[RuntimeError] = RuntimeError,
 ) -> ModelOutput:
     """Legacy retry contract: empty, truncated, filtered, or validator-rejected
-    completions are retried up to ``max_attempts``."""
+    completions are retried up to ``max_attempts``, then ``exhausted`` is raised."""
 
     model_identity = getattr(model, "_eigenbench_cache_identity", None)
     if cache_enabled and model_identity is None:
@@ -139,7 +153,7 @@ async def generate_validated(
             if error is None:
                 return output
             last_error = error
-    raise RuntimeError(
+    raise exhausted(
         f"generation failed validation after {max_attempts} attempts "
         f"({identity}): {last_error}"
     )
@@ -227,6 +241,7 @@ def direct_rating_solver(
             cache_enabled=cache_enabled,
             validator=None,
             identity=f"reflection {identity}",
+            exhausted=InvalidJudgmentError,
         )
         reflection = reflection_output.completion
 
@@ -246,6 +261,7 @@ def direct_rating_solver(
             cache_enabled=cache_enabled,
             validator=validator,
             identity=f"direct_rating {identity}",
+            exhausted=InvalidJudgmentError,
         )
         raw = rating_output.completion
         parsed = parse_direct_ratings(
