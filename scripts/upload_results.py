@@ -385,14 +385,19 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
         report_name = "collection_report.json"
         report_path = run_dir / report_name
         try:
-            report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
-            if not report or report.get("schema_version") != 2:
-                # Collected before the report existed: built from the logs, plan unknown.
-                repo_root = str(Path(__file__).resolve().parents[1])
-                if repo_root not in sys.path:
-                    sys.path.insert(0, repo_root)
-                from inspect_pipeline.coverage import report_from_run_dir
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from inspect_pipeline.coverage import evaluations_sha256, report_from_run_dir
 
+            report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
+            reported_logs = {entry["file"] for part in (report or {}).get("collections", [])
+                             for entry in part.get("logs", [])}
+            if (not report or report.get("schema_version") != 2
+                    or report.get("evaluations_sha256") != evaluations_sha256(eval_path)
+                    or not reported_logs <= set(names)):
+                # Collected before the report existed, or exported again since: built from
+                # the logs, plan unknown.
                 report = report_from_run_dir(run_dir, eval_path)
             (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             inspect_info["collection_report_file"] = report_name

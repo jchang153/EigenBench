@@ -6,6 +6,7 @@ logs alone, with planned and unstarted unknown (null).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -193,21 +194,34 @@ def _total(parts: list[dict], name: str):
     return None if any(value is None for value in values) else sum(values)
 
 
-def build_report(parts: list[dict], *, failure_policy: str | None) -> dict:
+def evaluations_sha256(path: str | Path | None) -> str | None:
+    """The exported evaluations a report describes, so a stale report can be told apart."""
+
+    if path is None or not Path(path).is_file():
+        return None
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def build_report(parts: list[dict], *, failure_policy: str | None,
+                 evaluations: str | Path | None = None) -> dict:
     """The version 2 report for a run made of these collections and extensions."""
 
     return {
         "schema_version": SCHEMA_VERSION,
         "source": "inspect_logs",
         "failure_policy": failure_policy,
+        "evaluations_sha256": evaluations_sha256(evaluations),
         **{name: _total(parts, name) for name in COUNTS},
         "collections": parts,
     }
 
 
 def write_collection_report(run_dir: str | Path, part: dict, *, failure_policy: str,
-                            append: bool = False) -> Path:
-    """Write the run's report, adding ``part`` to it when ``append`` (an extension)."""
+                            append: bool = False, evaluations_path: str | Path | None = None) -> Path:
+    """Write the run's report, adding ``part`` to it when ``append`` (an extension).
+
+    A part covering the same logs as ``part`` (a re-exported extension) is replaced.
+    """
 
     path = Path(run_dir) / REPORT_FILE
     parts = []
@@ -220,7 +234,10 @@ def write_collection_report(run_dir: str | Path, part: dict, *, failure_policy: 
             parts = [{"kind": "collection", "status": "unknown", "error": None,
                       **{name: None for name in COUNTS}, "logs": [], "omissions": [],
                       "unstarted_judgments": None}]
-    report = build_report(parts + [part], failure_policy=failure_policy)
+    files = {entry["file"] for entry in part["logs"]}
+    parts = [p for p in parts if not files & {entry["file"] for entry in p["logs"]}]
+    report = build_report(parts + [part], failure_policy=failure_policy,
+                          evaluations=evaluations_path or Path(run_dir) / "evaluations.jsonl")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     info_path = Path(run_dir) / "inspect_run.json"
@@ -231,14 +248,15 @@ def write_collection_report(run_dir: str | Path, part: dict, *, failure_policy: 
 
 
 def record_collection(run_dir: str | Path, kind: str, *, planned, logs, records, failure_policy: str,
-                      status: str = "exported", error: str | None = None) -> Path | None:
+                      status: str = "exported", error: str | None = None,
+                      evaluations_path: str | Path | None = None) -> Path | None:
     """Write the report, never letting a reporting problem hide the run's own outcome."""
 
     try:
         part = collection_part(kind, planned=planned, logs=logs, records=records,
                                status=status, error=error)
         path = write_collection_report(run_dir, part, failure_policy=failure_policy,
-                                       append=kind == "extension")
+                                       append=kind == "extension", evaluations_path=evaluations_path)
     except Exception as exc:  # e.g. ambiguous keys; the run itself is unaffected
         print(f"Warning: collection report unavailable: {exc}", flush=True)
         return None
@@ -271,4 +289,5 @@ def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None
         for log in logs
     } - {None}
     part = collection_part("collection", planned=None, logs=logs, records=records)
-    return build_report([part], failure_policy=policies.pop() if len(policies) == 1 else None)
+    return build_report([part], failure_policy=policies.pop() if len(policies) == 1 else None,
+                        evaluations=evaluations)

@@ -416,4 +416,6 @@ def eigenbench(
         name=f"eigenbench_{ctx['run_spec']['name']}",
         display_name=f"EigenBench direct rating — {ctx['run_spec']['name']}",
         metadata={"eigenbench": ctx["meta"]},
+        # Omitting invalid judgments needs the eval to survive a failed sample; export still vets each.
+        fail_on_error=(False if ctx["meta"]["failure_policy"] == "omit_invalid_judgments" else None),
     )

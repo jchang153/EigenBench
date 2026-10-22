@@ -564,7 +564,7 @@ def extend_run(
 
     from inspect_ai import eval as inspect_eval
 
-    from inspect_pipeline.collect import eval_kwargs
+    from inspect_pipeline.collect import eval_kwargs, log_names, record_refusal
     from inspect_pipeline.coverage import planned_from_edges, record_collection
     from inspect_pipeline.export import records_from_log, write_evaluations_atomic, write_inspect_run_info
 
@@ -590,6 +590,7 @@ def extend_run(
     planned = planned_from_edges(plan.edges)
     failure_policy = spec["collection"].get("failure_policy", "strict")
     seen_logs: list = []
+    before = log_names(log_dir)
     try:
         if _use_phased_extension(prepared):
             from inspect_pipeline.extension_phased import collect_phased_extension
@@ -616,15 +617,16 @@ def extend_run(
         if prepared["output"] != prepared["source"] and prepared["output"].exists():
             raise RuntimeError("output appeared during collection; export the log manually")
         write_evaluations_atomic(prepared["output"], prepared["records"] + new_records)
-    except Exception as exc:
-        record_collection(run_dir, "extension", planned=planned, logs=seen_logs, records=[],
-                          failure_policy=failure_policy, status="refused", error=str(exc))
+    except BaseException as exc:  # interrupts too: report what ran, then stop
+        record_refusal(run_dir, "extension", exc, planned=planned, logs=seen_logs,
+                       log_dir=log_dir, before=before, failure_policy=failure_policy,
+                       evaluations_path=prepared["output"])
         raise
     # Judgment logs first: the first is the primary log the viewer opens.
     others = [log for log in seen_logs if all(log is not judged for judged in logs)]
     write_inspect_run_info(run_dir, list(logs) + others, append=True)
     record_collection(run_dir, "extension", planned=planned, logs=seen_logs, records=new_records,
-                      failure_policy=failure_policy)
+                      failure_policy=failure_policy, evaluations_path=prepared["output"])
     missing = [name for name in plan.new_models if name not in spec["models"]]
     if missing:
         print(f"Add these models to the spec before analysis: {missing}")

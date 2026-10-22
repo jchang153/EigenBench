@@ -82,6 +82,10 @@ def _failure_message(failed, failure_policy: str) -> str:
     )
 
 
+def _all_invalid(label: str, message: str) -> str:
+    return f"every judgment in the log was invalid; nothing exported\n  {label}: {message}"
+
+
 def _omission(sample) -> dict:
     md = sample.metadata or {}
     message = sample.error.message
@@ -102,12 +106,14 @@ def records_from_log(
     strict: bool = True,
     failure_policy: str = "strict",
     omissions: list[dict] | None = None,
+    whole: bool = True,
 ) -> list[dict]:
     """Build direct-rating records from an eval log, in plan (edge) order.
 
     With ``failure_policy="omit_invalid_judgments"`` a judgment that stayed invalid after
     every attempt is left out and added to ``omissions``; any other failed sample still
     refuses the export and names its models. ``strict=False`` skips every failed sample.
+    ``whole=False`` marks one log of several, so an all-invalid log is not refused here.
     """
 
     if failure_policy not in FAILURE_POLICIES:
@@ -136,11 +142,8 @@ def records_from_log(
         ]
         if fatal:
             raise RuntimeError(_failure_message(fatal, failure_policy))
-        if failed and len(failed) == len(samples):
-            raise RuntimeError(
-                f"every judgment in the log was invalid; nothing exported\n  "
-                f"{_sample_label(failed[0])}: {failed[0].error.message}"
-            )
+        if whole and failed and len(failed) == len(samples):
+            raise RuntimeError(_all_invalid(_sample_label(failed[0]), failed[0].error.message))
 
     rows = []
     seen_edges: set[tuple[int, int, int]] = set()
@@ -215,10 +218,19 @@ def records_from_logs(
     """Merge the judge logs of a phased run back into one ordered record set."""
 
     records: list[dict] = []
+    left_out: list[dict] = []
     for log in logs:
-        records.extend(
-            records_from_log(log, strict=strict, failure_policy=failure_policy, omissions=omissions)
-        )
+        records.extend(records_from_log(log, strict=strict, failure_policy=failure_policy,
+                                        omissions=left_out, whole=False))
+    # One judge's log can be all invalid; only a collection with nothing valid is refused.
+    if strict and left_out and not records:
+        first = left_out[0]
+        raise RuntimeError(_all_invalid(
+            f"scenario_index={first['scenario_index']} judge={first['judge']} evaluee={first['evaluee']}",
+            first["error"],
+        ))
+    if omissions is not None:
+        omissions.extend(left_out)
     seen = set()
     for r in records:
         edge = (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
@@ -265,11 +277,13 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
     return rows
 
 
-def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False) -> Path:
+def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False,
+                           primary: bool = True) -> Path:
     """Record which log(s) produced a run, so the upload can carry them.
 
     ``log_files`` lists every log; ``append`` (an extension) adds to the run's earlier ones.
-    ``log_file`` stays the latest primary log, for the log viewer.
+    ``log_file`` stays the latest primary log, for the log viewer; ``primary=False`` (a
+    refused extension) keeps the run's earlier one.
     """
 
     path = Path(run_dir) / "inspect_run.json"
@@ -279,7 +293,8 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: 
     logs = log if isinstance(log, list) else [log]
     names = [Path(str(item.location)).name for item in logs]
     earlier = (info.get("log_files") or [info["log_file"]] if info.get("log_file") else []) if append else []
-    info["log_file"] = names[0]
+    if primary or not earlier:
+        info["log_file"] = names[0]
     info["log_files"] = list(dict.fromkeys(earlier + names))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
@@ -355,6 +370,7 @@ def export_log(
     append: bool = False,
     failure_policy: str | None = None,
     planned: int | None = None,
+    report: bool = True,
 ) -> tuple[list[dict], Path]:
     """Export one eval log to evaluations.jsonl (+ optional response cache).
 
@@ -362,7 +378,8 @@ def export_log(
     with a new model needs. A pairwise log is written in the pairwise schema.
     ``failure_policy`` defaults to the run's collection.failure_policy. A direct-rating
     export always writes omitted_samples.json, with no omissions under ``strict``. Given
-    ``planned``, a log that does not account for every judgment is refused.
+    ``planned``, a log that does not account for every judgment is refused. ``report``
+    refreshes collection_report.json from this log; collection passes False to report its plan.
     """
 
     log = load_log(log)
@@ -439,6 +456,13 @@ def export_log(
             write_omissions(target, planned=planned or _logged_plan(log), records=records,
                             omissions=omissions)
     write_inspect_run_info(target.parent, log, append=append)
+    if report:
+        from .coverage import record_collection
+
+        # Without the plan, planned and unstarted are unknown (null).
+        record_collection(target.parent, "extension" if append else "collection", planned=None,
+                          logs=[log], records=records, failure_policy=failure_policy,
+                          evaluations_path=target)
 
     cache_target = cached_responses_path or meta.get("cached_responses_path")
     if cache_target:
