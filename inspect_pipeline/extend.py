@@ -455,6 +455,7 @@ def _prepare_extension(
     from pipeline.utils import load_records
 
     from inspect_pipeline.eigenbench import load_selection, resolve_spec_ref
+    from inspect_pipeline.provenance import changed_scenarios, constitution_differs
 
     spec_ref = resolve_spec_ref(spec_ref)
     spec, run_dir = load_run_spec(spec_ref)
@@ -482,12 +483,10 @@ def _prepare_extension(
     # Record indices, rather than spec insertion order, are authoritative.
     models = {name: models[name] for name in order + additions}
     selected, criteria = load_selection(spec, run_dir)
-    expected_constitution = "\n".join(criteria)
-    if any(r.get("constitution") != expected_constitution for r in records):
+    if constitution_differs(records, criteria):
         raise ValueError("extension criteria differ from the source records")
     old_scenarios = scenarios_of(records)
-    selected_map = dict(selected)
-    if any(selected_map.get(s) != text for s, text in old_scenarios.items()):
+    if changed_scenarios(records, selected):
         raise ValueError(
             "dataset selection must include the original scenario indices and text; "
             "keep dataset/start/shuffle settings and increase dataset.count as needed"

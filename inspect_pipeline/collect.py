@@ -22,7 +22,7 @@ from pipeline.eval.direct_rating import (
 from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import load_records
 
-from .eigenbench import eigenbench, has_local_models, load_selection
+from .eigenbench import _run_context, eigenbench, has_local_models, load_selection
 from .phased import eigenbench_judge, eigenbench_responses
 from .export import (
     check_complete,
@@ -33,6 +33,7 @@ from .export import (
     write_omissions,
 )
 from .coverage import planned_from_assignments, record_collection
+from .provenance import check_reusable, write_fingerprint
 from .phases import STORE_RESPONSE
 
 
@@ -127,6 +128,10 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
                       error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
 
 
+def _is_local(value) -> bool:
+    return has_local_models({"model": value})
+
+
 async def _close_model(nick: str, resolve_model) -> None:
     """Terminate a local model's vLLM server so the next one can have the GPU."""
 
@@ -140,6 +145,24 @@ async def _close_model(nick: str, resolve_model) -> None:
             await aclose()
         except Exception as exc:  # a stuck server must not sink the run
             print(f"  warning: could not close {nick}: {exc}")
+
+
+def _persist_responses(ctx, responses, generated) -> None:
+    """Append scenarios with new responses, once every model has one, to the response cache."""
+
+    path = ctx["collection_cfg"].get("cached_responses_path")
+    nicks = list(ctx["models"])
+    rows = [
+        {"scenario": scenario, "scenario_index": int(s_idx),
+         "responses": {nick: responses[int(s_idx)][nick] for nick in nicks}}
+        for s_idx, scenario in ctx["selected"]
+        if any((int(s_idx), nick) in generated for nick in nicks)
+        and all(nick in responses[int(s_idx)] for nick in nicks)
+    ]
+    if path and rows:
+        from pipeline.utils import append_records
+
+        append_records(path, rows)
 
 
 def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | None = None) -> list[dict]:
@@ -167,15 +190,19 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     response_errors: dict[tuple[int, str], str] = {}
 
     def close(nick: str) -> None:
-        anyio.run(_close_model, nick, resolve_model)
+        # Free a local server's GPU (it restarts on next use); API clients must stay open to judge.
+        if _is_local(models[nick]):
+            anyio.run(_close_model, nick, resolve_model)
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
+    generated: set[tuple[int, str]] = set()
     for nick in nicks:
-        missing = [s for s, _ in ctx["selected"] if nick not in responses[int(s)]]
+        missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
         if not missing:
             continue
         logs = inspect_eval(
-            tasks=eigenbench_responses(spec_ref, model_nick=nick, models=models),
+            tasks=eigenbench_responses(spec_ref, model_nick=nick, models=models,
+                                       scenario_indices=missing),
             model=None,
             max_tasks=1,
             **eval_kw,
@@ -185,12 +212,14 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
             content = (sample.store or {}).get(STORE_RESPONSE)
             if isinstance(content, str) and content.strip():
                 responses[int(sample.metadata["scenario_index"])][nick] = content
+                generated.add((int(sample.metadata["scenario_index"]), nick))
             elif sample.error is not None:
                 response_errors[(int(sample.metadata["scenario_index"]), nick)] = sample.error.message
         if logs[0].error is not None:
             for s in missing:
                 response_errors.setdefault((int(s), nick), logs[0].error.message)
         close(nick)
+    _persist_responses(ctx, responses, generated)
 
     # Every policy needs every response: a judgment cannot be made without one.
     needed = sorted({
@@ -266,23 +295,20 @@ def collect_direct_ratings_inspect(
     if not log_dir.is_absolute():
         log_dir = evaluations_path.parent / log_dir
 
-    # A completed run short-circuits; a foreign file is refused.
     estimate = write_call_estimate(spec, run_dir)
     expected = estimate["rating_tasks"]
+    ctx = _run_context(spec_ref, models)
+    # A completed run short-circuits only if it is this plan's collection; anything else
+    # is refused with what differs.
     if evaluations_path.exists() and evaluations_path.stat().st_size > 0:
         existing = load_records(str(evaluations_path))
         omitted_path = evaluations_path.with_name("omitted_samples.json")
-        if len(existing) == expected or (
-            failure_policy == "omit_invalid_judgments"
-            and omitted_path.exists()
-            and len(existing) + json.loads(omitted_path.read_text(encoding="utf-8"))["omitted"] == expected
-        ):
-            print(f"Direct collection already complete: {len(existing)} ratings")
-            return existing
-        raise RuntimeError(
-            f"{evaluations_path} exists with {len(existing)} records but this plan "
-            f"expects {expected}; move or delete it before collecting"
-        )
+        omitted = []
+        if failure_policy == "omit_invalid_judgments" and omitted_path.exists():
+            omitted = json.loads(omitted_path.read_text(encoding="utf-8")).get("samples", [])
+        check_reusable(evaluations_path, existing, ctx, omitted)
+        print(f"Direct collection already complete: {len(existing)} ratings")
+        return existing
 
     print(
         f"Direct-rating plan: {estimate['total_logical_generations']} logical "
@@ -301,9 +327,6 @@ def collect_direct_ratings_inspect(
     before = log_names(log_dir)
     try:
         if phased:
-            from .eigenbench import _run_context
-
-            ctx = _run_context(spec_ref, models)
             planned_judgments = planned_from_assignments(ctx["assignments"])
             judge_logs = _run_phased(spec_ref, spec_models, ctx, eval_kw, seen_logs)
             omissions: list[dict] = []
@@ -338,6 +361,7 @@ def collect_direct_ratings_inspect(
     record_collection(evaluations_path.parent, "collection", planned=planned_judgments,
                       logs=seen_logs, records=records, failure_policy=failure_policy,
                       evaluations_path=evaluations_path)
+    write_fingerprint(evaluations_path, ctx)
 
     print(f"Direct collection complete. {len(records)} ratings saved to {target}")
     return records
