@@ -95,6 +95,38 @@ def eval_kwargs(inspect_cfg: dict, log_dir: Path) -> dict:
     return kwargs
 
 
+def log_names(log_dir: Path) -> set[str]:
+    """The logs already in ``log_dir``, so a stopped run can find the ones it wrote."""
+
+    from inspect_ai.log import list_eval_logs
+
+    return {Path(info.name).name for info in list_eval_logs(str(log_dir))} if log_dir.is_dir() else set()
+
+
+def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, logs: list,
+                   log_dir: Path, before: set[str], failure_policy: str,
+                   evaluations_path: Path | None = None) -> None:
+    """Report a collection or extension that stopped, with every log it wrote.
+
+    An interrupt leaves its active log unreturned, so logs new to ``log_dir`` are added.
+    """
+
+    try:
+        from inspect_ai.log import list_eval_logs, read_eval_log
+
+        known = before | {Path(str(log.location)).name for log in logs}
+        if log_dir.is_dir():
+            logs = logs + [read_eval_log(info.name) for info in list_eval_logs(str(log_dir))
+                           if Path(info.name).name not in known]
+        if logs:
+            write_inspect_run_info(run_dir, logs, append=kind == "extension", primary=False)
+    except Exception as error:  # never hide the run's own outcome
+        print(f"Warning: could not list the stopped run's logs: {error}", flush=True)
+    record_collection(run_dir, kind, planned=planned, logs=logs, records=[],
+                      failure_policy=failure_policy, status="refused",
+                      error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
+
+
 async def _close_model(nick: str, resolve_model) -> None:
     """Terminate a local model's vLLM server so the next one can have the GPU."""
 
@@ -266,6 +298,7 @@ def collect_direct_ratings_inspect(
 
     seen_logs: list = []
     planned_judgments = None
+    before = log_names(log_dir)
     try:
         if phased:
             from .eigenbench import _run_context
@@ -295,14 +328,16 @@ def collect_direct_ratings_inspect(
                 cached_responses_path=collection_cfg.get("cached_responses_path"),
                 failure_policy=failure_policy,
                 planned=planned,
+                report=False,
             )
-    except Exception as exc:
-        record_collection(evaluations_path.parent, "collection", planned=planned_judgments,
-                          logs=seen_logs, records=[], failure_policy=failure_policy,
-                          status="refused", error=str(exc))
+    except BaseException as exc:  # interrupts too: report what ran, then stop
+        record_refusal(evaluations_path.parent, "collection", exc, planned=planned_judgments,
+                       logs=seen_logs, log_dir=log_dir, before=before,
+                       failure_policy=failure_policy, evaluations_path=evaluations_path)
         raise
     record_collection(evaluations_path.parent, "collection", planned=planned_judgments,
-                      logs=seen_logs, records=records, failure_policy=failure_policy)
+                      logs=seen_logs, records=records, failure_policy=failure_policy,
+                      evaluations_path=evaluations_path)
 
     print(f"Direct collection complete. {len(records)} ratings saved to {target}")
     return records

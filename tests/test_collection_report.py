@@ -141,6 +141,20 @@ def test_extending_a_run_without_a_report_keeps_its_totals_unknown(tmp_path):
     assert json.loads((tmp_path / "inspect_run.json").read_text()) == {"collection_report_file": "collection_report.json"}
 
 
+def test_reexported_extension_replaces_its_part(tmp_path):
+    from inspect_pipeline.coverage import collection_part, write_collection_report
+
+    first = collection_part("collection", planned=None, logs=[log("run.eval", [sample(0)])], records=[direct(0)])
+    write_collection_report(tmp_path, first, failure_policy="strict")
+    ext = log("ext.eval", [sample(1), sample(2)])
+    for exported in ([], [direct(1), direct(2)]):
+        part = collection_part("extension", planned=None, logs=[ext], records=exported)
+        write_collection_report(tmp_path, part, failure_policy="strict", append=True)
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    assert [part["kind"] for part in report["collections"]] == ["collection", "extension"]
+    assert (report["logged"], report["exported"]) == (3, 3)
+
+
 def _run_folder(tmp_path, **inspect_run):
     run = tmp_path / "run"
     (run / "direct_rating").mkdir(parents=True)
@@ -158,7 +172,10 @@ def test_upload_publishes_the_run_report_and_every_log(tmp_path):
 
     names = ["judge_a.eval", "judge_b.eval", "responses.eval"]
     run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=names)
-    report = {"schema_version": 2, "source": "inspect_logs", "planned": 2, "collections": []}
+    from inspect_pipeline.coverage import evaluations_sha256
+
+    report = {"schema_version": 2, "source": "inspect_logs", "planned": 2, "collections": [],
+              "evaluations_sha256": evaluations_sha256(run / "evaluations.jsonl")}
     (run / "collection_report.json").write_text(json.dumps(report))
 
     meta, _ = stage_run("demo", run, tmp_path / "staged")

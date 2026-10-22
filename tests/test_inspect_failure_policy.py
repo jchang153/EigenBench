@@ -29,6 +29,7 @@ PLANNED = SCENARIOS * len(NICKS) ** 2  # all_to_all with self-ratings
 #   error: the provider raises, like an authentication failure
 #   response: evaluee "b" never answers scenario 0
 #   all_ratings: every judge's rating is unparseable
+#   judge_ratings: every rating judge "a" makes is unparseable
 #   truncated: a well-formed rating cut off at max_tokens on every attempt
 #   interrupt: the run is interrupted (Ctrl-C) during that rating
 SPEC_TEMPLATE = '''
@@ -60,7 +61,7 @@ def _mock(nick):
         if failing and FAULT == "truncated":
             return ModelOutput.from_content(model="mockllm/model", content="<criterion_1_rating>7</criterion_1_rating>",
                                             stop_reason="max_tokens")
-        if (failing and FAULT == "rating") or FAULT == "all_ratings":
+        if (failing and FAULT == "rating") or FAULT == "all_ratings" or (FAULT == "judge_ratings" and nick == "a"):
             return ModelOutput.from_content(model="mockllm/model", content="I would rather not rate this.")
         return ModelOutput.from_content(model="mockllm/model", content="<criterion_1_rating>7</criterion_1_rating>")
 
@@ -277,7 +278,8 @@ def test_unknown_policy_is_rejected_before_any_model_call(write_spec, tmp_path, 
     assert not list(tmp_path.glob("inspect_logs/*.eval"))
 
 
-def test_refused_extension_is_added_to_the_report(write_spec, tmp_path):
+@pytest.mark.parametrize("fault", ["error", "interrupt"])
+def test_refused_extension_is_added_to_the_report(write_spec, tmp_path, fault):
     import re
 
     from inspect_ai.model import ModelOutput, get_model
@@ -293,9 +295,12 @@ def test_refused_extension_is_added_to_the_report(write_spec, tmp_path):
             return ModelOutput.from_content(model="mockllm/model", content=f"[c] answer {scenario}")
         if system.startswith("You are acting as a judge. Carefully consider the following response"):
             return ModelOutput.from_content(model="mockllm/model", content="reflection")
+        if fault == "interrupt":
+            raise KeyboardInterrupt
         raise PermissionError("401 Unauthorized: invalid API key")
 
-    with pytest.raises(RuntimeError, match="401 Unauthorized"):
+    primary = json.loads((tmp_path / "inspect_run.json").read_text())["log_file"]
+    with pytest.raises(KeyboardInterrupt if fault == "interrupt" else RuntimeError):
         extend_run(spec, "c", get_model("mockllm/model", custom_outputs=outputs, memoize=False),
                    include_self=True, seed=7)
 
@@ -304,9 +309,18 @@ def test_refused_extension_is_added_to_the_report(write_spec, tmp_path):
     first, extension = report["collections"]
     assert (first["kind"], first["status"], first["exported"]) == ("collection", "exported", PLANNED)
     assert (extension["kind"], extension["status"], extension["exported"]) == ("extension", "refused", 0)
-    assert "401 Unauthorized" in extension["error"] and extension["failed"] > 0
-    assert extension["planned"] == extension["logged"] + extension["unstarted"]
-    assert counts(report) == {name: first[name] + extension[name] for name in COUNTS}
+    if fault == "interrupt":
+        assert extension["error"] == "KeyboardInterrupt"
+    else:
+        assert "401 Unauthorized" in extension["error"] and extension["failed"] > 0
+        assert extension["planned"] == extension["logged"] + extension["unstarted"]
+        assert counts(report) == {name: first[name] + extension[name] for name in COUNTS}
+
+    # The manifest names the refused extension's log too, so staging carries it.
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    assert info["log_file"] == primary
+    assert {entry["file"] for part in (first, extension) for entry in part["logs"]} == set(info["log_files"])
+    assert extension["logs"]
 
 
 @pytest.mark.parametrize("phased", [False, True])
@@ -316,6 +330,62 @@ def test_interrupted_collection_exports_nothing(write_spec, tmp_path, phased):
         collect(write_spec(fault="interrupt", phased=phased))
     assert not (tmp_path / "evaluations.jsonl").exists()
     assert not (tmp_path / "omitted_samples.json").exists()
+
+    # Still reported, with the log that was running when it stopped.
+    [part] = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
+    assert (part["status"], part["error"]) == ("refused", "KeyboardInterrupt")
+    files = {entry["file"] for entry in part["logs"]}
+    assert len(files) == (3 if phased else 1)  # phased: both response logs and judge a's
+    assert set(json.loads((tmp_path / "inspect_run.json").read_text())["log_files"]) == files
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_a_judge_with_no_valid_rating_does_not_refuse_the_collection(write_spec, tmp_path, phased):
+    records = collect(write_spec(fault="judge_ratings", phased=phased))
+    assert {r["judge"]["name"] for r in records} == {"b"}
+    assert len(records) == PLANNED // 2
+    assert json.loads((tmp_path / "omitted_samples.json").read_text())["omitted"] == PLANNED // 2
+
+
+def stage(tmp_path):
+    """Stage the run for upload, under a plain spec (staging cannot parse mock models)."""
+    import shutil
+
+    from scripts.upload_results import stage_run
+
+    run = tmp_path / "upload"
+    (run / "direct_rating").mkdir(parents=True)
+    shutil.copytree(tmp_path / "inspect_logs", run / "inspect_logs")
+    for name in ("evaluations.jsonl", "inspect_run.json", "collection_report.json"):
+        shutil.copy2(tmp_path / name, run / name)
+    (run / "spec.py").write_text("RUN_SPEC = {'models': {}, 'evaluation': {'mode': 'direct_rating'}}")
+    stage_run("demo", run, tmp_path / "staged")
+    return json.loads((tmp_path / "staged/runs/demo/collection_report.json").read_text())
+
+
+def test_reexport_refreshes_the_report(write_spec, tmp_path):
+    from inspect_ai.log import list_eval_logs
+    from inspect_pipeline.export import export_log
+
+    with pytest.raises(RuntimeError):
+        collect(write_spec(fault="rating", policy="strict"))
+    [log] = list_eval_logs(str(tmp_path / "inspect_logs"))
+    records, _ = export_log(log.name, evaluations_path=tmp_path / "evaluations.jsonl", strict=False)
+
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    [part] = report["collections"]
+    assert part["status"] == "exported"
+    assert (report["exported"], report["failed"], report["omitted"]) == (len(records), 1, 1)
+    assert stage(tmp_path) == report
+
+
+def test_staging_rebuilds_a_report_older_than_the_export(write_spec, tmp_path):
+    collect(write_spec(fault="rating"))
+    evaluations = tmp_path / "evaluations.jsonl"
+    evaluations.write_text("".join(evaluations.read_text().splitlines(keepends=True)[:-1]))
+
+    report = stage(tmp_path)
+    assert (report["planned"], report["exported"]) == (None, PLANNED - 2)
 
 
 def test_interrupted_log_is_refused_on_reexport(write_spec, tmp_path):
@@ -338,3 +408,50 @@ def test_interrupted_log_is_refused_on_reexport(write_spec, tmp_path):
     coverage = json.loads((tmp_path / "omitted_samples.json").read_text())
     assert (coverage["planned"], coverage["completed"]) == (PLANNED, len(records))
     assert len(records) < PLANNED
+
+
+def native_eval(spec_path, tmp_path):
+    """Run the task as `inspect eval` does, with no error-handling flags."""
+
+    from inspect_ai import eval as inspect_eval
+    from inspect_pipeline.eigenbench import eigenbench
+
+    [log] = inspect_eval(eigenbench(spec_path), model=None, log_dir=str(tmp_path / "native_logs"),
+                         display="none")
+    return log
+
+
+@pytest.mark.parametrize("fault", ["rating", "truncated"])
+def test_native_eval_omits_an_invalid_judgment(write_spec, tmp_path, fault):
+    from inspect_pipeline.export import export_log
+
+    log = native_eval(write_spec(fault=fault), tmp_path)
+    assert log.status == "success"
+    records, _ = export_log(log, evaluations_path=tmp_path / "evaluations.jsonl")
+    assert len(records) == PLANNED - 1
+    omitted = json.loads((tmp_path / "omitted_samples.json").read_text())
+    assert (omitted["planned"], omitted["omitted"]) == (PLANNED, 1)
+    assert (omitted["samples"][0]["judge"], omitted["samples"][0]["evaluee"]) == ("a", "b")
+
+
+@pytest.mark.parametrize("fault,expected", [
+    ("error", "401 Unauthorized"),
+    ("response", "empty completion"),
+])
+def test_native_eval_still_refuses_other_failures_when_omitting(write_spec, tmp_path, fault, expected):
+    from inspect_pipeline.export import export_log
+
+    log = native_eval(write_spec(fault=fault), tmp_path)
+    with pytest.raises(RuntimeError, match="for reasons other than an invalid judgment") as error:
+        export_log(log, evaluations_path=tmp_path / "evaluations.jsonl")
+    assert expected in str(error.value)
+    assert not (tmp_path / "evaluations.jsonl").exists()
+
+
+def test_native_eval_keeps_inspects_default_when_strict(write_spec, tmp_path):
+    from inspect_pipeline.export import export_log
+
+    log = native_eval(write_spec(fault="rating", policy="strict"), tmp_path)
+    assert log.status == "error"
+    with pytest.raises(RuntimeError, match="did not complete successfully"):
+        export_log(log, evaluations_path=tmp_path / "evaluations.jsonl")
