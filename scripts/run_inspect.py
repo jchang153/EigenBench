@@ -1,4 +1,4 @@
-"""Run an EigenBench direct-rating spec end to end on the Inspect AI engine.
+"""Run an EigenBench spec end to end on the Inspect AI engine.
 
     python scripts/run_inspect.py runs/my_run/spec.py [--estimate-calls]
 
@@ -30,11 +30,7 @@ from pipeline.config import load_run_spec  # noqa: E402
 
 def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
     spec, _run_dir = load_run_spec(spec_ref)
-    if spec.get("evaluation", {}).get("mode") != "direct_rating":
-        raise SystemExit(
-            "run_inspect.py supports evaluation.mode='direct_rating' only; "
-            "use scripts/run.py for pairwise BTD runs."
-        )
+    mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
 
     collection_cfg = spec.get("collection", {})
     if collection_enabled is not None:
@@ -49,12 +45,14 @@ def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
 
     if bool(collection_cfg.get("enabled", True)):
         print("Stage: collect evaluations (Inspect engine)")
-        from inspect_pipeline.collect import collect_direct_ratings_inspect
-
         if spec.get("extension"):
             from inspect_pipeline.extend import extend_run
             extend_run(spec_ref)
+        elif mode == "pairwise_btd":
+            from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+            collect_pairwise_inspect(spec_ref)
         else:
+            from inspect_pipeline.collect import collect_direct_ratings_inspect
             collect_direct_ratings_inspect(spec_ref)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
@@ -79,7 +77,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="EigenBench direct-rating runner on Inspect AI"
+        description="EigenBench runner on Inspect AI"
     )
     parser.add_argument("spec", help="Run spec module or path, e.g. runs/my_run/spec.py")
     parser.add_argument(
@@ -96,9 +94,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.estimate_calls:
-        from run import estimate_calls
-
-        print(pprint.pformat(estimate_calls(args.spec), sort_dicts=False))
+        spec, _ = load_run_spec(args.spec)
+        if spec.get("evaluation", {}).get("mode", "pairwise_btd") == "pairwise_btd" and not spec.get("extension"):
+            from inspect_pipeline.pairwise_collect import estimate_pairwise_calls
+            estimate = estimate_pairwise_calls(args.spec)
+        else:
+            from run import estimate_calls
+            estimate = estimate_calls(args.spec)
+        print(pprint.pformat(estimate, sort_dicts=False))
     else:
         override = None
         if args.collection_enabled is not None:
