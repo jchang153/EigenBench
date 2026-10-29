@@ -1,6 +1,7 @@
 """The version 2 collection report and its publication."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -174,7 +175,8 @@ def test_upload_publishes_the_run_report_and_every_log(tmp_path):
     run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=names)
     from inspect_pipeline.coverage import evaluations_sha256
 
-    report = {"schema_version": 2, "source": "inspect_logs", "planned": 2, "collections": [],
+    report = {"schema_version": 2, "source": "inspect_logs", "planned": 2,
+              "collections": [{"logs": [{"file": name} for name in names]}],
               "evaluations_sha256": evaluations_sha256(run / "evaluations.jsonl")}
     (run / "collection_report.json").write_text(json.dumps(report))
 
@@ -210,6 +212,37 @@ def test_old_run_gets_a_version_2_report_with_unknown_plan(tmp_path, monkeypatch
     meta, _ = stage_run("demo", run, tmp_path / "staged")
     assert meta["inspect"]["collection_report_file"] == "collection_report.json"
     assert json.loads((tmp_path / "staged/runs/demo/collection_report.json").read_text()) == report
+
+
+def test_upload_rebuilds_report_when_manifest_gains_a_failed_log(tmp_path, monkeypatch):
+    import inspect_ai.log
+    from inspect_pipeline.coverage import collection_part, write_collection_report
+    from scripts.upload_results import stage_run
+
+    run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=["judge_a.eval"])
+    records = [direct(0, "a")]
+    evaluations = run / "evaluations.jsonl"
+    evaluations.write_text(json.dumps(records[0]) + "\n")
+    before = evaluations.read_bytes()
+    logs = {
+        "judge_a.eval": log("judge_a.eval", [sample(0, judge_nick="a")]),
+        "judge_b.eval": log("judge_b.eval", [sample(1, "provider failed", judge_nick="b")]),
+    }
+    part = collection_part("collection", planned=None, logs=[logs["judge_a.eval"]], records=records)
+    write_collection_report(run, part, failure_policy="strict")
+
+    manifest = json.loads((run / "inspect_run.json").read_text())
+    manifest["log_files"].append("judge_b.eval")
+    (run / "inspect_run.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(inspect_ai.log, "read_eval_log", lambda path: logs[Path(path).name])
+
+    stage_run("demo", run, tmp_path / "staged")
+    staged = tmp_path / "staged/runs/demo"
+    report = json.loads((staged / "collection_report.json").read_text())
+    assert evaluations.read_bytes() == before
+    assert (report["logged"], report["exported"], report["failed"], report["omitted"]) == (2, 1, 1, 1)
+    assert {entry["file"] for part in report["collections"] for entry in part["logs"]} == set(logs)
+    assert all((staged / name).is_file() for name in logs)
 
 
 def test_uploaded_spec_can_resolve_its_own_file(tmp_path):

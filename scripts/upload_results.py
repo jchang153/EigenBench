@@ -395,9 +395,9 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
                              for entry in part.get("logs", [])}
             if (not report or report.get("schema_version") != 2
                     or report.get("evaluations_sha256") != evaluations_sha256(eval_path)
-                    or not reported_logs <= set(names)):
-                # Collected before the report existed, or exported again since: built from
-                # the logs, plan unknown.
+                    or reported_logs != set(names)):
+                # Missing or stale report. Rebuild from the current logs and export,
+                # with the original plan unknown.
                 report = report_from_run_dir(run_dir, eval_path)
             (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
             inspect_info["collection_report_file"] = report_name
