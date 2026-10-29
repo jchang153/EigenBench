@@ -27,9 +27,11 @@ from inspect_ai.model import ModelOutput, ModelUsage, get_model  # noqa: E402
 from inspect_pipeline.pairwise import (  # noqa: E402
     build_comparison_user,
     build_reflection_user,
+    eigenbench_pairwise,
     eigenbench_pairwise_extend,
     pairwise_cache_scope,
     pairwise_edge_samples,
+    pairwise_comparison_samples,
     parse_pairwise_choices,
     records_from_pairwise_log,
 )
@@ -161,6 +163,25 @@ def test_plan_follows_the_original_scenario_then_round_loop(mode):
     assert all(g.judge_nick == nicks[g.judge_idx] for g in groups)
 
 
+def test_comparisons_cover_both_orders_in_original_loop_order():
+    group = PairwiseGroup(
+        scenario_index=3, scenario="S", sampling_round=1, group_id="s0003:r1",
+        judge_idx=0, judge_nick="a", eval_idxs=(2, 0, 1), eval_nicks=("c", "a", "b"),
+    )
+    rows = pairwise_comparisons([group])
+    assert [(r["eval1_idx"], r["eval2_idx"]) for r in rows] == [
+        (2, 0), (2, 1), (0, 2), (0, 1), (1, 2), (1, 0),
+    ]
+    assert [r["edge_index"] for r in rows] == list(range(6))
+    assert {r["group_id"] for r in rows} == {r["response_group"] for r in rows} == {"s0003:r1"}
+    assert all(r["eval1_nick"] == "abc"[r["eval1_idx"]] for r in rows)
+    assert pairwise_call_counts(rows) == {
+        "response_tasks": 3, "reflection_tasks": 3, "comparison_tasks": 6,
+        "total_logical_generations": 12,
+    }
+    cached = {(3, "a"): "cached"}
+    samples = pairwise_comparison_samples(rows, cached=cached)
+    assert pairwise_call_counts([sample.metadata for sample in samples])["response_tasks"] == 2
 
 
 def test_sampling_settings_match_collect_core_evaluations():
@@ -333,20 +354,200 @@ def _run(task, log_dir):
     return logs[0]
 
 
+def _expected_records(groups, cached=None):
+    cached = cached or {}
+    out = []
+    for row in pairwise_comparisons(groups):
+        s, judge = row["scenario"], row["judge_nick"]
+        e1, e2 = row["eval1_nick"], row["eval2_nick"]
+        r1 = cached.get((row["scenario_index"], e1), f"R[{e1}] {s}")
+        r2 = cached.get((row["scenario_index"], e2), f"R[{e2}] {s}")
+        out.append({
+            "constitution": "\n".join(CRITERIA), "scenario": s,
+            "scenario_index": row["scenario_index"],
+            "eval1": row["eval1_idx"], "eval1_name": e1,
+            "eval1 response": r1, "eval1 reflection": f"F[{judge}] {r1}",
+            "eval2": row["eval2_idx"], "eval2_name": e2,
+            "eval2 response": r2, "eval2 reflection": f"F[{judge}] {r2}",
+            "judge": row["judge_idx"], "judge_name": judge,
+            "judge response": _verdict(judge, e1, e2),
+        })
+    return out
 
 
+def _plan_for(spec_path, nicks=NICKS):
+    from inspect_pipeline.eigenbench import _run_context
+
+    ctx = _run_context(spec_path, dict.fromkeys(nicks, "inspect:mockllm/model"),
+                       build_assignments=False)
+    sampling = resolve_pairwise_sampling_settings(ctx["collection_cfg"], num_models=len(nicks))
+    return plan_pairwise_groups(ctx["selected"], nicks, **sampling)
 
 
+def test_fresh_task_reproduces_golden_records_and_prompt_bytes(tmp_path):
+    spec = _write_spec(tmp_path)
+    calls = []
+    task = eigenbench_pairwise(spec, models=_panel(calls))
+    assert len(task.dataset) == 2 * 2 * 6
+    assert task.scorer and task.dataset[0].metadata["group_id"] == "s0000:r0"
+    meta = task.metadata["eigenbench"]
+    assert (meta["protocol"], meta["sampler_mode"], meta["group_size"], meta["groups"],
+            meta["sampler_seed"]) == ("pairwise_btd", "random_judge_group", 3, 2, 5)
+
+    log = _run(task, tmp_path / "logs")
+    records = records_from_pairwise_log(log, CRITERIA)
+    groups = _plan_for(spec)
+    expected = _expected_records(groups)
+    assert json.dumps(records) == json.dumps(expected)  # values and key order
+
+    # Every call uses the original profile and the original prompt bytes.
+    assert {(c["max_tokens"], c["temperature"]) for c in calls} == {(4096, 1.0)}
+    by_phase = Counter(c["phase"] for c in calls)
+    assert by_phase == {"response": 12, "reflection": 12, "comparison": 24}
+    assert {c["system"] for c in calls if c["phase"] == "comparison"} == {COMPARISON_SYSTEM_TIES}
+    first = expected[0]
+    assert any(c["user"] == build_comparison_user(
+        "c1\nc2", first["scenario"], first["eval1 response"], first["eval1 reflection"],
+        first["eval2 response"], first["eval2 reflection"]) for c in calls)
+    assert any(c["user"] == build_reflection_user("c1\nc2", first["scenario"],
+                                                  first["eval1 response"]) for c in calls)
+
+    # Ties survive export into the BTD comparison rows.
+    from pipeline.utils import extract_comparisons_with_ties_criteria
+
+    rows, _ = extract_comparisons_with_ties_criteria(records, num_criteria=2)
+    ties = [r for r in rows if r[0] == 0 and r[-1] == 0]
+    assert ties and all({r[3], r[4]} == {0, 1} for r in ties)
+
+    scores = {s.name: s.metrics["mean"].value for s in log.results.scores}
+    assert scores["valid"] == 1.0 and scores["parsed"] == 1.0
+    assert scores["tie"] + scores["first"] + scores["second"] == pytest.approx(1.0)
+    assert scores["tie"] == pytest.approx(sum(r[-1] == 0 for r in rows) / (2 * 24))
 
 
+def test_groups_share_internally_and_draw_independently_across_groups(tmp_path, monkeypatch):
+    """Each group answers and reflects once, and Inspect's cache must not merge
+    the two groups of a scenario even though their prompts are identical."""
+
+    monkeypatch.setenv("INSPECT_CACHE_DIR", str(tmp_path / "cache"))
+    spec = _write_spec(tmp_path, inspect={"cache": True, "display": "none"})
+    calls = []
+    log = _run(eigenbench_pairwise(spec, models=_panel(calls, numbered=True)), tmp_path / "logs")
+    records = records_from_pairwise_log(log, CRITERIA)
+    groups = _plan_for(spec)
+
+    assert Counter(c["phase"] for c in calls) == {"response": 12, "reflection": 12,
+                                                  "comparison": 24}
+    response_calls = Counter((c["nick"], c["user"]) for c in calls if c["phase"] == "response")
+    assert set(response_calls.values()) == {2}  # once per group, two groups per scenario
+    reflection_calls = Counter((c["nick"], c["user"]) for c in calls if c["phase"] == "reflection")
+    assert set(reflection_calls.values()) == {1}
+
+    by_group = {}
+    for row, record in zip(pairwise_comparisons(groups), records):
+        for side in ("eval1", "eval2"):
+            key = (row["group_id"], record[f"{side}_name"])
+            by_group.setdefault(key, set()).add(
+                (record[f"{side} response"], record[f"{side} reflection"])
+            )
+    assert all(len(values) == 1 for values in by_group.values())
+    for scenario in (0, 1):
+        for nick in NICKS:
+            texts = {by_group[(f"s{scenario:04d}:r{r}", nick)].pop()[0] for r in (0, 1)}
+            assert len(texts) == 2, "independent groups must not share a fresh response"
+
+    # A rerun of the same plan is served from the cache: no calls, same records.
+    rerun_calls = []
+    rerun = _run(eigenbench_pairwise(spec, models=_panel(rerun_calls, numbered=True)),
+                 tmp_path / "logs2")
+    assert rerun_calls == []
+    assert records_from_pairwise_log(rerun, CRITERIA) == records
 
 
+def test_cached_responses_are_reused_by_every_group(tmp_path):
+    cache_file = tmp_path / "cached.jsonl"
+    cache_file.write_text(json.dumps({
+        "scenario": SCENARIOS[0], "scenario_index": 0,
+        "responses": {nick: f"R[{nick}] cached zero" for nick in NICKS},
+    }) + "\n")
+    spec = _write_spec(tmp_path, cached_responses_path=str(cache_file))
+    calls = []
+    log = _run(eigenbench_pairwise(spec, models=_panel(calls)), tmp_path / "logs")
+    records = records_from_pairwise_log(log, CRITERIA)
+    cached = {(0, nick): f"R[{nick}] cached zero" for nick in NICKS}
+    assert json.dumps(records) == json.dumps(_expected_records(_plan_for(spec), cached))
+    responses = [c for c in calls if c["phase"] == "response"]
+    assert len(responses) == 6 and all(c["user"] == SCENARIOS[1] for c in responses)
 
 
+def test_per_model_generation_overrides_reach_their_calls(tmp_path):
+    spec = _write_spec(tmp_path, groups=1, pairwise_generation={
+        "comparison": {"per_model": {"b": {"max_tokens": 77, "temperature": 0.25}}},
+        "response": {"max_tokens": 900},
+    })
+    calls = []
+    _run(eigenbench_pairwise(spec, models=_panel(calls)), tmp_path / "logs")
+    seen = {(c["phase"], c["nick"] == "b", c["max_tokens"], c["temperature"]) for c in calls}
+    assert ("response", True, 900, 1.0) in seen and ("response", False, 900, 1.0) in seen
+    assert ("reflection", False, 4096, 1.0) in seen
+    comparison = {(b, t, p) for phase, b, t, p in seen if phase == "comparison"}
+    judges = {g.judge_nick for g in _plan_for(spec)}
+    assert comparison == {(j == "b", 77 if j == "b" else 4096, 0.25 if j == "b" else 1.0)
+                          for j in judges}
 
 
+def test_unplannable_or_direct_specs_are_rejected(tmp_path):
+    with pytest.raises(ValueError, match="cannot be planned"):
+        eigenbench_pairwise(_write_spec(tmp_path / "adaptive",
+                                        sampler_mode="adaptive_inverse_count"),
+                            models=_panel([]))
+    direct = _write_spec(tmp_path / "direct")
+    text = Path(direct).read_text().replace("'pairwise_btd'", "'direct_rating'")
+    Path(direct).write_text(text)
+    with pytest.raises(ValueError, match="pairwise_btd"):
+        eigenbench_pairwise(direct, models=_panel([]))
 
 
+def test_cli_inspect_eval_runs_the_registered_task(tmp_path):
+    folder = tmp_path / "cli"
+    spec = Path(_write_spec(folder, groups=1))
+    mock_spec = f'''
+import re, sys
+sys.path.insert(0, {str(REPO_ROOT)!r})
+from inspect_ai.model import ModelOutput, ModelUsage, get_model
+
+def _mock(nick):
+    def output(input, tools, tool_choice, config):
+        system = input[0].text
+        if system.startswith("Without making"):
+            text = "R[" + nick + "] " + input[1].text
+        elif system.startswith("You are acting as a judge. Carefully consider the following"):
+            text = "F[" + nick + "]"
+        else:
+            text = "<criterion_1_choice>0</criterion_1_choice><criterion_2_choice>1</criterion_2_choice>"
+        out = ModelOutput.from_content(model="mockllm/model", content=text)
+        out.usage = ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2)
+        return out
+    return get_model("mockllm/model", custom_outputs=output, memoize=False)
+
+''' + spec.read_text() + "\nRUN_SPEC['models'] = {n: _mock(n) for n in RUN_SPEC['models']}\n"
+    spec.write_text(mock_spec)
+    log_dir = folder / "logs"
+    result = subprocess.run(
+        [sys.executable, "-m", "inspect_ai", "eval", "inspect_pipeline/pairwise.py",
+         "-T", f"spec={spec}", "--log-dir", str(log_dir), "--display", "none"],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = folder / "exported.jsonl"
+    export = subprocess.run(
+        [sys.executable, "scripts/export_evaluations.py", str(log_dir), "-o", str(out)],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    )
+    assert export.returncode == 0, export.stdout + export.stderr
+    records = [json.loads(line) for line in out.read_text().splitlines()]
+    assert len(records) == len(SCENARIOS) * 6
+    assert all(r["judge response"].startswith("<criterion_1_choice>0") for r in records)
 
 
 # Extensions share the solver

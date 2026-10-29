@@ -1,4 +1,9 @@
-"""Pairwise BTD collection on the Inspect engine.
+"""Jonathan's grouped pairwise protocol as a native Inspect task.
+
+    inspect eval inspect_pipeline/pairwise.py -T spec=runs/my_run/spec.py
+
+One sample per ordered comparison. Responses and reflections are shared within
+sampled groups. See docs/pairwise-protocol.md for reference behavior.
 """
 
 from __future__ import annotations
@@ -319,10 +324,123 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
     return [record for _key, record in rows]
 
 
+def pairwise_comparison_samples(
+    comparisons: list[dict],
+    *,
+    cached: dict[tuple[int, str], str] | None = None,
+) -> list[Sample]:
+    """Samples for planned comparisons.
+
+    ``cached`` maps ``(scenario_index, nick)`` to response-cache text, reused by
+    every group as the original did.
+    """
+
+    cached = cached or {}
+    samples = []
+    for row in comparisons:
+        md = dict(row)
+        for side in ("eval1", "eval2"):
+            nick = md[f"{side}_nick"]
+            text = cached.get((int(md["scenario_index"]), nick))
+            if isinstance(text, str) and text.strip():
+                md[f"{side}_response"] = text
+        samples.append(Sample(
+            input=md["scenario"],
+            id=(f"s{int(md['scenario_index']):04d} r{int(md.get('sampling_round', 0))} · "
+                f"{md['judge_nick']}: {md['eval1_nick']} vs {md['eval2_nick']}"),
+            metadata=md,
+        ))
+    return samples
 
 
+def build_pairwise_task(
+    spec: str,
+    *,
+    models: dict[str, object] | None = None,
+    cache: bool | None = None,
+    context: dict | None = None,
+    samples: list[Sample] | None = None,
+    name: str | None = None,
+) -> Task:
+    """Build the initial task or a phased judge's share of its samples.
+
+    ``samples`` can restrict the dataset to one judge with responses already
+    supplied. ``name`` labels that judge's task at construction because
+    Inspect's ``Task.name`` is read-only.
+    """
+
+    from inspect_pipeline.eigenbench import _run_context, sanitize
+
+    ctx = context if context is not None else _run_context(
+        spec, models, cache, build_assignments=False
+    )
+    run_spec = ctx["run_spec"]
+    mode = (run_spec.get("evaluation", {}) or {}).get("mode", "pairwise_btd")
+    if mode != "pairwise_btd":
+        raise ValueError(
+            "inspect_pipeline.pairwise supports evaluation.mode='pairwise_btd' only; "
+            "direct-rating runs use inspect_pipeline.eigenbench."
+        )
+    collection_cfg = ctx["collection_cfg"]
+    nicks = list(ctx["models"])
+    sampling = resolve_pairwise_sampling_settings(collection_cfg, num_models=len(nicks))
+    generation = ctx["generation"]
+    allow_ties = bool(collection_cfg.get("allow_ties", True))
+    groups = plan_pairwise_groups(ctx["selected"], nicks, **sampling)
+    comparisons = pairwise_comparisons(groups)
+    criteria = ctx["criteria"]
+    run_name = sanitize(str(run_spec["name"]))
+    task_name = name or f"eigenbench_pairwise_{run_name}"
+    if samples is None:
+        samples = pairwise_comparison_samples(comparisons, cached=ctx["seed"])
+
+    return Task(
+        dataset=MemoryDataset(samples=list(samples), name=f"eigenbench_pairwise_{run_name}"),
+        solver=pairwise_solver(
+            criteria=criteria,
+            resolve_model=ctx["resolve_model"],
+            generation=generation,
+            max_attempts=ctx["max_attempts"],
+            cache_enabled=ctx["cache_enabled"],
+            allow_ties=allow_ties,
+        ),
+        scorer=pairwise_choice_scorer(num_criteria=len(criteria)),
+        name=task_name,
+        display_name=f"EigenBench pairwise — {run_spec['name']}",
+        metadata={
+            "eigenbench": {
+                **ctx["meta"],
+                "protocol": "pairwise_btd",
+                "pairwise_plan_version": PAIRWISE_PLAN_VERSION,
+                **sampling,
+                "allow_ties": allow_ties,
+                "generation": generation,
+                "num_groups": len(groups),
+            }
+        },
+    )
 
 
+@task
+def eigenbench_pairwise(
+    spec: str,
+    *,
+    models: dict[str, object] | None = None,
+    cache: bool | None = None,
+) -> Task:
+    """The original pairwise EigenBench protocol, one sample per ordered comparison.
+
+    Args:
+        spec: run spec module or path with ``evaluation.mode='pairwise_btd'``.
+        models: optional override of the spec's models (Python callers only).
+        cache: override ``collection.inspect.cache``.
+
+    ``--model`` joins the panel as one more judge and evaluee.
+    """
+
+    from inspect_pipeline.eigenbench import with_eval_model
+
+    return build_pairwise_task(spec, models=with_eval_model(spec, models), cache=cache)
 
 
 # Extensions
