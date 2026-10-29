@@ -561,7 +561,8 @@ def extend_run(
 
     from inspect_ai import eval as inspect_eval
 
-    from inspect_pipeline.collect import eval_kwargs
+    from inspect_pipeline.collect import eval_kwargs, log_names, record_refusal
+    from inspect_pipeline.coverage import planned_from_edges, record_collection
     from inspect_pipeline.export import records_from_log, write_evaluations_atomic, write_inspect_run_info
 
     if new_model is not None:
@@ -582,31 +583,47 @@ def extend_run(
     log_dir = Path(inspect_cfg.get("log_dir") or "inspect_logs")
     if not log_dir.is_absolute():
         log_dir = prepared["output"].parent / log_dir
-    if _use_phased_extension(prepared):
-        from inspect_pipeline.extension_phased import collect_phased_extension
-        new_records, logs = collect_phased_extension(
-            prepared, eval_kwargs(inspect_cfg, log_dir),
-        )
-    else:
-        task = _extension_task(prepared)
-        logs = inspect_eval(tasks=task, model=None, **eval_kwargs(inspect_cfg, log_dir))
-        if plan.mode == DIRECT:
-            new_records = records_from_log(logs[0])
-        else:
-            from inspect_pipeline.pairwise import records_from_pairwise_log
-            new_records = records_from_pairwise_log(
-                logs[0], task.metadata["eigenbench"]["criteria"]
+    run_dir = prepared["output"].parent
+    planned = planned_from_edges(plan.edges)
+    failure_policy = spec["collection"].get("failure_policy", "strict")
+    seen_logs: list = []
+    before = log_names(log_dir)
+    try:
+        if _use_phased_extension(prepared):
+            from inspect_pipeline.extension_phased import collect_phased_extension
+            new_records, logs = collect_phased_extension(
+                prepared, eval_kwargs(inspect_cfg, log_dir), seen_logs,
             )
-    if len(new_records) != len(plan.edges):
-        raise RuntimeError("extension did not collect the complete plan; nothing appended")
-    # Never overwrite concurrent changes to the source or an independently-created output.
-    from pipeline.utils import load_records
-    if load_records(str(prepared["source"])) != prepared["records"]:
-        raise RuntimeError("source records changed during collection; export the log manually")
-    if prepared["output"] != prepared["source"] and prepared["output"].exists():
-        raise RuntimeError("output appeared during collection; export the log manually")
-    write_evaluations_atomic(prepared["output"], prepared["records"] + new_records)
-    write_inspect_run_info(prepared["output"].parent, logs)
+        else:
+            task = _extension_task(prepared)
+            logs = inspect_eval(tasks=task, model=None, **eval_kwargs(inspect_cfg, log_dir))
+            seen_logs.extend(logs)
+            if plan.mode == DIRECT:
+                new_records = records_from_log(logs[0])
+            else:
+                from inspect_pipeline.pairwise import records_from_pairwise_log
+                new_records = records_from_pairwise_log(
+                    logs[0], task.metadata["eigenbench"]["criteria"]
+                )
+        if len(new_records) != len(plan.edges):
+            raise RuntimeError("extension did not collect the complete plan; nothing appended")
+        # Never overwrite concurrent changes to the source or an independently-created output.
+        from pipeline.utils import load_records
+        if load_records(str(prepared["source"])) != prepared["records"]:
+            raise RuntimeError("source records changed during collection; export the log manually")
+        if prepared["output"] != prepared["source"] and prepared["output"].exists():
+            raise RuntimeError("output appeared during collection; export the log manually")
+        write_evaluations_atomic(prepared["output"], prepared["records"] + new_records)
+    except BaseException as exc:  # interrupts too: report what ran, then stop
+        record_refusal(run_dir, "extension", exc, planned=planned, logs=seen_logs,
+                       log_dir=log_dir, before=before, failure_policy=failure_policy,
+                       evaluations_path=prepared["output"])
+        raise
+    # Judgment logs first: the first is the primary log the viewer opens.
+    others = [log for log in seen_logs if all(log is not judged for judged in logs)]
+    write_inspect_run_info(run_dir, list(logs) + others, append=True)
+    record_collection(run_dir, "extension", planned=planned, logs=seen_logs, records=new_records,
+                      failure_policy=failure_policy, evaluations_path=prepared["output"])
     missing = [name for name in plan.new_models if name not in spec["models"]]
     if missing:
         print(f"Add these models to the spec before analysis: {missing}")

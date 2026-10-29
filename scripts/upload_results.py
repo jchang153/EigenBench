@@ -369,30 +369,40 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
         shutil.copy2(eval_path, dest / "evaluations.jsonl")
 
     git_commit, git_repo = get_git_info(run_dir)
-    # The Inspect log travels with the run, so the viewer can read it straight
+    # The Inspect logs travel with the run, so the viewer can read them straight
     # from the dataset by URL instead of needing a bundle published elsewhere.
     inspect_info = None
     inspect_info_path = run_dir / "inspect_run.json"
-    if inspect_info_path.exists():
-        loaded = json.loads(inspect_info_path.read_text(encoding="utf-8"))
-        log_file = loaded.get("log_file")
-        source = run_dir / "inspect_logs" / log_file if log_file else None
-        if source is not None and source.exists():
-            shutil.copy2(source, dest / log_file)
-            inspect_info = {"log_file": log_file}
-            if eval_path.exists():
-                try:
-                    repo_root = str(Path(__file__).resolve().parents[1])
-                    if repo_root not in sys.path:
-                        sys.path.insert(0, repo_root)
-                    from inspect_pipeline.coverage import build_collection_report
+    loaded = json.loads(inspect_info_path.read_text(encoding="utf-8")) if inspect_info_path.exists() else {}
+    names = loaded.get("log_files") or ([loaded["log_file"]] if loaded.get("log_file") else [])
+    present = [run_dir / "inspect_logs" / name for name in names if (run_dir / "inspect_logs" / name).exists()]
+    if present:
+        for source in present:
+            shutil.copy2(source, dest / source.name)
+        published = [source.name for source in present]
+        primary = loaded.get("log_file") if loaded.get("log_file") in published else published[0]
+        inspect_info = {"log_file": primary, "log_files": published}
+        report_name = "collection_report.json"
+        report_path = run_dir / report_name
+        try:
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from inspect_pipeline.coverage import evaluations_sha256, report_from_run_dir
 
-                    report = build_collection_report(source, eval_path)
-                    report_name = "collection_report.json"
-                    (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-                    inspect_info["collection_report_file"] = report_name
-                except Exception as exc:
-                    print(f"Warning: omission report unavailable: {exc}", file=sys.stderr)
+            report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
+            reported_logs = {entry["file"] for part in (report or {}).get("collections", [])
+                             for entry in part.get("logs", [])}
+            if (not report or report.get("schema_version") != 2
+                    or report.get("evaluations_sha256") != evaluations_sha256(eval_path)
+                    or reported_logs != set(names)):
+                # Missing or stale report. Rebuild from the current logs and export,
+                # with the original plan unknown.
+                report = report_from_run_dir(run_dir, eval_path)
+            (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+            inspect_info["collection_report_file"] = report_name
+        except Exception as exc:
+            print(f"Warning: collection report unavailable: {exc}", file=sys.stderr)
     meta = build_meta(
         name,
         spec,
