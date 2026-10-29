@@ -209,7 +209,7 @@ bootstrap recomputes scores without model fitting.
 
 | Task | Command |
 | --- | --- |
-| Direct ratings with Inspect | `python scripts/run_inspect.py runs/my_run/spec.py` |
+| Pairwise or direct ratings with Inspect | `python scripts/run_inspect.py runs/my_run/spec.py` |
 | Pairwise or direct ratings with the legacy collector | `python scripts/run.py runs/my_run/spec.py` |
 | Estimate calls without inference | Add `--estimate-calls` to either command. |
 | Score an existing export | `python scripts/run.py runs/my_run/spec.py --collection-enabled false` |
@@ -284,6 +284,21 @@ Without `--model`, the panel comes from the spec. Export and score the result
 using the commands above. The wrapper handles phased local collection;
 use it for a panel that cannot fit in GPU memory together. Individual phased
 extension logs must be combined by the extension runner, not exported alone.
+
+For the original pairwise protocol, use a spec with
+`evaluation.mode="pairwise_btd"` and run
+
+```bash
+inspect eval inspect_pipeline/pairwise.py@eigenbench_pairwise \
+  -T spec=runs/example_pairwise/spec.py
+```
+
+The same wrapper supports phased collection for local panels. Initial and
+extension runs share pairwise prompts and solver logic. The
+[protocol reference](docs/pairwise-protocol.md) documents group sampling,
+shared responses and reflections, decoding settings and the limits of the
+historical run evidence. The native choice scorer reports collection
+diagnostics. Exported records use the existing BTD and EigenTrust analysis.
 
 ## Local models and LoRA adapters
 
