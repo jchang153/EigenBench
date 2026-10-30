@@ -128,18 +128,22 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
                       error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
 
 
-def _is_local(value) -> bool:
-    return has_local_models({"model": value})
+def _is_local(model) -> bool:
+    """Whether a resolved model runs on a local vLLM server, whatever its spec reference."""
+
+    return str(model).startswith("vllm/")
 
 
 async def _close_model(nick: str, resolve_model) -> None:
-    """Terminate a local model's vLLM server so the next one can have the GPU."""
+    """Terminate a local model's server so the next one can have the GPU; API clients stay open."""
 
     try:
-        api = resolve_model(nick).api
+        model = resolve_model(nick)
     except Exception:
         return
-    aclose = getattr(api, "aclose", None)
+    if not _is_local(model):
+        return
+    aclose = getattr(model.api, "aclose", None)
     if aclose is not None:
         try:
             await aclose()
@@ -190,9 +194,7 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     response_errors: dict[tuple[int, str], str] = {}
 
     def close(nick: str) -> None:
-        # Free a local server's GPU (it restarts on next use); API clients must stay open to judge.
-        if _is_local(models[nick]):
-            anyio.run(_close_model, nick, resolve_model)
+        anyio.run(_close_model, nick, resolve_model)
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
