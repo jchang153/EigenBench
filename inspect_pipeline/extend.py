@@ -96,6 +96,7 @@ class Edge:
     # Pairwise only.
     opponent: str | None = None
     opponent_response: str | None = None
+    group: str | None = None
 
 
 @dataclass
@@ -242,7 +243,7 @@ def _plan_pairwise(plan, names, responses, scenarios, rng, col_target, row_targe
     seen = set()
     cols, rows = Counter(), Counter()
 
-    def add_pair(s, judge, a, b, destination):
+    def add_pair(s, judge, a, b, destination, group=None):
         key = (s, judge, tuple(sorted((a, b))))
         if key in seen or (not include_self and judge in (a, b)):
             return False
@@ -251,6 +252,7 @@ def _plan_pairwise(plan, names, responses, scenarios, rng, col_target, row_targe
             destination.append(Edge(
                 s, judge, first, response=responses.get((s, first)),
                 opponent=second, opponent_response=responses.get((s, second)),
+                group=group,
             ))
         cols[a] += 2
         cols[b] += 2
@@ -304,14 +306,15 @@ def _plan_pairwise(plan, names, responses, scenarios, rng, col_target, row_targe
         groups = [shuffled[i:i + group_size] for i in range(0, len(shuffled), group_size)]
         if len(groups) > 1 and len(groups[-1]) == 1:
             groups[-2].extend(groups.pop())
-        for group in groups:
+        for group_index, group in enumerate(groups):
             eligible = [j for j in population if include_self or j not in group]
             if not eligible:
                 raise ValueError("pairwise no-self collection needs a judge outside each group")
             rng.shuffle(eligible)
             judge = min(eligible, key=lambda j: judge_load[j])
             for a, b in combinations(group, 2):
-                add_pair(s, judge, a, b, plan.as_evaluee)
+                add_pair(s, judge, a, b, plan.as_evaluee,
+                         group=f"s{s:04d}:extension:g{group_index}")
                 judge_load[judge] += 2
     return plan
 
@@ -452,6 +455,7 @@ def _prepare_extension(
     from pipeline.utils import load_records
 
     from inspect_pipeline.eigenbench import load_selection, resolve_spec_ref
+    from inspect_pipeline.provenance import changed_scenarios, constitution_differs
 
     spec_ref = resolve_spec_ref(spec_ref)
     spec, run_dir = load_run_spec(spec_ref)
@@ -479,12 +483,10 @@ def _prepare_extension(
     # Record indices, rather than spec insertion order, are authoritative.
     models = {name: models[name] for name in order + additions}
     selected, criteria = load_selection(spec, run_dir)
-    expected_constitution = "\n".join(criteria)
-    if any(r.get("constitution") != expected_constitution for r in records):
+    if constitution_differs(records, criteria):
         raise ValueError("extension criteria differ from the source records")
     old_scenarios = scenarios_of(records)
-    selected_map = dict(selected)
-    if any(selected_map.get(s) != text for s, text in old_scenarios.items()):
+    if changed_scenarios(records, selected):
         raise ValueError(
             "dataset selection must include the original scenario indices and text; "
             "keep dataset/start/shuffle settings and increase dataset.count as needed"

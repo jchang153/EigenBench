@@ -244,7 +244,11 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
         raise ValueError("direct rating collection currently uses the fixed 1-10 scale")
 
     selected, criteria = load_selection(run_spec, run_dir)
-    generation = resolve_direct_generation_settings(collection_cfg)
+    if is_direct:
+        generation = resolve_direct_generation_settings(collection_cfg)
+    else:
+        from inspect_pipeline.pairwise_plan import resolve_pairwise_generation_settings
+        generation = resolve_pairwise_generation_settings(collection_cfg)
     if is_direct and build_assignments:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
@@ -270,13 +274,8 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             f"expected one of {', '.join(FAILURE_POLICIES)}"
         )
 
-    cached = _load_cached_responses(collection_cfg.get("cached_responses_path"))
-    seed = {
-        (int(s_idx), nick): text
-        for s_idx, responses in cached.items()
-        for nick, text in responses.items()
-        if nick in spec_models
-    }
+    seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, spec_models,
+                       merge_rows=is_direct)
 
     return {
         "is_direct": is_direct,
@@ -308,6 +307,33 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             "num_scenarios": len(selected),
             "failure_policy": failure_policy,
         },
+    }
+
+
+def cached_seed(path: str | None, selected, nicks, *, merge_rows: bool) -> dict[tuple[int, str], str]:
+    """Cached responses for the selected scenarios, refusing a cache made for other text."""
+
+    if not path:
+        return {}
+    from pipeline.utils import load_records
+
+    current = {int(s_idx): text for s_idx, text in selected}
+    changed = sorted({
+        int(row["scenario_index"]) for row in load_records(path)
+        if isinstance(row, dict) and "scenario_index" in row and "scenario" in row
+        and int(row["scenario_index"]) in current and row["scenario"] != current[int(row["scenario_index"])]
+    })
+    if changed:
+        raise ValueError(
+            f"{path} holds responses to other scenario text at index "
+            f"{', '.join(map(str, changed[:10]))}; point collection.cached_responses_path "
+            "at a cache for this dataset selection"
+        )
+    cached = _load_cached_responses(path, merge_rows=merge_rows)
+    return {
+        (s_idx, nick): text
+        for s_idx, responses in cached.items() if s_idx in current
+        for nick, text in responses.items() if nick in nicks
     }
 
 

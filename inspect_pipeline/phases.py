@@ -60,22 +60,18 @@ class InvalidJudgmentError(RuntimeError):
 
 
 class ResponsePool:
-    """One response per (scenario, evaluee), shared by every judge of it.
+    """Share one generation per protocol key across concurrent samples."""
 
-    The protocol requires all judges to rate the *same* response text, so
-    concurrent judge samples must not each generate their own.
-    """
-
-    def __init__(self, seed: dict[tuple[int, str], str] | None = None) -> None:
-        self._done: dict[tuple[int, str], str] = dict(seed or {})
-        self._pending: dict[tuple[int, str], asyncio.Future[str]] = {}
+    def __init__(self, seed: dict[tuple, str] | None = None) -> None:
+        self._done: dict[tuple, str] = dict(seed or {})
+        self._pending: dict[tuple, asyncio.Future[str]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def seeded(self) -> dict[tuple[int, str], str]:
+    def seeded(self) -> dict[tuple, str]:
         return dict(self._done)
 
     async def get(
-        self, key: tuple[int, str], factory: Callable[[], Awaitable[str]]
+        self, key: tuple, factory: Callable[[], Awaitable[str]]
     ) -> str:
         if key in self._done:
             return self._done[key]
@@ -107,16 +103,23 @@ class ResponsePool:
         return value
 
 
-def _cache_for_attempt(cache_enabled: bool, attempt: int, model_identity: str) -> bool | CachePolicy:
+def _cache_for_attempt(
+    cache_enabled: bool, attempt: int, model_identity: str, cache_scope: str | None = None
+) -> bool | CachePolicy:
     if not cache_enabled:
         return False
     # Never-expiring, attempt-scoped: reruns reuse valid outputs (checkpoint
     # semantics) while validation retries get a fresh key.
-    return CachePolicy(expiry=None, scopes={
+    scopes = {
         "attempt": str(attempt),
         "eigenbench_cache_version": "2",
         "model_identity": model_identity,
-    })
+    }
+    # Protocol units that must stay independent draws even when their prompts
+    # are identical (e.g. one pairwise response per sampled group) add a scope.
+    if cache_scope is not None:
+        scopes["eigenbench_scope"] = str(cache_scope)
+    return CachePolicy(expiry=None, scopes=scopes)
 
 
 async def generate_validated(
@@ -129,6 +132,7 @@ async def generate_validated(
     validator: Callable[[str], str | None] | None,
     identity: str,
     exhausted: type[RuntimeError] = RuntimeError,
+    cache_scope: str | None = None,
 ) -> ModelOutput:
     """Legacy retry contract: empty, truncated, filtered, or validator-rejected
     completions are retried up to ``max_attempts``, then ``exhausted`` is raised."""
@@ -141,7 +145,7 @@ async def generate_validated(
         output = await model.generate(
             input=list(messages),
             config=config,
-            cache=_cache_for_attempt(cache_enabled, attempt, model_identity or ""),
+            cache=_cache_for_attempt(cache_enabled, attempt, model_identity or "", cache_scope),
         )
         content = output.completion
         if not isinstance(content, str) or not content.strip():
@@ -318,6 +322,7 @@ def response_only_solver(
     generation_cfg: dict,
     max_attempts: int,
     cache_enabled: bool,
+    cache_scope: Callable[[dict], str] | None = None,
 ) -> Solver:
     """Generate one evaluee response per sample, and nothing else."""
 
@@ -338,6 +343,7 @@ def response_only_solver(
             cache_enabled=cache_enabled,
             validator=None,
             identity=f"response scenario_index={s_idx} evaluee={eval_nick}",
+            cache_scope=cache_scope(md) if cache_scope else None,
         )
         state.messages = messages + [output.message]
         state.output = output
