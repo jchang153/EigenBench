@@ -15,14 +15,6 @@ not tracked in this repository. These fixtures therefore establish code-level
 compatibility with the pinned collector. They do not establish reproduction of
 a particular published score.
 
-The grouped criterion collector predates the module refactor. Its predecessor,
-`evaluations.py#get_multiturn_evaluation_criteria_efficient`, was introduced in
-[`e852c7e`](https://github.com/jchang153/EigenBench/commit/e852c7efc1518764f79a9357edf1f9f37b43bb38).
-The March 1 refactor
-[`4f1f421`](https://github.com/jchang153/EigenBench/commit/4f1f42134c081626ef9a5e0c3e2188b3bea17ab3)
-described its scripts path as OpenRouter-only. The current `mixed_collect.py`
-module was added later.
-
 For each selected scenario and sampling round, the reference selects one judge
 and a group of evaluees. Each selected evaluee generates one response. That
 judge reflects once on each response, then compares every ordered distinct pair
@@ -63,4 +55,4 @@ analysis pipeline, pending native aggregate metrics in issue #34.
 
 Invalid verdicts are retried under the existing Inspect validation contract.
 The original collector recorded them unretried and dropped them during analysis.
-Failure-policy parity remains in issue #33.
+Pairwise export remains strict about failed samples.
