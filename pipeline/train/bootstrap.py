@@ -82,6 +82,7 @@ def _train_one_sample(
         use_btd=use_btd,
         criterion_mode=criterion_mode,
         verbose=False,
+        plot=False,
     )
 
     if use_btd:
@@ -105,7 +106,7 @@ def run_bootstrap(
     model_kind: str,
     dim: int,
     model_labels: list[str],
-    output_dir: str,
+    output_dir: str | None,
     *,
     n_bootstraps: int = 100,
     random_seed: int = 42,
@@ -122,10 +123,11 @@ def run_bootstrap(
 
     Returns a summary dict with per-model Elo means, stds, and 95% CIs.
     """
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    models_dir = out / "models"
-    if save_models:
+    out = Path(output_dir) if output_dir is not None else None
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+    models_dir = out / "models" if out is not None else None
+    if save_models and models_dir is not None:
         models_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(random_seed)
@@ -162,16 +164,17 @@ def run_bootstrap(
         trust_vectors.append(trust_vector)
         elo_vectors.append(elo_vector)
 
-        if save_models:
+        if save_models and models_dir is not None:
             torch.save(model.state_dict(), models_dir / f"model_{sample_idx:04d}.pt")
 
         if verbose and (sample_idx + 1) % 10 == 0:
             print(f"  Bootstrap sample {sample_idx + 1}/{n_bootstraps}")
 
     # Save raw samples
-    samples_path = out / "samples.json"
-    with samples_path.open("w", encoding="utf-8") as f:
-        json.dump(bootstrap_records, f, indent=2)
+    if out is not None:
+        samples_path = out / "samples.json"
+        with samples_path.open("w", encoding="utf-8") as f:
+            json.dump(bootstrap_records, f, indent=2)
 
     # Compute summary statistics
     elo_arr = np.asarray(elo_vectors, dtype=float)
@@ -192,12 +195,11 @@ def run_bootstrap(
         })
     summary_rows.sort(key=lambda r: r["elo_mean"], reverse=True)
 
-    summary_path = out / "summary.json"
-    with summary_path.open("w", encoding="utf-8") as f:
-        json.dump(summary_rows, f, indent=2)
-
-    # Save plot
-    _save_bootstrap_plot(summary_rows, out / "bootstrap_elo.png")
+    if out is not None:
+        summary_path = out / "summary.json"
+        with summary_path.open("w", encoding="utf-8") as f:
+            json.dump(summary_rows, f, indent=2)
+        _save_bootstrap_plot(summary_rows, out / "bootstrap_elo.png")
 
     if verbose:
         for row in summary_rows:
@@ -207,7 +209,8 @@ def run_bootstrap(
                 f"95% CI=[{row['elo_ci_lower']:.2f}, {row['elo_ci_upper']:.2f}]"
             )
 
-    return {"summary": summary_rows, "output_dir": str(out)}
+    return {"summary": summary_rows, "samples": bootstrap_records,
+            "output_dir": str(out) if out is not None else None}
 
 
 def _save_bootstrap_plot(summary_rows: list[dict], save_path: Path) -> None:

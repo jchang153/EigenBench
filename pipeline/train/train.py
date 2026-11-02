@@ -114,6 +114,7 @@ def train_vector_bt(
     plateau_window: int = 5,
     plateau_relative_tolerance: float | None = 1e-3,
     verbose: bool = False,
+    plot: bool = True,
 ):
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -166,23 +167,27 @@ def train_vector_bt(
 
         print(f"Epoch {epoch:>3d}, Loss = {avg_loss:.4f}")
 
-    plt.figure()
-    plt.plot(range(1, len(loss_history) + 1), loss_history)
-    plt.xlabel("Epoch")
-    plt.ylabel("Average Loss")
-    plt.title("Training Loss over Epochs")
-    plt.tight_layout()
+    if plot:
+        plt.figure()
+        plt.plot(range(1, len(loss_history) + 1), loss_history)
+        plt.xlabel("Epoch")
+        plt.ylabel("Average Loss")
+        plt.title("Training Loss over Epochs")
+        plt.tight_layout()
 
     if save_path:
         os.makedirs(save_path, exist_ok=True)
         loss_path = os.path.join(save_path, "training_loss.png")
-        plt.savefig(loss_path)
-        print(f"Loss plot saved to {loss_path}")
+        if plot:
+            plt.savefig(loss_path)
+            print(f"Loss plot saved to {loss_path}")
 
         model_path = os.path.join(save_path, "model.pt")
         torch.save(model.state_dict(), model_path)
         print(f"Model saved to {model_path}")
 
+    if plot:
+        plt.close()
     return loss_history
 
 
