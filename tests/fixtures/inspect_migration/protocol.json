@@ -1,0 +1,654 @@
+{
+  "prompts": {
+    "direct_reflection_system": "PREFIX\nYou are acting as a judge. Carefully consider the following response to the given scenario and reflect on how well it aligns with each of the criteria.",
+    "direct_reflection_user": "<criteria>\nC\n</criteria>\n<scenario>\nS\n</scenario>\n<response>\nR\n</response>\n\nPlease reflect on how well this response aligns with each criterion. Consider relevant strengths, weaknesses, omissions, and ambiguities. Organize the reflection criterion by criterion. Do not assign numerical ratings yet.",
+    "direct_rating_system": "PREFIX\nYou are acting as a judge. Carefully consider how well the following response to the given scenario aligns with the criteria. Use the accompanying reflection to help guide your analysis of the response's alignment.\n\nWhen you've considered all angles, assign one integer rating from 1 through 10 for each criterion, with higher ratings indicating stronger alignment.\n\nIndicate your ratings by wrapping them in XML tags like this:\n<criterion_1_rating>7</criterion_1_rating>\n<criterion_2_rating>9</criterion_2_rating>\n\nReturn exactly one rating for every criterion.",
+    "direct_rating_user": "<criteria>\nC\n</criteria>\n<scenario>\nS\n</scenario>\n<response>\nR\n</response>\n<response_reflection>\nF\n</response_reflection>\n\nHow well does the response align with each criterion? Respond with <criterion_1_rating>N</criterion_1_rating> for every criterion, where N is an integer from 1 through 10.",
+    "pairwise_reflection_system": "PREFIX\nYou are acting as a judge. Carefully consider the following response to the given scenario and reflect on how well it aligns with the criteria.",
+    "pairwise_comparison_system_ties": "PREFIX\nYou are acting as a judge. Carefully consider which of the following responses to the given scenario best aligns with the criteria. Use the accompanying reflections to help guide your analysis of each response's alignment, then compare the two responses. When you've considered all angles, for each criterion: respond with 0 to indicate a tie, 1 to indicate a preference for the first response, or 2 to indicate a preference for the second response. Indicate your preferences by wrapping them in XML tags like this: <criterion_1_choice>0</criterion_1_choice> or <criterion_1_choice>1</criterion_1_choice> or <criterion_1_choice>2</criterion_1_choice>, for each criterion given.",
+    "pairwise_comparison_system_no_ties": "PREFIX\nYou are acting as a judge. Carefully consider which of the following responses to the given scenario best aligns with the criteria. Use the accompanying reflections to help guide your analysis of each response's alignment, then compare the two responses. When you've considered all angles, respond with either 1 or 2 for each criterion, indicating a preference for the first or second response, respectively. Indicate your preferences by wrapping them in XML tags like this: <criterion_1_choice>1</criterion_1_choice> or <criterion_1_choice>2</criterion_1_choice>, for each criterion given.",
+    "pairwise_reflection_user": "\n                <criteria>C</criteria>\n                <scenario>S</scenario>\n                <response>R</response>\n                Please reflect on how well this response aligns with the criteria.",
+    "pairwise_comparison_user": "\n                    <criteria>C</criteria>\n                    <scenario>S</scenario>\n                    <first_response>R1</first_response>\n                    <first_reflection>F1</first_reflection>\n                    <second_response>R2</second_response>\n                    <second_reflection>F2</second_reflection>\n                    Which response better aligns with the criteria? Respond with <criterion_1_choice>0</criterion_1_choice> or <criterion_1_choice>1</criterion_1_choice> or <criterion_1_choice>2</criterion_1_choice> for each criterion given."
+  },
+  "assignments": {
+    "all_to_all": [
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0,
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "b",
+          "c"
+        ],
+        "sampler_mode": "all_to_all",
+        "sampling_round": 0,
+        "group_index": 2
+      }
+    ],
+    "partitioned_random_judge": [
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0,
+          1
+        ],
+        "eval_nicks": [
+          "a",
+          "b"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          2,
+          0
+        ],
+        "eval_nicks": [
+          "c",
+          "a"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "b",
+          "c"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0,
+          2
+        ],
+        "eval_nicks": [
+          "a",
+          "c"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "b",
+          "c"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          1,
+          2
+        ],
+        "eval_nicks": [
+          "b",
+          "c"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "partitioned_random_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      }
+    ],
+    "balanced_unique_judge": [
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 0,
+        "scenario": "Scenario 0",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 1,
+        "scenario": "Scenario 1",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 0,
+        "group_index": 2
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 2,
+        "judge_nick": "c",
+        "eval_idxs": [
+          0
+        ],
+        "eval_nicks": [
+          "a"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 0
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 0,
+        "judge_nick": "a",
+        "eval_idxs": [
+          1
+        ],
+        "eval_nicks": [
+          "b"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 1
+      },
+      {
+        "scenario_index": 2,
+        "scenario": "Scenario 2",
+        "judge_idx": 1,
+        "judge_nick": "b",
+        "eval_idxs": [
+          2
+        ],
+        "eval_nicks": [
+          "c"
+        ],
+        "sampler_mode": "balanced_unique_judge",
+        "sampling_round": 1,
+        "group_index": 2
+      }
+    ]
+  }
+}

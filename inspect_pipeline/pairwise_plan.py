@@ -9,7 +9,7 @@ import math
 import random
 from dataclasses import dataclass
 
-from pipeline.eval.samplers import select_sampler
+from pipeline.protocol.samplers import select_sampler
 
 PAIRWISE_PLAN_VERSION = 1
 
@@ -92,13 +92,14 @@ def resolve_pairwise_sampling_settings(collection_cfg: dict | None, *, num_model
         raise ValueError(
             "sampler_mode='adaptive_inverse_count' cannot be planned before collection: "
             "the original draws each round from judge/evaluee counts of comparisons that "
-            "already parsed as valid (pipeline/eval/collect.py). Use random_judge_group or "
-            "uniform, or keep the legacy collector for adaptive runs."
+            "already parsed as valid. The legacy collector is retired. Inspect supports "
+            "random_judge_group and uniform; changing samplers changes the protocol."
         )
     if mode == "all_to_all":
         raise ValueError(
             "pairwise all_to_all runs went through the mixed local collector, which is not "
-            "the reference protocol for the Inspect pairwise task"
+            "the reference protocol for the Inspect pairwise task. The legacy collector "
+            "is retired; select random_judge_group or uniform only if that protocol is intended."
         )
     if mode not in PREPLANNED_SAMPLERS:
         raise ValueError(f"Unknown sampler mode: {mode}")

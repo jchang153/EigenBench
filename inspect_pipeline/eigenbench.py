@@ -4,7 +4,7 @@
     inspect eval inspect_pipeline/eigenbench.py   # runs/default/spec.py
 
 One sample per directed judge->evaluee edge. The sampling plan, prompts, and
-rating validation come from ``pipeline.eval.direct_rating``; export the
+rating validation come from ``pipeline.protocol.direct_rating``; export the
 resulting log to the legacy ``evaluations.jsonl`` with
 ``scripts/export_evaluations.py``.
 """
@@ -39,8 +39,8 @@ from pipeline.config import (
     load_run_spec,
     select_scenarios,
 )
-from pipeline.eval.direct_rating import (
-    _load_cached_responses,  # noqa: PLC2701 - reuse the legacy cache reader
+from pipeline.protocol.response_cache import load_cached_responses
+from pipeline.protocol.direct_rating import (
     build_direct_assignments,
     resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
@@ -80,7 +80,7 @@ def resolve_spec_ref(spec: str) -> str:
 
 
 def load_selection(spec: dict, run_dir: Path):
-    """Scenario + criteria selection, mirroring scripts/run_collect.py."""
+    """Scenario + criteria selection, shared by every Inspect execution layout."""
 
     ds = spec["dataset"]
     scenarios = load_dataset_scenarios_from_spec(ds, run_dir=run_dir)
@@ -329,7 +329,7 @@ def cached_seed(path: str | None, selected, nicks, *, merge_rows: bool) -> dict[
             f"{', '.join(map(str, changed[:10]))}; point collection.cached_responses_path "
             "at a cache for this dataset selection"
         )
-    cached = _load_cached_responses(path, merge_rows=merge_rows)
+    cached = load_cached_responses(path, merge_rows=merge_rows)
     return {
         (s_idx, nick): text
         for s_idx, responses in cached.items() if s_idx in current

@@ -1,6 +1,6 @@
 """Convert an Inspect eval log into the legacy ``evaluations.jsonl`` contract.
 
-Record construction mirrors ``pipeline/eval/direct_rating.py`` verbatim so that
+Record construction preserves the historical collector schema so that
 ``pipeline.trust.direct_rating.aggregate_direct_records`` and the ValueArena
 Space consume Inspect-collected output unchanged.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from inspect_ai.log import EvalLog, read_eval_log
 
-from pipeline.eval.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
+from pipeline.protocol.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
 
 from .phases import (
     FAILURE_POLICIES,

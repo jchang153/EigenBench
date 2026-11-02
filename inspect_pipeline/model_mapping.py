@@ -22,11 +22,11 @@ from typing import Mapping
 from inspect_ai.model import Model
 
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
-from pipeline.providers.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
+from pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
 
 INSPECT_PREFIX = "inspect:"
 
-# Match pipeline/providers/vllm_local.py and limit KV-cache allocation.
+# Preserve the local model context cap and limit KV-cache allocation.
 VLLM_SERVER_DEFAULTS = {
     "max_model_len": DEFAULT_MAX_MODEL_LEN,
     "gpu_memory_utilization": 0.9,

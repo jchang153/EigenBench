@@ -444,19 +444,17 @@ def test_eval_model_joins_the_panel(run_dir):
     assert {r["judge"]["name"] for r in records_from_log(log)} == set(NICKS)
 
 
-def test_local_models_start_vllm_like_the_native_engine(monkeypatch):
+def test_local_models_preserve_vllm_defaults_and_overrides(monkeypatch):
     import inspect_pipeline.model_mapping as mapping
     from inspect_pipeline.model_mapping import VLLM_SERVER_DEFAULTS
 
     monkeypatch.delenv("EIGENBENCH_TENSOR_PARALLEL_SIZE", raising=False)
     monkeypatch.delenv("EIGENBENCH_VLLM_SERVER_ARGS", raising=False)
-    native = Path(REPO_ROOT, "pipeline/providers/vllm_local.py").read_text()
-    for key in ("gpu_memory_utilization", "enforce_eager"):
-        value = VLLM_SERVER_DEFAULTS[key]
-        assert f'"{key}": {value!r}' in native, f"native engine no longer uses {key}={value!r}"
-    assert '"max_model_len": resolve_max_model_len(' in native
+    assert VLLM_SERVER_DEFAULTS == {
+        "max_model_len": 8192, "gpu_memory_utilization": 0.9, "enforce_eager": True,
+    }
 
-    # Both engines take the shorter of the default and the model's own window (no network here).
+    # Keep the shorter of the default and the model's own window (no network here).
     windows = {"allenai/OLMo-2-1124-7B": 4096}
     lookups = []
     def window(model_id, revision=None, requested=8192):
@@ -544,7 +542,7 @@ def test_direct_extension_covers_each_scenario_once(
     from collections import Counter
 
     from inspect_pipeline.extend import plan_addition, projected_counts
-    from pipeline.eval.direct_rating import build_direct_assignments
+    from pipeline.protocol.direct_rating import build_direct_assignments
 
     names = [f"model_{i}" for i in range(8)]
     scenarios = [(i, f"Scenario {i}") for i in range(scenario_count)]
@@ -650,39 +648,6 @@ def test_extend_adds_a_model(run_dir, monkeypatch):
     assert {r["scenario_index"] for r in new_responses} == set(range(SCENARIO_COUNT))
     for r in new:
         assert [e["criterion_index"] for e in r["ratings"]] == list(range(NUM_CRITERIA))
-
-
-def test_pairwise_prompts_match_legacy():
-    """New pairwise records must be interchangeable with the legacy ones."""
-
-    import pipeline.eval.criteria_collectors as cc
-    from inspect_pipeline.pairwise import build_comparison_user, build_reflection_user
-
-    captured = []
-
-    def fake(model_name, messages, max_tokens=None, **kw):
-        captured.append(messages)
-        n = len(captured)
-        if n <= 2:
-            return f"RESP{n}"
-        if n <= 4:
-            return f"REFL{n - 2}"
-        return "<criterion_1_choice>1</criterion_1_choice>"
-
-    original = cc.get_model_response
-    cc.get_model_response = fake
-    try:
-        cc.collect_group_criteria_evaluations(
-            criteria=["c1"], scenario="SCENARIO", scenario_index=0,
-            models={"a": "x/a", "b": "x/b"}, judge_idx=0, eval_idxs=[0, 1],
-        )
-    finally:
-        cc.get_model_response = original
-
-    assert captured[2][1]["content"] == build_reflection_user("c1", "SCENARIO", "RESP1")
-    assert captured[4][1]["content"] == build_comparison_user(
-        "c1", "SCENARIO", "RESP1", "REFL1", "RESP2", "REFL2"
-    )
 
 
 @pytest.mark.parametrize("new_names, extra_count, phased, recurring", [
@@ -863,8 +828,8 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
         rows, _ = export_log(log, evaluations_path=output, append=True)
         summary = {"collected": len(rows)}
     else:
-        from scripts.run_collect import main as collect_extension
-        summary = collect_extension(str(spec))
+        from inspect_pipeline.extend import extend_run
+        summary = extend_run(str(spec))
     combined = [json.loads(line) for line in output.read_text().splitlines()]
     assert combined[:len(original)] == original
     assert source.read_bytes() == before

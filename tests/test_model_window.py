@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from pipeline.providers import model_window
-from pipeline.providers.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
+from pipeline import model_window
+from pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_shorter_window_wins_and_float_windows_are_read(configs):
     assert resolve_max_model_len("allenai/OLMo-2-1124-7B") == 4096
 
 
-def test_mpt_window_caps_native_and_inspect_models(configs):
+def test_mpt_window_caps_inspect_models(configs):
     from transformers import MptConfig
     from inspect_pipeline.model_mapping import to_inspect_model
 

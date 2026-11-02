@@ -222,7 +222,7 @@ def plan_additions(
     # Fresh scenarios evaluate the entire population with the existing balanced
     # one-to-one sampler. Every response is rated once and every model judges once.
     if extra:
-        from pipeline.eval.direct_rating import build_direct_assignments
+        from pipeline.protocol.direct_rating import build_direct_assignments
 
         assignments = build_direct_assignments(
             sorted(extra.items()), dict.fromkeys(population),
