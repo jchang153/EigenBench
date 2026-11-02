@@ -46,7 +46,7 @@ from pipeline.eval.direct_rating import (
     resolve_direct_sampling_settings,
 )
 
-from inspect_pipeline.model_mapping import to_inspect_model
+from inspect_pipeline.model_mapping import model_identity, to_inspect_model
 from inspect_pipeline.phases import (
     FAILURE_POLICIES,
     ResponsePool,
@@ -171,9 +171,9 @@ def _model_resolver(models: dict[str, object], *, memoize: bool = True):
             model = ref if isinstance(ref, Model) else get_model(ref.name, memoize=memoize, **ref.model_args)
             # Provider initialization can replace the adapter name with its base.
             # Capture the requested identity before any generation takes place.
-            identity = {"name": str(model), "nick": nick} if isinstance(ref, Model) else {
-                "name": ref.name, "args": ref.model_args,
-            }
+            identity = model_identity(ref)
+            if isinstance(ref, Model):
+                identity["nick"] = nick
             model._eigenbench_cache_identity = hashlib.sha256(
                 json.dumps(identity, sort_keys=True, default=str).encode()
             ).hexdigest()
@@ -274,15 +274,8 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             f"expected one of {', '.join(FAILURE_POLICIES)}"
         )
 
-    cached = _load_cached_responses(
-        collection_cfg.get("cached_responses_path"), merge_rows=is_direct,
-    )
-    seed = {
-        (int(s_idx), nick): text
-        for s_idx, responses in cached.items()
-        for nick, text in responses.items()
-        if nick in spec_models
-    }
+    seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, spec_models,
+                       merge_rows=is_direct)
 
     return {
         "is_direct": is_direct,
@@ -314,6 +307,33 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             "num_scenarios": len(selected),
             "failure_policy": failure_policy,
         },
+    }
+
+
+def cached_seed(path: str | None, selected, nicks, *, merge_rows: bool) -> dict[tuple[int, str], str]:
+    """Cached responses for the selected scenarios, refusing a cache made for other text."""
+
+    if not path:
+        return {}
+    from pipeline.utils import load_records
+
+    current = {int(s_idx): text for s_idx, text in selected}
+    changed = sorted({
+        int(row["scenario_index"]) for row in load_records(path)
+        if isinstance(row, dict) and "scenario_index" in row and "scenario" in row
+        and int(row["scenario_index"]) in current and row["scenario"] != current[int(row["scenario_index"])]
+    })
+    if changed:
+        raise ValueError(
+            f"{path} holds responses to other scenario text at index "
+            f"{', '.join(map(str, changed[:10]))}; point collection.cached_responses_path "
+            "at a cache for this dataset selection"
+        )
+    cached = _load_cached_responses(path, merge_rows=merge_rows)
+    return {
+        (s_idx, nick): text
+        for s_idx, responses in cached.items() if s_idx in current
+        for nick, text in responses.items() if nick in nicks
     }
 
 
