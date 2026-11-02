@@ -13,8 +13,6 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from inspect_ai.model import Model
-
 from pipeline.eval.direct_rating import (
     DIRECT_PROMPT_VERSION,
     build_direct_rating_prompt,
@@ -26,7 +24,7 @@ from pipeline.eval.direct_rating import (
 from .coverage import _exported_key, judgment_key, planned_from_assignments
 from .export import records_fingerprint
 from .extend import scenarios_of
-from .model_mapping import to_inspect_model
+from .model_mapping import model_identity
 from .phases import RESPONSE_SYSTEM_MESSAGE
 
 
@@ -48,15 +46,6 @@ def changed_scenarios(records: list[dict], selected) -> list[int]:
     return sorted(s for s, text in scenarios_of(records).items() if current.get(s) != text)
 
 
-def _model_reference(value) -> dict:
-    """What a panel entry points at, as the response cache identifies it."""
-
-    if isinstance(value, Model):
-        return {"name": str(value)}
-    ref = to_inspect_model(value)
-    return {"name": ref.name, "args": ref.model_args}
-
-
 def _prompts_identity() -> str:
     """The prompts as they render, so editing any template changes the identity."""
 
@@ -76,7 +65,7 @@ def collection_identity(ctx: dict) -> dict:
 
     return {
         "models": [
-            {"nick": nick, **_model_reference(value)} for nick, value in ctx["models"].items()
+            {"nick": nick, **model_identity(value)} for nick, value in ctx["models"].items()
         ],
         "sampling": {**ctx["sampling"], "include_self": ctx["include_self"]},
         "generation": ctx["generation"],
@@ -163,6 +152,21 @@ def _fingerprint_problems(path: Path, ctx: dict) -> list[str]:
     return problems
 
 
+def _response_problems(records: list[dict], ctx: dict) -> list[str]:
+    changed = set()
+    for row in records:
+        if row.get("record_type") != "direct_rating":
+            continue
+        key = (int(row["scenario_index"]), row["evaluee"]["name"])
+        cached = ctx["seed"].get(key)
+        if isinstance(cached, str) and cached.strip() and row["response"] != cached:
+            changed.add(key)
+    if not changed:
+        return []
+    shown = ", ".join(f"scenario {s}: {nick}" for s, nick in sorted(changed)[:5])
+    return [f"cached response text changed: {shown}"]
+
+
 def check_reusable(evaluations_path: str | Path, records: list[dict], ctx: dict,
                    omitted: list[dict]) -> None:
     """Stop unless ``records`` are exactly this plan's collection, explaining any difference.
@@ -172,7 +176,8 @@ def check_reusable(evaluations_path: str | Path, records: list[dict], ctx: dict,
     """
 
     path = Path(evaluations_path)
-    problems = _plan_problems(records, ctx, omitted) + _model_problems(records, ctx)
+    problems = (_plan_problems(records, ctx, omitted) + _model_problems(records, ctx)
+                + _response_problems(records, ctx))
     changed = changed_scenarios(records, ctx["selected"])
     if changed:
         problems.append(f"scenario text changed at index {', '.join(map(str, changed[:10]))}")

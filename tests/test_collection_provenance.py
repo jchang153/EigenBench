@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 
 from test_inspect_collect import run_dir  # noqa: F401  (pytest fixture)
 
@@ -123,6 +124,7 @@ def _ctx(models):
         "models": models, "sampling": {"sampler_mode": "all_to_all"}, "include_self": True,
         "generation": {"response": {"max_tokens": 10, "temperature": 0.7}},
         "scale_min": 1, "scale_max": 10, "assignments": [], "selected": [], "criteria": [],
+        "seed": {},
     }
 
 
@@ -134,3 +136,72 @@ def test_a_changed_model_reference_is_named(tmp_path):
     (tmp_path / FINGERPRINT_FILE).write_text(json.dumps({"identity": json.loads(json.dumps(before, default=str))}))
     with pytest.raises(RuntimeError, match="model references changed: b"):
         check_reusable(evaluations, [], _ctx({"a": "openai/gpt-4o", "b": "anthropic/claude-sonnet-4"}), [])
+
+
+@pytest.mark.parametrize("before, after", [
+    ({"revision": "revision-1"}, {"revision": "revision-2"}),
+    ({"base_url": "http://backend-a.invalid/v1"}, {"base_url": "http://backend-b.invalid/v1"}),
+    ({"config": GenerateConfig(seed=1)}, {"config": GenerateConfig(seed=2)}),
+], ids=["revision", "backend", "config"])
+def test_changed_model_instance_settings_refuse_completed_export(run_dir, before, after):
+    from pipeline.config import load_run_spec
+
+    _, write_spec = run_dir
+    spec = write_spec()
+    original = load_run_spec(str(spec))[0]["models"]
+
+    def panel(settings):
+        return {
+            nick: get_model(str(model), memoize=False, **{**model.model_args, **settings})
+            for nick, model in original.items()
+        }
+
+    first = collect_direct_ratings_inspect(str(spec), models=panel(before))
+    assert collect_direct_ratings_inspect(str(spec), models=panel(before)) == first
+    with pytest.raises(RuntimeError, match="model references changed"):
+        collect_direct_ratings_inspect(str(spec), models=panel(after))
+
+
+def test_new_model_revision_does_not_reuse_old_generation_cache(run_dir, monkeypatch):
+    tmp_path, write_spec = run_dir
+    monkeypatch.setenv("INSPECT_CACHE_DIR", str(tmp_path / "inspect-cache"))
+    spec = write_spec()
+    _rewrite(spec, lambda text: text.replace('"cache": False', '"cache": True'))
+    calls = []
+
+    def panel(revision):
+        def output(input, tools, tool_choice, config):
+            calls.append(revision)
+            system = input[0].text
+            if system.startswith("Without making"):
+                text = f"{revision}: {input[1].text}"
+            elif system.startswith("You are acting as a judge. Carefully consider the following response"):
+                text = "reflection"
+            else:
+                text = "".join(f"<criterion_{i}_rating>7</criterion_{i}_rating>" for i in range(1, 4))
+            return ModelOutput.from_content(model="mockllm/model", content=text)
+
+        return {"alpha": get_model("mockllm/model", revision=revision,
+                                   custom_outputs=output, memoize=False)}
+
+    first = collect_direct_ratings_inspect(str(spec), models=panel("revision-1"))
+    evaluations = tmp_path / "evaluations.jsonl"
+    evaluations.rename(tmp_path / "previous-evaluations.jsonl")
+    second = collect_direct_ratings_inspect(str(spec), models=panel("revision-2"))
+
+    assert len(first) == len(second) == 3
+    assert calls.count("revision-1") == calls.count("revision-2") == 9
+    assert all(row["response"].startswith("revision-2:") for row in second)
+
+
+def test_model_identity_does_not_consume_scripted_output_generators():
+    from inspect_pipeline.eigenbench import _model_resolver
+    from inspect_pipeline.model_mapping import model_identity
+
+    outputs = (ModelOutput.from_content(model="mockllm/model", content=str(i)) for i in range(2))
+    model = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+
+    model_identity(model)
+    assert _model_resolver({"alpha": model})("alpha") is model
+
+    assert [output.completion for output in outputs] == ["0", "1"]

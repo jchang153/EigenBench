@@ -19,6 +19,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Mapping
 
+from inspect_ai.model import Model
+
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
 from pipeline.providers.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
 
@@ -145,6 +147,21 @@ def to_inspect_model(model_ref: object) -> InspectModelRef:
             f"Unsupported model mapping in spec (expected provider='hf_local'): {model_ref!r}"
         )
     raise ValueError(f"Unsupported model reference in spec: {model_ref!r}")
+
+
+def model_identity(value: object) -> dict:
+    """Requested identity, stable across provider startup and spec reloads."""
+
+    if isinstance(value, Model):
+        return {
+            "name": str(value),
+            # Runtime callbacks and output iterators are not stable provider settings.
+            "args": json.loads(json.dumps(value.model_args, default=lambda _: None)),
+            "base_url": value.explicit_base_url,
+            "config": value.config.model_dump(exclude_none=True),
+        }
+    ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
+    return {"name": ref.name, "args": ref.model_args}
 
 
 def resolve_spec_models(models: Mapping[str, object]) -> dict[str, InspectModelRef]:

@@ -157,6 +157,28 @@ def test_a_cache_for_other_scenario_text_is_refused_before_any_call(run, phased)
     assert not (tmp_path / "calls.txt").exists()
 
 
+@pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("change_path", [False, True])
+def test_changed_cached_answers_refuse_completed_export(run, phased, change_path):
+    tmp_path, write = run
+    spec = write(phased=phased, cache=PARTIAL)
+    collect(spec)
+    before = (tmp_path / "calls.txt").read_text()
+    cache = tmp_path / "responses.jsonl"
+    rows = [json.loads(line) for line in cache.read_text().splitlines()]
+    rows[0]["responses"]["a"] = "A replacement answer to scenario zero"
+    if change_path:
+        replacement = tmp_path / "replacement-responses.jsonl"
+        spec_path = Path(spec)
+        spec_path.write_text(spec_path.read_text().replace(str(cache), str(replacement)))
+        cache = replacement
+    cache.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    with pytest.raises(RuntimeError, match="cached response text changed.*scenario 0.*a"):
+        collect(spec)
+    assert (tmp_path / "calls.txt").read_text() == before
+
+
 @pytest.mark.parametrize("local", [(), ("a",)], ids=["api", "mixed"])
 def test_phased_run_closes_only_local_models(run, local, monkeypatch):
     import inspect_pipeline.collect as collect_module

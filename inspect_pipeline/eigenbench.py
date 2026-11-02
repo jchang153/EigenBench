@@ -46,7 +46,7 @@ from pipeline.eval.direct_rating import (
     resolve_direct_sampling_settings,
 )
 
-from inspect_pipeline.model_mapping import to_inspect_model
+from inspect_pipeline.model_mapping import model_identity, to_inspect_model
 from inspect_pipeline.phases import (
     FAILURE_POLICIES,
     ResponsePool,
@@ -171,9 +171,9 @@ def _model_resolver(models: dict[str, object], *, memoize: bool = True):
             model = ref if isinstance(ref, Model) else get_model(ref.name, memoize=memoize, **ref.model_args)
             # Provider initialization can replace the adapter name with its base.
             # Capture the requested identity before any generation takes place.
-            identity = {"name": str(model), "nick": nick} if isinstance(ref, Model) else {
-                "name": ref.name, "args": ref.model_args,
-            }
+            identity = model_identity(ref)
+            if isinstance(ref, Model):
+                identity["nick"] = nick
             model._eigenbench_cache_identity = hashlib.sha256(
                 json.dumps(identity, sort_keys=True, default=str).encode()
             ).hexdigest()
