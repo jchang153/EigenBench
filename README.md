@@ -295,7 +295,7 @@ inspect eval inspect_pipeline/pairwise.py@eigenbench_pairwise \
 
 The same wrapper supports phased collection for local panels. Initial and
 extension runs share pairwise prompts and solver logic. The
-[protocol reference](docs/pairwise-protocol.md) documents group sampling,
+[protocol reference](docs/inspect-pairwise-protocol.md) documents group sampling,
 shared responses and reflections, decoding settings and the limits of the
 historical run evidence. The native choice scorer reports collection
 diagnostics. Exported records use the existing BTD and EigenTrust analysis.

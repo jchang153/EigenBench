@@ -1,6 +1,6 @@
 """Plan Jonathan's grouped pairwise protocol with an isolated RNG.
 
-See docs/pairwise-protocol.md for the pinned compatibility reference.
+See docs/inspect-pairwise-protocol.md for the pinned compatibility reference.
 """
 
 from __future__ import annotations

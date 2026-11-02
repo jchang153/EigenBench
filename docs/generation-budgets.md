@@ -23,4 +23,4 @@ the selected models nor the experiment's sampling plan.
 Native pairwise overrides use `collection.pairwise_generation` with `response`,
 `reflection` and `comparison` phases. Their default profile uses temperature 1.0
 and 4096 tokens throughout. Pairwise runs ignore `collection.generation`, as the
-original OpenRouter collector did. See the [protocol reference](pairwise-protocol.md).
+original OpenRouter collector did. See the [protocol reference](inspect-pairwise-protocol.md).

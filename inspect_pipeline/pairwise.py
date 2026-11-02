@@ -3,7 +3,7 @@
     inspect eval inspect_pipeline/pairwise.py -T spec=runs/my_run/spec.py
 
 One sample per ordered comparison. Responses and reflections are shared within
-sampled groups. See docs/pairwise-protocol.md for reference behavior.
+sampled groups. See docs/inspect-pairwise-protocol.md for reference behavior.
 """
 
 from __future__ import annotations
