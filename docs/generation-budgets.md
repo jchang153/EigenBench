@@ -16,8 +16,8 @@ RUN_SPEC["collection"]["generation"] = {
 
 `api-judge` must match a key in `RUN_SPEC["models"]`. Unspecified settings inherit
 phase defaults. Overrides are validated before collection and used for each model
-in Inspect direct-rating and response-only solvers, as well as legacy API and
-local generation. Extension tasks use those same solvers. This changes neither
+in Inspect direct-rating and response-only solvers. Extension tasks use those
+same solvers. This changes neither
 the selected models nor the experiment's sampling plan.
 
 Native pairwise overrides use `collection.pairwise_generation` with `response`,

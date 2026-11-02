@@ -1,109 +1,17 @@
-"""Run an EigenBench spec end to end on the Inspect AI engine.
+"""Alias for the EigenBench runner; all collection uses Inspect.
 
     python scripts/run_inspect.py runs/my_run/spec.py [--estimate-calls]
-
-Convenience wrapper around the native Inspect workflow:
-
-    inspect eval inspect_pipeline/eigenbench.py -T spec=runs/my_run/spec.py
-    python scripts/export_evaluations.py <log> -o runs/my_run/evaluations.jsonl
-    # then training / upload
-
-Everything downstream of collection is delegated to scripts/run.py, which
-consumes the identical evaluations.jsonl.
 """
 
-from __future__ import annotations
-
-import argparse
-import os
-import pprint
-import sys
 from pathlib import Path
+import sys
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-for entry in (str(_REPO_ROOT), str(_REPO_ROOT / "scripts")):
-    if entry not in sys.path:
-        sys.path.insert(0, entry)
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from pipeline.config import load_run_spec  # noqa: E402
-
-
-def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
-    spec, _run_dir = load_run_spec(spec_ref)
-    mode = spec["evaluation"]["mode"]
-
-    collection_cfg = spec.get("collection", {})
-    if collection_enabled is not None:
-        collection_cfg["enabled"] = collection_enabled
-
-    # Fail fast on a missing Space secret, mirroring scripts/run.py.
-    upload_cfg = spec.get("upload", {})
-    if bool(upload_cfg.get("enabled", False)) and not (
-        upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
-    ):
-        raise SystemExit("Set upload.secret in spec or SPACE_SECRET env var")
-
-    if bool(collection_cfg.get("enabled", True)):
-        print("Stage: collect evaluations (Inspect engine)")
-        if spec.get("extension"):
-            from inspect_pipeline.extend import extend_run
-            extend_run(spec_ref)
-        elif mode == "pairwise_btd":
-            from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
-            collect_pairwise_inspect(spec_ref)
-        else:
-            from inspect_pipeline.collect import collect_direct_ratings_inspect
-            collect_direct_ratings_inspect(spec_ref)
-    else:
-        print("Stage: collect evaluations (skipped; collection.enabled=False)")
-
-    # Analysis sizes its matrices from the spec's model list, so a run extended
-    # with scripts/add_model.py fails deep inside aggregation if the spec was
-    # never updated. Catch it here, before handing off.
-    if bool(spec.get("training", {}).get("enabled", True)):
-        from pipeline.utils import load_records
-
-        from inspect_pipeline.extend import check_spec_covers
-
-        records = load_records(collection_cfg["evaluations_path"])
-        if records:
-            check_spec_covers(spec.get("models", {}), records)
-
-    # Training / aggregation / upload run on the legacy stages.
-    from run import main as legacy_main
-
-    legacy_main(spec_ref, collection_enabled=False)
+from scripts.run import cli, main
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="EigenBench runner on Inspect AI"
-    )
-    parser.add_argument("spec", help="Run spec module or path, e.g. runs/my_run/spec.py")
-    parser.add_argument(
-        "--estimate-calls",
-        action="store_true",
-        help="Print planned API call counts and exit without collecting",
-    )
-    parser.add_argument(
-        "--collection-enabled",
-        choices=["true", "false"],
-        default=None,
-        help="Override collection.enabled from the spec",
-    )
-    args = parser.parse_args()
-
-    if args.estimate_calls:
-        spec, _ = load_run_spec(args.spec)
-        if spec["evaluation"]["mode"] == "pairwise_btd" and not spec.get("extension"):
-            from inspect_pipeline.pairwise_collect import estimate_pairwise_calls
-            estimate = estimate_pairwise_calls(args.spec)
-        else:
-            from run import estimate_calls
-            estimate = estimate_calls(args.spec)
-        print(pprint.pformat(estimate, sort_dicts=False))
-    else:
-        override = None
-        if args.collection_enabled is not None:
-            override = args.collection_enabled == "true"
-        main(args.spec, collection_enabled=override)
+    cli()

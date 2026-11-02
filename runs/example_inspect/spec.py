@@ -14,7 +14,7 @@ Or the wrapper, which also runs training/upload:
 RUN_SPEC = {
     "name": "example_inspect",
     "verbose": True,
-    # Same model syntax as the legacy pipeline:
+    # Run-spec model syntax:
     #   bare string            -> OpenRouter id
     #   hf_local:...           -> local vLLM (base models and LoRA adapters)
     #   inspect:provider/model -> any Inspect provider, verbatim
@@ -45,7 +45,7 @@ RUN_SPEC = {
         "sampler_mode": "balanced_unique_judge",
         "response_redundancy": 1,
         "sampler_seed": 42,
-        # Optional Inspect engine settings (used by scripts/run_inspect.py):
+        # Optional Inspect engine settings (used by scripts/run.py):
         "inspect": {
             # "cache": True,              # generation cache = resume checkpoint
             # "log_dir": "inspect_logs",  # relative to the run folder

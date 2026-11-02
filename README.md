@@ -33,7 +33,8 @@ GPU environment; hosted-model runs use provider API keys.
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt inspect-ai
+python -m pip install -e .
+# For local vLLM models on Linux: python -m pip install -e ".[local]"
 ```
 
 Or with [uv](https://docs.astral.sh/uv/), from `pyproject.toml`. Add the `local`
@@ -68,13 +69,13 @@ Edit `runs/my_run/spec.py`: choose models you can access and review the scenario
 count, constitution, and generation settings. Then estimate the work:
 
 ```bash
-python scripts/run_inspect.py runs/my_run/spec.py --estimate-calls
+python scripts/run.py runs/my_run/spec.py --estimate-calls
 ```
 
 Collect, export, and score the run:
 
 ```bash
-python scripts/run_inspect.py runs/my_run/spec.py
+python scripts/run.py runs/my_run/spec.py
 ```
 
 This command makes model calls. Results are written under `runs/my_run/` unless
@@ -186,7 +187,9 @@ ratings, use `sampler_mode="all_to_all"`. For grouped sampling, use
 changing the model panel, sampler, criteria, or scenario count.
 
 For pairwise runs, use `evaluation.mode="pairwise_btd"` with
-`random_judge_group` or `all_to_all`, and collect using `scripts/run.py`.
+`random_judge_group` or `uniform`, and collect using `scripts/run.py`. The retired
+collector's adaptive and mixed `all_to_all` pairwise protocols are not supported
+by Inspect. See the [protocol reference](docs/inspect-pairwise-protocol.md).
 
 ### Optional bootstrap
 
@@ -209,14 +212,15 @@ bootstrap recomputes scores without model fitting.
 
 | Task | Command |
 | --- | --- |
-| Pairwise or direct ratings with Inspect | `python scripts/run_inspect.py runs/my_run/spec.py` |
-| Pairwise or direct ratings with the legacy collector | `python scripts/run.py runs/my_run/spec.py` |
+| Pairwise or direct ratings with Inspect | `python scripts/run.py runs/my_run/spec.py` |
+| Existing Inspect command (same runner) | `python scripts/run_inspect.py runs/my_run/spec.py` |
 | Estimate calls without inference | Add `--estimate-calls` to either command. |
 | Score an existing export | `python scripts/run.py runs/my_run/spec.py --collection-enabled false` |
 
 Set `RUN_SPEC["training"]["enabled"] = False` for collection only. Set
-`RUN_SPEC["collection"]["enabled"] = False` to skip collection. The legacy
-collector can precompute responses using `collection.cached_responses_path`.
+`RUN_SPEC["collection"]["enabled"] = False` to skip collection. Inspect reads
+`collection.cached_responses_path` and generates missing responses during collection.
+An analysis-only run never generates responses. See the [migration guide](docs/inspect-migration.md).
 
 ### Inspect logs and retries
 
@@ -345,7 +349,7 @@ export; `extension.additional_scenarios` counts unused scenarios to add.
 The included example extends the completed `example_inspect` run:
 
 ```bash
-python scripts/run_inspect.py runs/example_inspect/spec.py
+python scripts/run.py runs/example_inspect/spec.py
 python scripts/extend_run.py runs/example_extension/spec.py --dry-run
 python scripts/extend_run.py runs/example_extension/spec.py
 python scripts/run.py runs/example_extension/spec.py --collection-enabled false
@@ -403,12 +407,11 @@ RUN_SPEC["upload"] = {
 
 ```bash
 export SPACE_SECRET="your-space-secret"
-python scripts/run_inspect.py runs/my_run/spec.py
+python scripts/run.py runs/my_run/spec.py
 ```
 
 With uploads enabled, the pipeline submits results to the Space for scoring and
-publication instead of running the local training stage. The legacy runner
-supports the same upload configuration. Use the manual upload command for
+publication instead of running the local training stage. Use the manual upload command for
 results you have already scored locally.
 
 ## Outputs
@@ -436,7 +439,7 @@ Default locations inside the run folder:
 | `scripts/` | Collection, extension, scoring, and upload commands. |
 | `inspect_pipeline/` | Inspect tasks, model mapping, and export helpers. |
 | `pipeline/config/` | Spec, dataset, and constitution loaders. |
-| `pipeline/eval/` | Legacy collection and sampling. |
+| `pipeline/protocol/` | Shared prompts, parsing, sampling, and response-cache readers. |
 | `pipeline/train/` | Scoring, bootstrap, and plots. |
 | `data/constitutions/` | Available criterion sets. |
 | `tests/` | Regression tests. |
