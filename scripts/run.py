@@ -121,6 +121,8 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
         # Validate and materialize this before any expensive collection calls.
         space_spec_path = _write_space_safe_spec(spec)
 
+    analysis_status: dict = {}
+    scoring = bool(training_cfg.get("enabled", True)) and not upload_to_space
     if collection_enabled is not None:
         collection_cfg["enabled"] = collection_enabled
     if bool(collection_cfg.get("enabled", True)):
@@ -130,10 +132,10 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
             extend_run(spec_ref)
         elif evaluation_mode == "pairwise_btd":
             from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
-            collect_pairwise_inspect(spec_ref)
+            collect_pairwise_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status)
         else:
             from inspect_pipeline.collect import collect_direct_ratings_inspect
-            collect_direct_ratings_inspect(spec_ref)
+            collect_direct_ratings_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
 
@@ -148,7 +150,9 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     if upload_to_space:
         # Skip local training — Space handles it
         print("Stage: train + eigentrust (skipped; upload.enabled=True, Space will train)")
-    elif bool(training_cfg.get("enabled", True)):
+    elif scoring and analysis_status.get("artifacts_written") is True:
+        print("Stage: analysis complete in Inspect; using the artifacts from its panel score")
+    elif scoring:
         if evaluation_mode == "direct_rating":
             print("Stage: direct aggregation + eigentrust")
         else:

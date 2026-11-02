@@ -100,6 +100,43 @@ def _omission(sample) -> dict:
     }
 
 
+def direct_record(md: dict, store: dict, criteria: list[str], *, scale_min=1, scale_max=10) -> dict:
+    """One validated judgment record, shared by export and native scoring."""
+    response = store.get(STORE_RESPONSE)
+    reflection = store.get(STORE_REFLECTION)
+    raw_rating = store.get(STORE_JUDGMENT_RAW)
+    if not all(isinstance(value, str) for value in (response, reflection, raw_rating)):
+        raise ValueError("Judgment is missing generated content required for export")
+    parsed = parse_direct_ratings(raw_rating, num_criteria=len(criteria),
+                                  scale_min=scale_min, scale_max=scale_max)
+    criteria_text = "\n".join(criteria)
+    return {
+        "schema_version": 2,
+        "record_type": "direct_rating",
+        "constitution": criteria_text,
+        "scenario": md["scenario"],
+        "scenario_index": int(md["scenario_index"]),
+        "judge": {"index": int(md["judge_idx"]), "name": md["judge_nick"]},
+        "evaluee": {"index": int(md["eval_idx"]), "name": md["eval_nick"]},
+        "sampling": {
+            "mode": md.get("sampler_mode") or DIRECT_SAMPLER_ALL_TO_ALL,
+            "round": int(md.get("sampling_round", 0)),
+            "group_index": int(md.get("group_index", 0)),
+        },
+        "response": response,
+        "reflection": reflection,
+        "judgment_raw": raw_rating,
+        "ratings": [
+            {
+                "criterion_index": criterion_idx,
+                "criterion": criteria[criterion_idx],
+                "rating": value,
+            }
+            for criterion_idx, value in parsed.items()
+        ],
+    }
+
+
 def records_from_log(
     log: str | Path | EvalLog,
     *,
@@ -121,7 +158,6 @@ def records_from_log(
     log = load_log(log)
     meta = eigenbench_metadata(log)
     criteria: list[str] = meta["criteria"]
-    criteria_text = "\n".join(criteria)
     scale_min = int(meta.get("scale_min", 1))
     scale_max = int(meta.get("scale_max", 10))
 
@@ -162,12 +198,6 @@ def records_from_log(
                 raise RuntimeError(f"sample {sample.id} is missing generated content")
             continue
 
-        parsed = parse_direct_ratings(
-            raw_rating,
-            num_criteria=len(criteria),
-            scale_min=scale_min,
-            scale_max=scale_max,
-        )
         edge = (int(md["scenario_index"]), int(md["judge_idx"]), int(md["eval_idx"]))
         if edge in seen_edges:
             raise RuntimeError(f"duplicate directed edge in log: {edge}")
@@ -176,31 +206,7 @@ def records_from_log(
         rows.append(
             (
                 int(md.get("edge_index", len(rows))),
-                {
-                    "schema_version": 2,
-                    "record_type": "direct_rating",
-                    "constitution": criteria_text,
-                    "scenario": md["scenario"],
-                    "scenario_index": int(md["scenario_index"]),
-                    "judge": {"index": int(md["judge_idx"]), "name": md["judge_nick"]},
-                    "evaluee": {"index": int(md["eval_idx"]), "name": md["eval_nick"]},
-                    "sampling": {
-                        "mode": md.get("sampler_mode") or DIRECT_SAMPLER_ALL_TO_ALL,
-                        "round": int(md.get("sampling_round", 0)),
-                        "group_index": int(md.get("group_index", 0)),
-                    },
-                    "response": response,
-                    "reflection": reflection,
-                    "judgment_raw": raw_rating,
-                    "ratings": [
-                        {
-                            "criterion_index": criterion_idx,
-                            "criterion": criteria[criterion_idx],
-                            "rating": value,
-                        }
-                        for criterion_idx, value in parsed.items()
-                    ],
-                },
+                direct_record(md, store, criteria, scale_min=scale_min, scale_max=scale_max),
             )
         )
 
@@ -391,6 +397,9 @@ def export_log(
             "collection.evaluations_path in the run spec"
         )
 
+    if (log.eval.metadata or {}).get("eigenbench_phase") == "panel_metrics":
+        raise ValueError("This scoring-only full-panel log references the collection's source_logs; "
+                         "export those judgment logs instead.")
     if meta.get("extension_phased"):
         raise ValueError(
             "a phased extension log contains only one judge; rerun scripts/extend_run.py "

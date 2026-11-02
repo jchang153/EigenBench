@@ -437,6 +437,10 @@ def test_eval_model_joins_the_panel(run_dir):
     panel = set(NICKS) | {"mockllm/model"}
     assert {r["judge"]["name"] for r in records} == {r["evaluee"]["name"] for r in records} == panel
     assert len(records) == SCENARIO_COUNT * len(panel) ** 2
+    native = next(score for score in log.results.scores if score.name == "panel_scorer")
+    assert {f"{nick}/elo" for nick in panel} <= native.metrics.keys()
+    assert native.metrics["coverage/planned"].value == len(records)
+    assert log.eval.metadata["eigenbench"]["analysis"]["model_order"] == list(NICKS) + ["mockllm/model"]
 
     # Without --model the panel is the spec's alone.
     log = inspect_eval(task, task_args={"spec": str(spec_path), "cache": False},
@@ -529,8 +533,8 @@ def test_phased_matches_single_task(run_dir):
     # Every log: one per judge, the primary first, and one per responding model.
     [part] = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
     roles = {entry["file"]: entry["role"] for entry in part["logs"]}
-    assert info["log_files"][0] == info["log_file"] and roles[info["log_file"]] == "judgments"
-    assert sorted(roles[name] for name in info["log_files"]) == ["judgments"] * len(NICKS) + ["responses"] * len(NICKS)
+    assert info["log_files"][0] == info["log_file"] and roles[info["log_file"]] == "panel_metrics"
+    assert sorted(roles[name] for name in info["log_files"]) == ["judgments"] * len(NICKS) + ["panel_metrics"] + ["responses"] * len(NICKS)
 
 
 @pytest.mark.parametrize("include_self", [True, False])
