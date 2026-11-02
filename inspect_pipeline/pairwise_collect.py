@@ -12,19 +12,8 @@ from .collect import eval_kwargs
 from .eigenbench import has_local_models, sanitize
 from .export import write_evaluations_atomic, write_inspect_run_info
 from .extension_phased import _isolated_context, _run_one
-from .phases import STORE_RESPONSE, response_only_solver
-
-
-def _group_responses(ctx):
-    from .pairwise import pairwise_cache_scope
-
-    return response_only_solver(
-        resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
-        max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
-        cache_scope=lambda md: pairwise_cache_scope(
-            "response", md["response_group"], md["eval_nick"]
-        ),
-    )
+from .pairwise import _group_responses
+from .phases import STORE_RESPONSE
 
 
 def _response_cells(samples):

@@ -45,6 +45,7 @@ from inspect_pipeline.phases import (  # noqa: E402
     ResponsePool,
     generate_validated,
     phase_config,
+    response_only_solver,
 )
 
 STORE_EVAL1_RESPONSE = "eigenbench:eval1_response"
@@ -93,6 +94,16 @@ def pairwise_cache_scope(kind: str, *parts) -> str:
     return ":".join(["pairwise", kind, *(str(part) for part in parts)])
 
 
+def _group_responses(ctx):
+    return response_only_solver(
+        resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
+        max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
+        cache_scope=lambda md: pairwise_cache_scope(
+            "response", md["response_group"], md["eval_nick"]
+        ),
+    )
+
+
 @solver
 def pairwise_solver(
     *,
@@ -111,7 +122,7 @@ def pairwise_solver(
 
     Invalid criterion 1 verdicts are retried under the existing Inspect
     contract. The original collector recorded them unretried and dropped them
-    during analysis. Failure-policy parity remains in issue #33.
+    during analysis. Pairwise export remains strict about failed samples.
     """
 
     criteria_text = "\n".join(criteria)
@@ -290,7 +301,7 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
         raise RuntimeError(f"{len(failures)} sample(s) failed:\n  " + "\n  ".join(failures[:10]))
 
     rows = []
-    for position, s in enumerate(log.samples or []):
+    for s in log.samples or []:
         if s.error is not None:
             continue
         md, store = s.metadata or {}, s.store or {}
@@ -300,9 +311,8 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
             if strict:
                 raise RuntimeError(f"sample {s.id} is missing generated content")
             continue
-        order = md.get("edge_index")
         rows.append((
-            (0, int(order)) if order is not None else (1, position),
+            int(md["edge_index"]),
             {
                 "constitution": criteria_text,
                 "scenario": md["scenario"],
@@ -346,7 +356,7 @@ def pairwise_comparison_samples(
                 md[f"{side}_response"] = text
         samples.append(Sample(
             input=md["scenario"],
-            id=(f"s{int(md['scenario_index']):04d} r{int(md.get('sampling_round', 0))} · "
+            id=(f"s{int(md['scenario_index']):04d} r{int(md['sampling_round'])} · "
                 f"{md['judge_nick']}: {md['eval1_nick']} vs {md['eval2_nick']}"),
             metadata=md,
         ))
@@ -375,7 +385,7 @@ def build_pairwise_task(
         spec, models, cache, build_assignments=False
     )
     run_spec = ctx["run_spec"]
-    mode = (run_spec.get("evaluation", {}) or {}).get("mode", "pairwise_btd")
+    mode = run_spec["evaluation"]["mode"]
     if mode != "pairwise_btd":
         raise ValueError(
             "inspect_pipeline.pairwise supports evaluation.mode='pairwise_btd' only; "

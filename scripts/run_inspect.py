@@ -30,7 +30,7 @@ from pipeline.config import load_run_spec  # noqa: E402
 
 def main(spec_ref: str, collection_enabled: bool | None = None) -> None:
     spec, _run_dir = load_run_spec(spec_ref)
-    mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
+    mode = spec["evaluation"]["mode"]
 
     collection_cfg = spec.get("collection", {})
     if collection_enabled is not None:
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     if args.estimate_calls:
         spec, _ = load_run_spec(args.spec)
-        if spec.get("evaluation", {}).get("mode", "pairwise_btd") == "pairwise_btd" and not spec.get("extension"):
+        if spec["evaluation"]["mode"] == "pairwise_btd" and not spec.get("extension"):
             from inspect_pipeline.pairwise_collect import estimate_pairwise_calls
             estimate = estimate_pairwise_calls(args.spec)
         else:

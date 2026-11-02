@@ -11,7 +11,7 @@ from inspect_ai.dataset import MemoryDataset, Sample
 from .eigenbench import _model_resolver, _run_context, sanitize
 from .export import records_from_log
 from .extend import DIRECT, _extension_task, response_index
-from .pairwise import records_from_pairwise_log
+from .pairwise import _group_responses, records_from_pairwise_log
 from .phases import STORE_RESPONSE, response_only_solver
 
 
@@ -92,7 +92,6 @@ def collect_phased_extension(prepared, eval_kwargs, seen_logs: list | None = Non
                 max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
             )
         else:
-            from .pairwise_collect import _group_responses
             response_solver = _group_responses(ctx)
         task = Task(
             name=f"extension_responses_{sanitize(nick)}",
