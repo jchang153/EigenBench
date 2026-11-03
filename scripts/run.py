@@ -1,4 +1,4 @@
-"""Run collection then training from a Python run spec.
+"""Run collection on Inspect, then shared analysis and upload from a Python run spec.
 
 Usage:
     python scripts/run.py runs.example.spec
@@ -20,12 +20,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from pipeline.config import (
-    load_dataset_scenarios_from_spec,
-    load_run_spec,
-    select_scenarios,
-)
-from pipeline.model_refs import is_hf_local_model
+from pipeline.config import load_run_spec
 
 
 def _space_safe_model_id(model_ref: object) -> str:
@@ -77,113 +72,17 @@ def _write_space_safe_spec(spec: dict) -> str:
 
 
 def estimate_calls(spec_ref: str) -> dict:
+    """Use the collection planner without executing models or writing output."""
+
     spec, run_dir = load_run_spec(spec_ref)
     if spec.get("extension"):
         from inspect_pipeline.extend import extend_run
         return extend_run(spec_ref, dry_run=True)
-    models = spec.get("models", {})
-    dataset_cfg = spec.get("dataset", {})
-    scenarios = load_dataset_scenarios_from_spec(dataset_cfg, run_dir=run_dir)
-    count_value = dataset_cfg.get("count")
-    selected = select_scenarios(
-        scenarios,
-        start=int(dataset_cfg.get("start", 0)),
-        count=None if count_value is None else int(count_value),
-        shuffle=bool(dataset_cfg.get("shuffle", False)),
-        shuffle_seed=(
-            None
-            if dataset_cfg.get("shuffle_seed") is None
-            else int(dataset_cfg.get("shuffle_seed"))
-        ),
-    )
-    evaluation_cfg = spec.get("evaluation", {})
-    mode = evaluation_cfg.get("mode", "pairwise_btd")
-    collection_cfg = spec.get("collection", {})
-    num_models = len(models)
-    if mode == "direct_rating":
-        from pipeline.eval.direct_rating import (
-            build_direct_assignments,
-            count_cached_responses,
-            estimate_direct_calls,
-            resolve_direct_sampling_settings,
-        )
-
-        openrouter_nicks = {
-            nick for nick, value in models.items() if not is_hf_local_model(value)
-        }
-        include_self = bool(
-            evaluation_cfg.get("direct_rating", {}).get("include_self", True)
-        )
-        sampling = resolve_direct_sampling_settings(
-            collection_cfg,
-            num_models=num_models,
-            include_self=include_self,
-        )
-        assignments = build_direct_assignments(
-            selected,
-            models,
-            include_self=include_self,
-            **sampling,
-        )
-        openrouter_indices = {
-            idx for idx, nick in enumerate(models) if nick in openrouter_nicks
-        }
-        cached_total, cached_remote = count_cached_responses(
-            collection_cfg.get("cached_responses_path"),
-            scenario_indices={int(item[0]) for item in selected},
-            model_nicks=set(models),
-            openrouter_nicks=openrouter_nicks,
-        )
-
-        return {
-            "mode": mode,
-            **estimate_direct_calls(
-                num_scenarios=len(selected),
-                num_models=num_models,
-                num_openrouter_models=len(openrouter_nicks),
-                include_self=include_self,
-                cached_responses=cached_total,
-                cached_openrouter_responses=cached_remote,
-                assignments=assignments,
-                openrouter_model_indices=openrouter_indices,
-                **sampling,
-            ),
-        }
-
-    sampler_mode = str(collection_cfg.get("sampler_mode", "random_judge_group")).strip().lower()
-    cached = bool(collection_cfg.get("cached_responses_path"))
-    if sampler_mode == "all_to_all":
-        responses = 0 if cached else len(selected) * num_models
-        reflections = len(selected) * num_models * num_models
-        comparisons = len(selected) * num_models * num_models * max(0, num_models - 1)
-    else:
-        group_size = max(1, min(int(collection_cfg.get("group_size", 4)), num_models))
-        groups = max(1, int(collection_cfg.get("groups", 1)))
-        responses = 0 if cached else len(selected) * groups * group_size
-        reflections = len(selected) * groups * group_size
-        comparisons = len(selected) * groups * group_size * max(0, group_size - 1)
-    result = {
-        "mode": mode,
-        "sampler_mode": sampler_mode,
-        "num_scenarios": len(selected),
-        "num_models": num_models,
-        "response_tasks": responses,
-        "reflection_tasks": reflections,
-        "comparison_tasks": comparisons,
-        "total_logical_generations": responses + reflections + comparisons,
-    }
-    if sampler_mode == "all_to_all":
-        result["ordered_comparisons_per_scenario"] = (
-            num_models * num_models * max(0, num_models - 1)
-        )
-    else:
-        result["group_size"] = group_size
-        result["groups_per_scenario"] = groups
-        result["count_note"] = (
-            "Sampled mixed-provider runs may deduplicate overlapping response/reflection "
-            "tasks, so those two fields are conservative before assignments are materialized."
-        )
-    return result
+    if spec["evaluation"]["mode"] == "pairwise_btd":
+        from inspect_pipeline.pairwise_collect import estimate_pairwise_calls
+        return estimate_pairwise_calls(spec_ref)
+    from inspect_pipeline.collect import estimate_direct_calls_for_spec
+    return estimate_direct_calls_for_spec(spec, run_dir)
 
 
 def _resolve_upload_backend(upload_cfg: dict) -> str:
@@ -224,28 +123,27 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
 
     if collection_enabled is not None:
         collection_cfg["enabled"] = collection_enabled
-    cached_responses_path = collection_cfg.get("cached_responses_path")
-
-    if cached_responses_path and evaluation_mode != "direct_rating" and not spec.get("extension"):
-        print("Stage: collect responses cache")
-        from run_collect_responses import main as run_collect_responses_main
-
-        run_collect_responses_main(spec_ref)
-    elif evaluation_mode == "direct_rating" and cached_responses_path:
-        print(
-            "Stage: collect responses cache (integrated into direct-rating collection; "
-            "existing cached responses will be reused)"
-        )
-    else:
-        print("Stage: collect responses cache (skipped; collection.cached_responses_path is not set)")
-
     if bool(collection_cfg.get("enabled", True)):
-        print("Stage: collect evaluations")
-        from run_collect import main as run_collect_main
-
-        run_collect_main(spec_ref)
+        print("Stage: collect evaluations (Inspect engine)")
+        if spec.get("extension"):
+            from inspect_pipeline.extend import extend_run
+            extend_run(spec_ref)
+        elif evaluation_mode == "pairwise_btd":
+            from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+            collect_pairwise_inspect(spec_ref)
+        else:
+            from inspect_pipeline.collect import collect_direct_ratings_inspect
+            collect_direct_ratings_inspect(spec_ref)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
+
+    if bool(training_cfg.get("enabled", True)) or upload_to_space:
+        from inspect_pipeline.extend import check_spec_covers
+        from pipeline.utils import load_records
+
+        records = load_records(collection_cfg["evaluations_path"])
+        if records:
+            check_spec_covers(spec.get("models", {}), records)
 
     if upload_to_space:
         # Skip local training — Space handles it
@@ -255,7 +153,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
             print("Stage: direct aggregation + eigentrust")
         else:
             print("Stage: train + eigentrust")
-        from run_train import main as run_train_main
+        from scripts.run_train import main as run_train_main
 
         run_train_main(spec_ref)
     else:
@@ -347,12 +245,12 @@ finally:
         )
 
 
-if __name__ == "__main__":
+def cli() -> None:
     import argparse
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Collect with Inspect, then analyze and upload")
     parser.add_argument("spec", help="Path to run spec")
-    parser.add_argument("--collection-enabled", type=str, default=None,
-                        help="Override collection.enabled (True/False)")
+    parser.add_argument("--collection-enabled", type=str.lower, choices=["true", "false"], default=None,
+                        help="Override collection.enabled (true/false)")
     parser.add_argument(
         "--estimate-calls",
         action="store_true",
@@ -366,3 +264,7 @@ if __name__ == "__main__":
         print(pprint.pformat(estimate_calls(args.spec), sort_dicts=False))
     else:
         main(args.spec, collection_enabled=collection_override)
+
+
+if __name__ == "__main__":
+    cli()

@@ -3,7 +3,7 @@
 A judgment needs both its evaluee and its judge, so the edge-per-sample task in
 ``eigenbench.py`` keeps every model live for the whole run. That is free for
 hosted models and fatal on a single GPU, so local runs split the work the way
-the legacy collector did: every response first, then every judgment, one model
+every response first, then every judgment, one model
 resident at a time.
 
 These tasks are driven by ``inspect_pipeline.collect`` rather than the CLI, so

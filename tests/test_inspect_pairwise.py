@@ -103,7 +103,7 @@ def test_samplers_replay_the_original_rng_stream(num_models):
     """Same draws and the same RNG consumption as pipeline/eval/samplers.py,
     including the discarded padding sample inside random_groups."""
 
-    from pipeline.eval import samplers
+    from pipeline.protocol import samplers
 
     for group_size in range(2, num_models + 1):
         for seed in range(25):
@@ -124,7 +124,7 @@ def test_samplers_replay_the_original_rng_stream(num_models):
 
 @pytest.mark.parametrize("mode", ["random_judge_group", "uniform"])
 def test_plan_follows_the_original_scenario_then_round_loop(mode):
-    from pipeline.eval import samplers
+    from pipeline.protocol import samplers
 
     selected = [(4, "S4"), (9, "S9"), (2, "S2")]
     nicks = ["w", "x", "y", "z", "v"]
@@ -240,7 +240,7 @@ def test_generation_profile_is_the_original_and_ignores_direct_settings():
 # Prompts
 
 def test_prompts_are_byte_identical_to_the_original_collector():
-    from pipeline.eval.criteria_collectors import build_comparison_prompt, build_reflection_prompt
+    from pipeline.protocol.pairwise import build_comparison_prompt, build_reflection_prompt
     from inspect_pipeline.phases import RESPONSE_SYSTEM_MESSAGE
 
     assert build_reflection_user("C", "S", "R") == REFLECTION_USER_GOLDEN
@@ -249,18 +249,6 @@ def test_prompts_are_byte_identical_to_the_original_collector():
     assert build_comparison_prompt(allow_ties=True) == COMPARISON_SYSTEM_TIES
     assert RESPONSE_SYSTEM_MESSAGE == RESPONSE_SYSTEM
 
-    # The inline f-strings in Jonathan's collector, read as source, not executed.
-    source = (REPO_ROOT / "pipeline/eval/criteria_collectors.py").read_text(encoding="utf-8")
-    reflection_template = build_reflection_user(
-        "{criteria_text}", "{scenario}", "{eval_responses[j]}"
-    )
-    comparison_template = build_comparison_user(
-        "{criteria_text}", "{scenario}", "{eval_responses[j]}", "{judge_reflections[j]}",
-        "{eval_responses[k]}", "{judge_reflections[k]}",
-    )
-    assert f'f"""{reflection_template}"""' in source
-    assert f'f"""{comparison_template}"""' in source
-    assert f'"content": "{RESPONSE_SYSTEM}"' in source
 
 
 def test_choice_parser_matches_the_analysis_extractor():

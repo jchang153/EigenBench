@@ -1,18 +1,18 @@
-inspect-ai
+# Keep this usable from other working directories (including ValueArena builds).
+# Runtime dependencies mirror pyproject.toml, plus the local vLLM extra.
+inspect-ai>=0.3.268
 vllm
 torch
-numpy 
-scikit-learn 
-matplotlib 
-tqdm 
-python-dotenv 
+numpy
+scikit-learn
+matplotlib
+tqdm
 openai
-scipy 
-pandas 
-anthropic 
-google-genai 
-accelerate 
-transformers 
-datasets 
+scipy
+pandas
+anthropic
+google-genai
+transformers
+datasets
 huggingface_hub
 gradio_client

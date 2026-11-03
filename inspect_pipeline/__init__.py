@@ -5,7 +5,7 @@ The Inspect task lives in ``inspect_pipeline.eigenbench``:
     inspect eval inspect_pipeline/eigenbench.py -T spec=runs/my_run/spec.py
 
 The protocol itself — sampling plans, prompts, rating validation — is imported
-unchanged from ``pipeline.eval.direct_rating``, and the exported output is the
+unchanged from ``pipeline.protocol.direct_rating``, and the exported output is the
 same ``evaluations.jsonl`` consumed by ``pipeline.train.direct_analysis``.
 """
 

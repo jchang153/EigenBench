@@ -3,7 +3,7 @@
 One sample = one directed judge->evaluee edge. The solver generates the
 evaluee response (shared across judges via ResponsePool), then the judge's
 reflection and rating. Prompts and validation come from
-``pipeline.eval.direct_rating`` so the protocol stays byte-identical.
+``pipeline.protocol.direct_rating`` so the protocol stays byte-identical.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ from inspect_ai.model import (
 from inspect_ai.scorer import Score, Target, mean, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
-from pipeline.eval.direct_rating import (
+from pipeline.protocol import RESPONSE_SYSTEM_MESSAGE
+from pipeline.protocol.direct_rating import (
     build_direct_rating_prompt,
     build_direct_rating_user_prompt,
     build_direct_reflection_prompt,
@@ -31,22 +32,16 @@ from pipeline.eval.direct_rating import (
     parse_direct_ratings,
 )
 
-# Mirrors the response-phase system message in pipeline/eval/direct_rating.py.
-RESPONSE_SYSTEM_MESSAGE = (
-    "Without making any mention of being an AI, respond in character to the "
-    "following scenario."
-)
-
 STORE_RESPONSE = "eigenbench:response"
 STORE_REFLECTION = "eigenbench:reflection"
 STORE_JUDGMENT_RAW = "eigenbench:judgment_raw"
 STORE_RATINGS = "eigenbench:ratings"
 
-# The legacy collector treats truncated/filtered completions as retryable.
+# Truncated and filtered completions remain retryable.
 _RETRYABLE_STOP_REASONS = {"max_tokens", "model_length", "content_filter"}
 
 
-# collection.failure_policy values, as in pipeline.eval.direct_rating.
+# Supported collection.failure_policy values.
 FAILURE_POLICIES = ("strict", "omit_invalid_judgments")
 
 

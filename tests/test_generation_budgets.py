@@ -3,7 +3,7 @@ import pytest
 from test_inspect_collect import run_dir, NICKS, SCENARIO_COUNT
 
 def test_per_model_budgets_are_resolved_and_validated():
-    from pipeline.eval.direct_rating import resolve_direct_generation_settings
+    from pipeline.protocol.direct_rating import resolve_direct_generation_settings
     from inspect_pipeline.phases import phase_config
     settings = resolve_direct_generation_settings({"generation": {"reflection": {
         "max_tokens": 512, "per_model": {"api": {"max_tokens": 2048}},

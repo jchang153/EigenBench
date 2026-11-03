@@ -13,9 +13,9 @@ from pathlib import Path
 from inspect_ai import eval as inspect_eval
 
 from pipeline.config import load_run_spec
-from pipeline.eval.direct_rating import (
+from pipeline.protocol.response_cache import count_cached_responses
+from pipeline.protocol.direct_rating import (
     build_direct_assignments,
-    count_cached_responses,
     estimate_direct_calls,
     resolve_direct_sampling_settings,
 )
@@ -37,8 +37,8 @@ from .provenance import check_reusable, write_fingerprint
 from .phases import STORE_RESPONSE
 
 
-def write_call_estimate(spec: dict, run_dir: Path) -> dict:
-    """Exact planned call counts, mirroring scripts/run_collect.py."""
+def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
+    """Count planned generations without collecting or writing artifacts."""
 
     models = spec["models"]
     collection_cfg = spec.get("collection", {})
@@ -78,6 +78,12 @@ def write_call_estimate(spec: dict, run_dir: Path) -> dict:
             **sampling,
         ),
     }
+    return estimate
+
+
+def write_call_estimate(spec: dict, run_dir: Path) -> dict:
+    estimate = estimate_direct_calls_for_spec(spec, run_dir)
+    collection_cfg = spec.get("collection", {})
     estimate_path = Path(collection_cfg["evaluations_path"]).with_name(
         "direct_call_estimate.json"
     )
@@ -174,7 +180,7 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     A judgment needs both its evaluee and its judge, so an edge-per-sample run
     keeps every model live at once. That is fine for hosted models and fatal on
-    one GPU, so local runs phase the work the way the legacy collector did.
+    one GPU, so local runs phase the work in response and judgment phases.
     Every log written, responses included, is added to ``seen_logs`` as it lands.
     """
 

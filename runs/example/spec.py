@@ -38,8 +38,7 @@ RUN_SPEC = {
         "allow_ties": True,
         "group_size": 4,
         "groups": 1,
-        "sampler_mode": "random_judge_group", # random_judge_group | adaptive_inverse_count | uniform
-        "alpha": 2.0, # used for adaptive_inverse_count sampling
+        "sampler_mode": "random_judge_group", # random_judge_group | uniform
         # For direct_rating mode, use sampler_mode="partitioned_random_judge"
         # with group_size=4 and response_redundancy=1 to rate every response
         # exactly once per scenario instead of collecting all N^2 edges.

@@ -13,7 +13,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from pipeline.eval.direct_rating import (
+from pipeline.protocol.direct_rating import (
     DIRECT_PROMPT_VERSION,
     build_direct_rating_prompt,
     build_direct_rating_user_prompt,

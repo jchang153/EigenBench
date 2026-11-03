@@ -1,4 +1,4 @@
-"""The context window a local model was trained for, shared by the native and Inspect engines."""
+"""The context window a local model was trained for, used by Inspect local models."""
 
 from __future__ import annotations
 
