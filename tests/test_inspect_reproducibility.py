@@ -57,6 +57,7 @@ def test_public_copy_preserves_records_and_metrics_and_scrubs_all_archive_member
                                      "refresh_token": "SYNTHETIC-REFRESH-9147"}
     completed_log.eval.model_base_url = "https://user:pass@example.com/v1?token=abc"
     completed_log.eval.metadata["private_note"] = "machine-owner"
+    completed_log.eval.metadata["local_file"] = str(Path.home() / "private-project" / "run.json")
     for sample in completed_log.samples:
         for event in sample.events:
             if event.event == "model":
@@ -70,6 +71,7 @@ def test_public_copy_preserves_records_and_metrics_and_scrubs_all_archive_member
     assert [(s.id, s.epoch) for s in public.samples] == [(s.id, s.epoch) for s in completed_log.samples]
     assert public.results.scores[1].metrics == completed_log.results.scores[1].metrics
     assert public.eval.metadata["source_commit"] == completed_log.eval.metadata["source_commit"]
+    assert public.eval.metadata["local_file"] == "[local-path]"
     assert public.eval.metadata["eigenbench_public_copy"]["benchmark_content_preserved"] is True
     assert public.eval.model_base_url == "https://example.com/v1?token=[redacted]"
     with zipfile.ZipFile(target) as archive:

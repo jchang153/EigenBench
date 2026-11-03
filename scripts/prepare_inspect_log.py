@@ -58,10 +58,9 @@ def prepare_log(source: Path, destination: Path, *, redact: tuple[str, ...] = ()
             return [scrub(item, f"{pointer}/{i}", protected) for i, item in enumerate(value)]
         if not isinstance(value, str):
             return value
-        clean = value
+        clean = _PRIVATE_PATH.sub("[local-path]", value)
         for marker in sorted(private, key=len, reverse=True):
             clean = clean.replace(marker, "[redacted]")
-        clean = _PRIVATE_PATH.sub("[local-path]", clean)
         clean = re.sub(r"(https?://)[^/\s@]+@", r"\1", clean)
         clean = re.sub(r"([?&](?:api_key|token|key|secret)=)[^&\s]+", r"\1[redacted]", clean, flags=re.I)
         if protected and clean != value:
