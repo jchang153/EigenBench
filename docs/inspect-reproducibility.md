@@ -13,14 +13,15 @@ use that public **40-character commit**, rather than a moving branch:
 git clone https://github.com/jchang153/EigenBench.git
 cd EigenBench
 git checkout <validated-40-character-commit>
-uv sync --frozen --python python3.11
+uv sync --frozen --python "$(command -v python3.11)"
 uv run --frozen inspect --version
 git rev-parse HEAD
 git status --porcelain
 ```
 
-Use native Python 3.11 for your operating system. Apple Silicon must use an arm64
-interpreter rather than an older cached Intel interpreter. The lockfile fixes
+Install native Python 3.11 and put it on `PATH` before running these commands.
+Passing its full path prevents uv from choosing an older cached interpreter.
+Apple Silicon requires arm64 Python. The lockfile fixes
 the hosted environment, including Inspect 0.3.279. Its optional Linux local extra
 does not certify GPU serving. The compatibility suite also exercises Inspect
 0.3.268.

@@ -44,12 +44,13 @@ python -m pip install -e .
 # For local vLLM models on Linux: python -m pip install -e ".[local]"
 ```
 
-Or with [uv](https://docs.astral.sh/uv/), from `pyproject.toml`. Add the `local`
+Or with [uv](https://docs.astral.sh/uv/), from `pyproject.toml`, using native
+Python 3.11 on `PATH`. Add the `local`
 extra for vLLM, which local Hugging Face models and adapters need (Linux only):
 
 ```bash
-uv sync --frozen                # hosted models
-uv sync --frozen --extra local  # also local models through vLLM
+uv sync --frozen --python "$(command -v python3.11)"  # hosted models
+uv sync --frozen --extra local --python "$(command -v python3.11)"  # local Linux models
 ```
 
 Set credentials for the providers you use. For example:
