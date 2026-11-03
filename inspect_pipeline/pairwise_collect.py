@@ -98,6 +98,36 @@ def _collect_phased(spec_ref, models, task, eval_kw):
     return [record for _, record in sorted(records, key=lambda item: item[0])], logs + response_logs
 
 
+def _persist_responses(path, records) -> None:
+    """Append newly generated responses to the scenario response cache.
+
+    Pairwise reads only a scenario's last cache row, so each row also carries the
+    scenario's cached responses. A model answering in several groups keeps its first.
+    """
+
+    if not path:
+        return
+    from pipeline.protocol.response_cache import load_cached_responses
+    from pipeline.utils import append_records
+
+    cached = load_cached_responses(path, merge_rows=False)
+    scenarios, new = {}, defaultdict(dict)
+    for record in records:
+        s_idx = int(record["scenario_index"])
+        scenarios[s_idx] = record["scenario"]
+        for side in ("eval1", "eval2"):
+            nick = record[f"{side}_name"]
+            if nick not in cached.get(s_idx, {}):
+                new[s_idx].setdefault(nick, record[f"{side} response"])
+    rows = [
+        {"scenario": scenarios[s_idx], "scenario_index": s_idx,
+         "responses": {**cached.get(s_idx, {}), **responses}}
+        for s_idx, responses in sorted(new.items())
+    ]
+    if rows:
+        append_records(path, rows)
+
+
 def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dict | None = None,
                              scoring: bool = True) -> list[dict]:
     from inspect_ai import eval as inspect_eval
@@ -145,6 +175,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
                       records=records, failure_policy=cfg.get("failure_policy", "strict"),
                       evaluations_path=output)
     write_inspect_run_info(output.parent, logs)
+    _persist_responses(cfg.get("cached_responses_path"), records)
     from .metrics import record_analysis_status
     if scoring:
         record_analysis_status(logs[0], analysis_status)

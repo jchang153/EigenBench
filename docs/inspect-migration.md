@@ -14,7 +14,8 @@ contain prompts, parsing, sampling, assignment planning, and cache reading.
 `collection.cached_responses_path` still accepts historical scenario response
 rows. Direct collection merges partial rows; grouped pairwise collection uses
 the last row for a scenario, preserving their existing contracts. Inspect fills
-missing responses during collection. `--collection-enabled false` performs
+missing responses during collection and appends them to the cache, so later runs
+judge the same text. `--collection-enabled false` performs
 analysis/upload only and never fills a response cache.
 
 Historical direct-rating and pairwise `evaluations.jsonl` files still pass to
