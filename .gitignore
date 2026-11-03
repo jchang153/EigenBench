@@ -5,6 +5,7 @@ __pycache__/
 **/.DS_Store
 deprecated/
 .venv
+*.egg-info/
 tests/
 
 # Run artifacts
@@ -28,6 +29,7 @@ runs/example_extension/*
 
 # Inspect AI default log dir
 logs/
+public-logs/
 
 # Data policy:
 # - Keep constitution files in version control
