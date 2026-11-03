@@ -75,9 +75,12 @@ members, but their generated responses are independent.
 
 ## Sharing logs
 
-Retain private originals. Prepare a new copy of each complete log:
+Retain private originals. Log preparation has a separate source pin containing
+the complete-path privacy fix. Switching here changes the sharing helper; the
+completed logs retain their original collection SHA.
 
 ```bash
+git checkout 28e57cfe98b1b665e5d41df871d5c90232a4b345
 uv run --frozen python scripts/prepare_inspect_log.py \
   logs/nano/<completed-log>.eval public-logs/nano.eval
 uv run --frozen python scripts/prepare_inspect_log.py \
