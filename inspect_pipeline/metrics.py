@@ -205,7 +205,8 @@ def eigenbench_rankings():
         if config is None:
             return {"ranking_available": 0.0, "coverage/scored": 0.0,
                     "coverage/planned": float("nan"), "coverage/scored_fraction": float("nan")}
-        records = [score.score.metadata["record"] for score in scores]
+        # A score without a record could not be rebuilt; it counts as unscored.
+        records = [score.score.metadata["record"] for score in scores if "record" in score.score.metadata]
         if config.get("requested_epochs", 1) == 1 and any(
             score.score.metadata.get("epoch", 1) != 1 for score in scores
         ):
@@ -230,7 +231,12 @@ def eigenbench_rankings():
         fingerprint = records_fingerprint([{"analysis": config}, *records])
         if panel is not None and panel["fingerprint"] == fingerprint:
             return dict(panel["metrics"])
-        values = compute_panel_metrics(records, config)
+        try:
+            values = compute_panel_metrics(records, config)
+        except Exception as exc:  # analysis must never fail the collection it scores
+            warnings.warn(f"Panel analysis failed; collection is unaffected: {exc}",
+                          RuntimeWarning, stacklevel=2)
+            values = {**_coverage_metrics(len(records), config), "ranking_error": 1.0}
         if panel is not None:
             panel.update(fingerprint=fingerprint, metrics=values)
         return values
@@ -300,15 +306,23 @@ def finalize_panel_metrics(ctx: dict, *, logs, records: list[dict], planned, eva
                          ("planned", "logged", "exported", "failed", "omitted", "unstarted")},
         }},
     )
-    result = inspect_eval(tasks=task, model=None, **eval_kwargs)
+    try:
+        result = inspect_eval(tasks=task, model=None, **eval_kwargs)
+    except Exception as exc:
+        result, error = [], exc
+    else:
+        error = result[0].error.message if len(result) == 1 and result[0].error else None
     if len(result) != 1 or result[0].status != "success":
-        raise RuntimeError("Full-panel Inspect scoring failed; collection logs remain available")
+        # The export is already complete; analysis then runs separately after collection.
+        warnings.warn(f"Full-panel Inspect scoring failed; collection is unaffected: {error}",
+                      RuntimeWarning, stacklevel=2)
+        return None
     return result[0]
 
 
 def record_analysis_status(log, status: dict | None) -> None:
     """Explicit fresh-run handoff; never infer artifact completion from files."""
-    if status is None or log.status != "success" or log.results is None:
+    if status is None or log is None or log.status != "success" or log.results is None:
         return
     for result in log.results.scores:
         if result.name == "panel_scorer" and result.metrics.get("artifacts_written") is not None:
