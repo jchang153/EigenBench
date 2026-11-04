@@ -10,7 +10,7 @@ import re
 from inspect_ai.log import EvalLog, read_eval_log, write_eval_log
 
 
-_PRIVATE_PATH = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|/(?:Users|home|private|tmp|var|opt|workspace)/)[^\s\"'<>]*")
+_PRIVATE_PATH = re.compile(r"(?<![\w])(?:[A-Za-z]:[\\/]|/(?:Users|home|root|private|tmp|var|opt|workspace|mnt|srv|data|media|scratch)/)[^\s\"'<>]*")
 _CREDENTIAL = re.compile(r"(?:.*[_-])?(?:api[_-]?key|access[_-]?key(?:[_-]?id)?|token|authorization|password|secret)", re.I)
 _PROTECTED = {"input", "output", "messages", "store", "record", "scenario", "criteria",
               "model_order", "model", "model_name", "base_model"}
@@ -33,7 +33,10 @@ def prepare_log(source: Path, destination: Path, *, redact: tuple[str, ...] = ()
     if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
         raise ValueError("Record the full source SHA with --metadata source_commit=<40-character SHA>")
 
-    private = set(redact) | {str(Path.home()), getpass.getuser()}
+    private = set(redact) | {str(Path.home())}
+    # A username is often a common word ("user"), so only remove it as a path segment or login.
+    user = re.escape(getpass.getuser())
+    login = re.compile(rf"(?:(?<=[/\\~]){user}(?![\w.-])|(?<![\w.-]){user}(?=@))")
     private.update(value for key, value in os.environ.items()
                    if value and re.search(r"(?:API_KEY|ACCESS_TOKEN|HF_TOKEN|SPACE_SECRET)$", key))
     private.discard("")
@@ -58,7 +61,7 @@ def prepare_log(source: Path, destination: Path, *, redact: tuple[str, ...] = ()
             return [scrub(item, f"{pointer}/{i}", protected) for i, item in enumerate(value)]
         if not isinstance(value, str):
             return value
-        clean = _PRIVATE_PATH.sub("[local-path]", value)
+        clean = login.sub("[redacted]", _PRIVATE_PATH.sub("[local-path]", value))
         for marker in sorted(private, key=len, reverse=True):
             clean = clean.replace(marker, "[redacted]")
         clean = re.sub(r"(https?://)[^/\s@]+@", r"\1", clean)
