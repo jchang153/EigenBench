@@ -355,7 +355,8 @@ def collect_direct_ratings_inspect(
                 from .metrics import finalize_panel_metrics
                 panel_log = finalize_panel_metrics(ctx, logs=seen_logs, records=records,
                                                    planned=planned_judgments, eval_kwargs=eval_kw)
-                seen_logs.append(panel_log)
+                if panel_log is not None:
+                    seen_logs.append(panel_log)
             write_inspect_run_info(evaluations_path.parent,
                                    ([panel_log] if panel_log is not None else []) + judge_logs + others)
             target = evaluations_path

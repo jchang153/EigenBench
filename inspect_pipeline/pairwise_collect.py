@@ -170,7 +170,8 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
         ctx = _run_context(spec_ref, panel, build_assignments=False)
         panel_log = finalize_panel_metrics(ctx, logs=logs, records=records,
                                           planned=planned, eval_kwargs=kwargs)
-        logs = [panel_log] + logs
+        if panel_log is not None:
+            logs = [panel_log] + logs
     record_collection(output.parent, "collection", planned=planned, logs=logs,
                       records=records, failure_policy=cfg.get("failure_policy", "strict"),
                       evaluations_path=output)
