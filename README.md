@@ -12,6 +12,13 @@ Compare language models against a constitution: a list of criteria such as
 kindness or honesty. Configure models, scenarios, and criteria in `spec.py`,
 collect judgments, then compute EigenTrust scores and Elo rankings.
 
+The native Inspect default is the direct-rating variant. The paper's grouped
+pairwise method has a separate task. The `numerical_rating/`,
+`numerical_rating_criteria/` and Petri experiments are separate entrypoints and
+are outside the proposed Register task. See the
+[reproduction procedure](docs/inspect-reproducibility.md) for pinned setup,
+complete-run evidence and public log preparation. Register submission is pending.
+
 ## Table of Contents
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -37,12 +44,13 @@ python -m pip install -e .
 # For local vLLM models on Linux: python -m pip install -e ".[local]"
 ```
 
-Or with [uv](https://docs.astral.sh/uv/), from `pyproject.toml`. Add the `local`
+Or with [uv](https://docs.astral.sh/uv/), from `pyproject.toml`, using native
+Python 3.11 on `PATH`. Add the `local`
 extra for vLLM, which local Hugging Face models and adapters need (Linux only):
 
 ```bash
-uv sync                # hosted models
-uv sync --extra local  # also local models through vLLM
+uv sync --frozen --python "$(command -v python3.11)"  # hosted models
+uv sync --frozen --extra local --python "$(command -v python3.11)"  # local Linux models
 ```
 
 Set credentials for the providers you use. For example:
@@ -304,9 +312,13 @@ extension runs share pairwise prompts and solver logic. The
 [protocol reference](docs/inspect-pairwise-protocol.md) documents group sampling,
 shared responses and reflections, decoding settings and the limits of the
 historical run evidence. The native choice scorer reports collection
-diagnostics. Exported records use the existing BTD and EigenTrust analysis.
+diagnostics; the full-panel scorer reports BTD/EigenTrust rankings and uncertainty.
 
 ## Local models and LoRA adapters
+
+The local routing and phase lifecycle have offline regression coverage. Real
+GPU serving and LoRA execution have not been validated for the proposed Register
+release; the commands below describe configuration, not verified serving support.
 
 Use `hf_local:org/base-model` for a base model or
 `hf_local:org/adapter-repo/subfolder` for an adapter. Adapter configuration

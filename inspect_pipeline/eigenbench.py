@@ -39,6 +39,7 @@ from pipeline.config import (
     load_run_spec,
     select_scenarios,
 )
+from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
 from pipeline.protocol.response_cache import load_cached_responses
 from pipeline.protocol.direct_rating import (
     build_direct_assignments,
@@ -306,6 +307,21 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             "cached_responses_path": collection_cfg.get("cached_responses_path"),
             "num_scenarios": len(selected),
             "failure_policy": failure_policy,
+            "evaluation": evaluation_cfg,
+            "panel": [{"nick": nick, **model_identity(value)}
+                      for nick, value in spec_models.items()],
+            "dataset": {
+                **{key: value for key, value in run_spec["dataset"].items() if key != "path"},
+                "selected_sha256": hashlib.sha256(json.dumps(selected).encode()).hexdigest(),
+                **({"source": DATASET_ID, "revision": DATASET_REVISION}
+                   if not run_spec["dataset"].get("path")
+                   and str(run_spec["dataset"].get("id", "")).strip().lower() == "airisk" else {}),
+            },
+            "criteria_sha256": hashlib.sha256(json.dumps(criteria).encode()).hexdigest(),
+            "sampling": sampling,
+            "generation": generation,
+            "max_attempts": max_attempts,
+            "cache_enabled": cache_enabled,
         },
     }
 
