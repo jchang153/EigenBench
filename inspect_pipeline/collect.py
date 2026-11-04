@@ -289,9 +289,13 @@ def collect_direct_ratings_inspect(
     spec_ref: str,
     *,
     models: dict[str, object] | None = None,
+    analysis_status: dict | None = None,
+    scoring: bool = True,
 ) -> list[dict]:
     """Run collection for a run spec and write evaluations.jsonl."""
 
+    if analysis_status is not None:
+        analysis_status.clear()
     spec, run_dir = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
     evaluations_path = Path(collection_cfg["evaluations_path"])
@@ -344,12 +348,21 @@ def collect_direct_ratings_inspect(
             write_evaluations_atomic(evaluations_path, records)
             write_omissions(evaluations_path, planned=planned or len(records) + len(omissions),
                             records=records, omissions=omissions)
-            # Judge logs first: the first is the primary log the viewer opens.
+            # The full-panel score is primary; retain every inference log behind it.
             others = [log for log in seen_logs if all(log is not judge for judge in judge_logs)]
-            write_inspect_run_info(evaluations_path.parent, judge_logs + others)
+            panel_log = None
+            if scoring:
+                from .metrics import finalize_panel_metrics
+                panel_log = finalize_panel_metrics(ctx, logs=seen_logs, records=records,
+                                                   planned=planned_judgments, eval_kwargs=eval_kw)
+                if panel_log is not None:
+                    seen_logs.append(panel_log)
+            write_inspect_run_info(evaluations_path.parent,
+                                   ([panel_log] if panel_log is not None else []) + judge_logs + others)
             target = evaluations_path
         else:
-            task = eigenbench(spec_ref, models=models) if models else eigenbench(spec_ref)
+            task = eigenbench(spec_ref, models=models, panel_metrics=scoring,
+                              write_artifacts=bool(spec.get("training", {}).get("enabled", True)))
             planned_judgments = [sample.metadata for sample in task.dataset]
             logs = inspect_eval(tasks=task, model=None, **eval_kw)
             seen_logs.extend(logs)
@@ -370,6 +383,9 @@ def collect_direct_ratings_inspect(
                       logs=seen_logs, records=records, failure_policy=failure_policy,
                       evaluations_path=evaluations_path)
     write_fingerprint(evaluations_path, ctx)
+    from .metrics import record_analysis_status
+    if scoring:
+        record_analysis_status(panel_log if phased else logs[0], analysis_status)
 
     print(f"Direct collection complete. {len(records)} ratings saved to {target}")
     return records

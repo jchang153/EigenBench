@@ -261,12 +261,36 @@ def pairwise_choice_scorer(num_criteria: int):
     return score
 
 
+def pairwise_record(md: dict, store: dict, criteria: list[str]) -> dict:
+    """One comparison record, shared by export and native scoring."""
+    required = (STORE_EVAL1_RESPONSE, STORE_EVAL2_RESPONSE, STORE_EVAL1_REFLECTION,
+                STORE_EVAL2_REFLECTION, STORE_JUDGE_RESPONSE)
+    if not all(isinstance(store.get(key), str) and store.get(key).strip() for key in required):
+        raise ValueError("Comparison is missing generated content required for export")
+    criteria_text = "\n".join(criteria)
+    return {
+        "constitution": criteria_text,
+        "scenario": md["scenario"],
+        "scenario_index": int(md["scenario_index"]),
+        "eval1": int(md["eval1_idx"]),
+        "eval1_name": md["eval1_nick"],
+        "eval1 response": store.get(STORE_EVAL1_RESPONSE),
+        "eval1 reflection": store.get(STORE_EVAL1_REFLECTION),
+        "eval2": int(md["eval2_idx"]),
+        "eval2_name": md["eval2_nick"],
+        "eval2 response": store.get(STORE_EVAL2_RESPONSE),
+        "eval2 reflection": store.get(STORE_EVAL2_REFLECTION),
+        "judge": int(md["judge_idx"]),
+        "judge_name": md["judge_nick"],
+        "judge response": store.get(STORE_JUDGE_RESPONSE),
+    }
+
+
 def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) -> list[dict]:
     """Build legacy-shaped comparison records from an eval log, in plan order."""
 
     if strict and (log.status != "success" or not log.samples):
         raise RuntimeError(f"pairwise eval did not complete successfully: {log.status}")
-    criteria_text = "\n".join(criteria)
     failures = [
         f"sample {s.id}: {s.error.message}" for s in (log.samples or []) if s.error
     ]
@@ -286,22 +310,7 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
             continue
         rows.append((
             int(md["edge_index"]),
-            {
-                "constitution": criteria_text,
-                "scenario": md["scenario"],
-                "scenario_index": int(md["scenario_index"]),
-                "eval1": int(md["eval1_idx"]),
-                "eval1_name": md["eval1_nick"],
-                "eval1 response": store.get(STORE_EVAL1_RESPONSE),
-                "eval1 reflection": store.get(STORE_EVAL1_REFLECTION),
-                "eval2": int(md["eval2_idx"]),
-                "eval2_name": md["eval2_nick"],
-                "eval2 response": store.get(STORE_EVAL2_RESPONSE),
-                "eval2 reflection": store.get(STORE_EVAL2_REFLECTION),
-                "judge": int(md["judge_idx"]),
-                "judge_name": md["judge_nick"],
-                "judge response": store.get(STORE_JUDGE_RESPONSE),
-            },
+            pairwise_record(md, store, criteria),
         ))
     rows.sort(key=lambda row: row[0])
     return [record for _key, record in rows]
@@ -341,6 +350,8 @@ def build_pairwise_task(
     *,
     models: dict[str, object] | None = None,
     cache: bool | None = None,
+    panel_metrics: bool = True,
+    write_artifacts: bool = False,
     context: dict | None = None,
     samples: list[Sample] | None = None,
     name: str | None = None,
@@ -374,8 +385,16 @@ def build_pairwise_task(
     criteria = ctx["criteria"]
     run_name = sanitize(str(run_spec["name"]))
     task_name = name or f"eigenbench_pairwise_{run_name}"
+    full_panel = samples is None
     if samples is None:
         samples = pairwise_comparison_samples(comparisons, cached=ctx["seed"])
+
+    from inspect_pipeline.metrics import analysis_config, panel_scorer
+    config = (analysis_config(ctx, planned=len(comparisons), write_artifacts=write_artifacts)
+              if panel_metrics and full_panel else None)
+    scorers = [pairwise_choice_scorer(num_criteria=len(criteria))]
+    if config is not None:
+        scorers.append(panel_scorer(config))
 
     return Task(
         dataset=MemoryDataset(samples=list(samples), name=f"eigenbench_pairwise_{run_name}"),
@@ -387,13 +406,14 @@ def build_pairwise_task(
             cache_enabled=ctx["cache_enabled"],
             allow_ties=allow_ties,
         ),
-        scorer=pairwise_choice_scorer(num_criteria=len(criteria)),
+        scorer=scorers,
         name=task_name,
         display_name=f"EigenBench pairwise — {run_spec['name']}",
         metadata={
             "eigenbench": {
                 **ctx["meta"],
                 "protocol": "pairwise_btd",
+                **({"analysis": config} if config is not None else {}),
                 "pairwise_plan_version": PAIRWISE_PLAN_VERSION,
                 **sampling,
                 "allow_ties": allow_ties,
@@ -410,6 +430,7 @@ def eigenbench_pairwise(
     *,
     models: dict[str, object] | None = None,
     cache: bool | None = None,
+    write_artifacts: bool = False,
 ) -> Task:
     """The original pairwise EigenBench protocol, one sample per ordered comparison.
 
@@ -423,7 +444,8 @@ def eigenbench_pairwise(
 
     from inspect_pipeline.eigenbench import with_eval_model
 
-    return build_pairwise_task(spec, models=with_eval_model(spec, models), cache=cache)
+    return build_pairwise_task(spec, models=with_eval_model(spec, models), cache=cache,
+                               write_artifacts=write_artifacts)
 
 
 # Extensions

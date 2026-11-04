@@ -220,3 +220,54 @@ def test_extension_dispatch_uses_the_inspect_extension(tmp_path, monkeypatch):
     monkeypatch.setattr(extend, "extend_run", lambda spec: calls.append(spec))
     main(str(path))
     assert calls == [str(path)]
+
+
+@pytest.mark.parametrize("mode", ["direct_rating", "pairwise_btd"])
+@pytest.mark.parametrize("training_enabled,space_upload,artifacts_written,expect_scoring,expect_training", [
+    (True, False, True, True, False),
+    (True, False, False, True, True),
+    (False, False, False, False, False),
+    (True, True, False, False, False),
+])
+def test_runner_preserves_analysis_ownership(tmp_path, monkeypatch, mode, training_enabled,
+                                            space_upload, artifacts_written, expect_scoring,
+                                            expect_training):
+    from inspect_pipeline import collect, pairwise_collect
+    from scripts import run as runner, run_train
+    import tempfile
+
+    records = tmp_path / "evaluations.jsonl"
+    records.write_text("")
+    output = tmp_path / "train"
+    output.mkdir()
+    # Existing artifacts do not establish that this invocation completed analysis.
+    (output / "eigentrust.json").write_text('{"stale": true}')
+    spec = {
+        "models": {"a": "mockllm/model"}, "evaluation": {"mode": mode},
+        "collection": {"enabled": True, "evaluations_path": str(records)},
+        "training": {"enabled": training_enabled, "output_dir": str(output)},
+        "upload": {"enabled": space_upload, "backend": "valuearena_space",
+                   "secret": "offline-test-only", "git_commit": "test"},
+    }
+    monkeypatch.setattr(runner, "load_run_spec", lambda _: (spec, tmp_path))
+    monkeypatch.setattr(runner, "_write_space_safe_spec", lambda _: str(tmp_path / "space_spec.py"))
+    named_temporary_file = tempfile.NamedTemporaryFile
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile",
+                        lambda *args, **kwargs: named_temporary_file(*args, dir=tmp_path, **kwargs))
+    uploads = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: uploads.append((args, kwargs)))
+    collection_calls, training_calls = [], []
+
+    def collect_panel(spec_ref, *, scoring, analysis_status):
+        collection_calls.append((spec_ref, scoring))
+        if artifacts_written:
+            analysis_status["artifacts_written"] = True
+        return []
+
+    monkeypatch.setattr(collect, "collect_direct_ratings_inspect", collect_panel)
+    monkeypatch.setattr(pairwise_collect, "collect_pairwise_inspect", collect_panel)
+    monkeypatch.setattr(run_train, "main", lambda spec_ref: training_calls.append(spec_ref))
+    runner.main("offline-spec")
+    assert collection_calls == [("offline-spec", expect_scoring)]
+    assert training_calls == (["offline-spec"] if expect_training else [])
+    assert len(uploads) == int(space_upload)

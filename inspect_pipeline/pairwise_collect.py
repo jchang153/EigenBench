@@ -43,6 +43,7 @@ def _collect_phased(spec_ref, models, task, eval_kw):
     from .pairwise import build_pairwise_task, records_from_pairwise_log
 
     prepared = {"spec_ref": spec_ref, "models": models}
+    response_logs = []
     cells = _response_cells(task.dataset)
     responses = {key: md["response"] for key, md in cells.items()
                  if isinstance(md["response"], str) and md["response"].strip()}
@@ -62,6 +63,7 @@ def _collect_phased(spec_ref, models, task, eval_kw):
             metadata={"eigenbench_phase": "response", "evaluee": nick},
         )
         log = _run_one(response_task, loaded, eval_kw)
+        response_logs.append(log)
         for sample in log.samples:
             content = (sample.store or {}).get(STORE_RESPONSE)
             if not isinstance(content, str) or not content.strip():
@@ -93,7 +95,7 @@ def _collect_phased(spec_ref, models, task, eval_kw):
             records_from_pairwise_log(log, task.metadata["eigenbench"]["criteria"]),
         ))
         logs.append(log)
-    return [record for _, record in sorted(records, key=lambda item: item[0])], logs
+    return [record for _, record in sorted(records, key=lambda item: item[0])], logs + response_logs
 
 
 def _persist_responses(path, records) -> None:
@@ -126,13 +128,17 @@ def _persist_responses(path, records) -> None:
         append_records(path, rows)
 
 
-def collect_pairwise_inspect(spec_ref: str, *, models=None) -> list[dict]:
+def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dict | None = None,
+                             scoring: bool = True) -> list[dict]:
     from inspect_ai import eval as inspect_eval
     from pipeline.config import load_run_spec
     from .pairwise import build_pairwise_task, records_from_pairwise_log
 
+    if analysis_status is not None:
+        analysis_status.clear()
     spec, _ = load_run_spec(spec_ref)
-    task = build_pairwise_task(spec_ref, models=models)
+    task = build_pairwise_task(spec_ref, models=models, panel_metrics=scoring,
+                               write_artifacts=bool(spec.get("training", {}).get("enabled", True)))
     cfg = spec["collection"]
     output = Path(cfg["evaluations_path"])
     if output.exists() and output.stat().st_size:
@@ -143,7 +149,8 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None) -> list[dict]:
         log_dir = output.parent / log_dir
     panel = models if models is not None else spec["models"]
     kwargs = eval_kwargs(settings, log_dir)
-    if bool(settings.get("phased", has_local_models(panel))):
+    phased = bool(settings.get("phased", has_local_models(panel)))
+    if phased:
         records, logs = _collect_phased(spec_ref, panel, task, kwargs)
     else:
         logs = inspect_eval(tasks=task, model=None, **kwargs)
@@ -155,6 +162,22 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None) -> list[dict]:
     if output.exists() and output.stat().st_size:
         raise RuntimeError("pairwise output changed during collection; export the logs manually")
     write_evaluations_atomic(output, records)
+    from .coverage import record_collection
+    planned = [sample.metadata for sample in task.dataset]
+    if phased and scoring:
+        from .eigenbench import _run_context
+        from .metrics import finalize_panel_metrics
+        ctx = _run_context(spec_ref, panel, build_assignments=False)
+        panel_log = finalize_panel_metrics(ctx, logs=logs, records=records,
+                                          planned=planned, eval_kwargs=kwargs)
+        if panel_log is not None:
+            logs = [panel_log] + logs
+    record_collection(output.parent, "collection", planned=planned, logs=logs,
+                      records=records, failure_policy=cfg.get("failure_policy", "strict"),
+                      evaluations_path=output)
     write_inspect_run_info(output.parent, logs)
     _persist_responses(cfg.get("cached_responses_path"), records)
+    from .metrics import record_analysis_status
+    if scoring:
+        record_analysis_status(logs[0], analysis_status)
     return records

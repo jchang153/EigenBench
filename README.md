@@ -217,7 +217,9 @@ bootstrap recomputes scores without model fitting.
 | Estimate calls without inference | Add `--estimate-calls` to either command. |
 | Score an existing export | `python scripts/run.py runs/my_run/spec.py --collection-enabled false` |
 
-Set `RUN_SPEC["training"]["enabled"] = False` for collection only. Set
+Set `RUN_SPEC["training"]["enabled"] = False` for collection without aggregate
+scoring or bootstrap in the runner. Native `inspect eval` follows Inspect's scoring
+controls instead; use `--no-score` there to skip all scorers. Set
 `RUN_SPEC["collection"]["enabled"] = False` to skip collection. Inspect reads
 `collection.cached_responses_path` and generates missing responses during collection.
 An analysis-only run never generates responses. See the [migration guide](docs/inspect-migration.md).
@@ -411,7 +413,7 @@ python scripts/run.py runs/my_run/spec.py
 ```
 
 With uploads enabled, the pipeline submits results to the Space for scoring and
-publication instead of running the local training stage. Use the manual upload command for
+publication without fitting rankings locally. Use the manual upload command for
 results you have already scored locally.
 
 ## Outputs

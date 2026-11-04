@@ -143,11 +143,17 @@ def test_invalid_judgment_is_omitted_and_recorded(write_spec, tmp_path, fault, s
     assert part["omissions"][0]["error"].startswith("InvalidJudgmentError(")
     if fault == "truncated":
         assert "stop_reason='max_tokens'" in part["omissions"][0]["error"]
-    assert sorted({entry["role"] for entry in part["logs"]}) == (["judgments", "responses"] if phased else ["judgments"])
+    assert sorted({entry["role"] for entry in part["logs"]}) == (["judgments", "panel_metrics", "responses"] if phased else ["judgments"])
     info = json.loads((tmp_path / "inspect_run.json").read_text())
     assert info["collection_report_file"] == "collection_report.json"
     assert info["log_files"][0] == info["log_file"]
     assert set(info["log_files"]) == {entry["file"] for entry in part["logs"]}
+    from inspect_ai.log import read_eval_log
+    primary = read_eval_log(str(tmp_path / "inspect_logs" / info["log_file"]))
+    native = next(result for result in primary.results.scores if result.name == "panel_scorer")
+    assert native.metrics["ranking_available"].value == 1
+    assert native.metrics["coverage/scored"].value == PLANNED - 1
+    assert native.metrics["coverage/planned"].value == PLANNED
 
     # A finished run with omissions short-circuits instead of looking incomplete.
     assert collect(write_spec(fault=fault, phased=phased)) == records
@@ -455,3 +461,101 @@ def test_native_eval_keeps_inspects_default_when_strict(write_spec, tmp_path):
     assert log.status == "error"
     with pytest.raises(RuntimeError, match="did not complete successfully"):
         export_log(log, evaluations_path=tmp_path / "evaluations.jsonl")
+
+
+def test_native_retry_counts_reused_scores_and_persistent_omission(write_spec, tmp_path):
+    from inspect_ai import eval as inspect_eval, eval_retry
+    from inspect_pipeline.eigenbench import eigenbench
+
+    [first] = inspect_eval(eigenbench, task_args={"spec": write_spec(fault="rating")},
+                           model=None, display="none", log_dir=str(tmp_path / "logs"))
+    [retried] = eval_retry(first, display="none")
+    for log in (first, retried):
+        assert log.status == "success"
+        native = next(result for result in log.results.scores if result.name == "panel_scorer")
+        assert native.metrics["coverage/scored"].value == PLANNED - 1
+        assert native.metrics["coverage/planned"].value == PLANNED
+        assert native.metrics["ranking_available"].value == 1
+        assert native.metrics["a/elo"].value == native.metrics["b/elo"].value == 1500
+
+
+def test_fatal_judgment_error_never_produces_rankings_or_artifacts(write_spec, tmp_path):
+    from inspect_ai import eval as inspect_eval, score
+    from inspect_ai.log import read_eval_log
+    from inspect_pipeline.eigenbench import eigenbench
+    from inspect_pipeline.export import records_from_log
+    from inspect_pipeline.metrics import panel_scorer
+
+    path = Path(write_spec(fault="error"))
+    path.write_text(path.read_text() + "\nRUN_SPEC['training']['enabled'] = True\n")
+    [log] = inspect_eval(eigenbench, task_args={"spec": str(path), "write_artifacts": True}, model=None,
+                         display="none", log_dir=str(tmp_path / "logs"))
+    assert log.status == "success"  # sample failures remain inspectable
+    native = next(result for result in log.results.scores if result.name == "panel_scorer")
+    assert native.metrics["ranking_available"].value == 0
+    assert native.metrics["ranking_refused_errors"].value == 1
+    assert "artifacts_written" not in native.metrics
+    assert not (tmp_path / "direct_rating").exists()
+    with pytest.raises(RuntimeError, match="reasons other than an invalid judgment"):
+        records_from_log(log, failure_policy="omit_invalid_judgments")
+    log = read_eval_log(log.location)
+    with pytest.warns(RuntimeWarning, match="omitted judgments were not validated"):
+        rescored = score(log, panel_scorer(log.eval.metadata["eigenbench"]["analysis"]), action="overwrite")
+    native = next(result for result in rescored.results.scores if result.name == "panel_scorer")
+    assert native.metrics["ranking_available"].value == 0
+    assert "artifacts_written" not in native.metrics
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_direct_collection_only_skips_panel_computation(write_spec, tmp_path, monkeypatch, phased):
+    from inspect_ai.log import read_eval_log
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    import inspect_pipeline.metrics as metrics
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("collection-only run must not fit a panel")
+    monkeypatch.setattr(metrics, "compute_panel_metrics", forbidden)
+    status = {"artifacts_written": True}
+    records = collect_direct_ratings_inspect(write_spec(phased=phased), scoring=False,
+                                              analysis_status=status)
+    assert len(records) == PLANNED
+    assert status == {}
+    manifest = json.loads((tmp_path / "inspect_run.json").read_text())
+    for name in manifest["log_files"]:
+        log = read_eval_log(str(tmp_path / "inspect_logs" / name))
+        assert (log.eval.metadata or {}).get("eigenbench_phase") != "panel_metrics"
+        if log.results:
+            assert all(result.name != "panel_scorer" for result in log.results.scores)
+
+
+def test_native_multiple_targets_never_write_shared_artifacts(write_spec, tmp_path):
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.model import ModelOutput, get_model
+    from inspect_pipeline.eigenbench import eigenbench
+    import re
+
+    path = Path(write_spec())
+    path.write_text(path.read_text() + "\nRUN_SPEC['training']['enabled'] = True\n")
+    def target(nick):
+        def output(input, tools, tool_choice, config):
+            system = input[0].text
+            if system.startswith("Without making"):
+                scenario = int(re.search(r"Scenario number (\d)", input[1].text).group(1))
+                text = f"[c] answer {scenario}"
+            elif system.startswith("You are acting as a judge. Carefully consider the following response"):
+                text = "reflection"
+            else:
+                text = "<criterion_1_rating>7</criterion_1_rating>"
+            return ModelOutput.from_content(model=f"mockllm/{nick}", content=text)
+        return get_model(f"mockllm/{nick}", custom_outputs=output, memoize=False)
+    logs = inspect_eval(eigenbench, task_args={"spec": str(path)},
+                        model=[target("target1"), target("target2")], display="none",
+                        log_dir=str(tmp_path / "logs"))
+    assert len(logs) == 2
+    for log in logs:
+        assert log.status == "success"
+        native = next(result for result in log.results.scores if result.name == "panel_scorer")
+        assert native.metrics["ranking_available"].value == 1
+        assert "artifacts_written" not in native.metrics
+        assert native.metrics["coverage/planned"].value == 18
+    assert not (tmp_path / "direct_rating").exists()

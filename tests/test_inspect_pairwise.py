@@ -407,7 +407,7 @@ def test_fresh_task_reproduces_golden_records_and_prompt_bytes(tmp_path):
     ties = [r for r in rows if r[0] == 0 and r[-1] == 0]
     assert ties and all({r[3], r[4]} == {0, 1} for r in ties)
 
-    scores = {s.name: s.metrics["mean"].value for s in log.results.scores}
+    scores = {s.name: s.metrics["mean"].value for s in log.results.scores if "mean" in s.metrics}
     assert scores["valid"] == 1.0 and scores["parsed"] == 1.0
     assert scores["tie"] + scores["first"] + scores["second"] == pytest.approx(1.0)
     assert scores["tie"] == pytest.approx(sum(r[-1] == 0 for r in rows) / (2 * 24))

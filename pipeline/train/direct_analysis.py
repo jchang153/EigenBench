@@ -72,13 +72,12 @@ def _save_trust_matrix_plot(matrix: np.ndarray, labels: list[str], path: Path) -
     plt.close(fig)
 
 
-def run_direct_bootstrap(
+def compute_direct_bootstrap(
     *,
     records: list[dict],
     model_labels: list[str],
     num_criteria: int,
     direct_cfg: dict,
-    output_dir: Path,
     bootstrap_cfg: dict,
     allow_sparse: bool = False,
     verbose: bool = False,
@@ -87,7 +86,6 @@ def run_direct_bootstrap(
     if n_bootstraps <= 0:
         raise ValueError("bootstrap.n_bootstraps must be positive")
     rng = random.Random(int(bootstrap_cfg.get("random_seed", 42)))
-    output_dir.mkdir(parents=True, exist_ok=True)
     samples = []
     elo_vectors = []
     for sample_idx in range(n_bootstraps):
@@ -118,7 +116,6 @@ def run_direct_bootstrap(
         if verbose and (sample_idx + 1) % 10 == 0:
             print(f"  Direct bootstrap sample {sample_idx + 1}/{n_bootstraps}")
 
-    (output_dir / "samples.json").write_text(json.dumps(samples, indent=2) + "\n", encoding="utf-8")
     elo_array = np.asarray(elo_vectors, dtype=float)
     ddof = 1 if n_bootstraps > 1 else 0
     summary = []
@@ -134,9 +131,19 @@ def run_direct_bootstrap(
             }
         )
     summary.sort(key=lambda row: row["elo_mean"], reverse=True)
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    _save_bootstrap_plot(summary, output_dir / "bootstrap_elo.png")
-    return {"summary": summary, "output_dir": str(output_dir)}
+    return {"summary": summary, "samples": samples}
+
+
+def run_direct_bootstrap(*, output_dir: Path, **kwargs) -> dict:
+    """Save the shared scenario-bootstrap calculation and its existing plot."""
+    result = compute_direct_bootstrap(**kwargs)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("samples", "summary"):
+        (output_dir / f"{name}.json").write_text(
+            json.dumps(result[name], indent=2) + "\n", encoding="utf-8"
+        )
+    _save_bootstrap_plot(result["summary"], output_dir / "bootstrap_elo.png")
+    return {"summary": result["summary"], "output_dir": str(output_dir)}
 
 
 def run_direct_analysis(
@@ -240,8 +247,9 @@ def run_direct_analysis(
     _save_trust_matrix_plot(result.trust_matrix, labels, output_dir / "trust_matrix.png")
 
     bootstrap_cfg = training_cfg.get("bootstrap") or {}
+    bootstrap = None
     if bool(bootstrap_cfg.get("enabled", False)):
-        run_direct_bootstrap(
+        bootstrap = run_direct_bootstrap(
             records=records,
             model_labels=labels,
             num_criteria=num_criteria,
@@ -252,7 +260,7 @@ def run_direct_analysis(
             verbose=verbose,
         )
     print(f"Direct-rating analysis complete. Outputs in {output_dir}")
-    return {"summary": summary, "output_dir": str(output_dir), "result": result}
+    return {"summary": summary, "output_dir": str(output_dir), "result": result, "bootstrap": bootstrap}
 
 
-__all__ = ["run_direct_analysis", "run_direct_bootstrap"]
+__all__ = ["run_direct_analysis", "run_direct_bootstrap", "compute_direct_bootstrap"]

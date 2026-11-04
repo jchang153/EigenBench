@@ -72,7 +72,8 @@ def _log_entry(log) -> dict:
     responses = task_md.get("eigenbench_phase") == "response"
     return {
         "file": Path(str(log.location)).name,
-        "role": "responses" if responses else "judgments",
+        "role": ("panel_metrics" if task_md.get("eigenbench_phase") == "panel_metrics"
+                 else "responses" if responses else "judgments"),
         "model": task_md.get("evaluee") if responses else (task_md.get("eigenbench") or {}).get("judge"),
         "status": log.status,
         "samples": len(samples),

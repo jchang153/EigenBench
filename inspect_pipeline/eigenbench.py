@@ -395,6 +395,8 @@ def eigenbench(
     *,
     models: dict[str, object] | None = None,
     cache: bool | None = None,
+    panel_metrics: bool = True,
+    write_artifacts: bool = False,
 ) -> Task:
     """Direct-rating EigenBench, one sample per directed judge->evaluee edge.
 
@@ -416,9 +418,12 @@ def eigenbench(
             "only; pairwise runs use inspect_pipeline.pairwise."
         )
     criteria = ctx["criteria"]
+    from inspect_pipeline.metrics import analysis_config, panel_scorer
+    samples = build_edge_samples(ctx["assignments"])
+    config = analysis_config(ctx, planned=len(samples), write_artifacts=write_artifacts) if panel_metrics else None
     return Task(
         dataset=MemoryDataset(
-            samples=build_edge_samples(ctx["assignments"]),
+            samples=samples,
             name=f"eigenbench_{ctx['run_spec']['name']}",
         ),
         solver=direct_rating_solver(
@@ -431,11 +436,12 @@ def eigenbench(
             scale_min=ctx["scale_min"],
             scale_max=ctx["scale_max"],
         ),
-        scorer=direct_rating_scorer(),
+        scorer=([direct_rating_scorer(), panel_scorer(config)] if config is not None
+                else direct_rating_scorer()),
         viewer=ViewerConfig(task_samples_view=_samples_view(criteria)),
         name=f"eigenbench_{ctx['run_spec']['name']}",
         display_name=f"EigenBench direct rating — {ctx['run_spec']['name']}",
-        metadata={"eigenbench": ctx["meta"]},
+        metadata={"eigenbench": {**ctx["meta"], **({"analysis": config} if config is not None else {})}},
         # Omitting invalid judgments needs the eval to survive a failed sample; export still vets each.
         fail_on_error=(False if ctx["meta"]["failure_policy"] == "omit_invalid_judgments" else None),
     )
