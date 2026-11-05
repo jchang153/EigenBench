@@ -442,10 +442,15 @@ def eigenbench_pairwise(
     ``--model`` joins the panel as one more judge and evaluee.
     """
 
-    from inspect_pipeline.eigenbench import with_eval_model
+    from inspect_pipeline.eigenbench import resolve_spec_ref, with_eval_model
+    from inspect_pipeline.model_mapping import check_distinct_local_servers
+    from pipeline.config import load_run_spec
 
-    return build_pairwise_task(spec, models=with_eval_model(spec, models), cache=cache,
-                               write_artifacts=write_artifacts)
+    models = with_eval_model(spec, models)
+    # One task serves the whole panel concurrently.
+    check_distinct_local_servers(models if models is not None
+                                 else load_run_spec(resolve_spec_ref(spec))[0]["models"])
+    return build_pairwise_task(spec, models=models, cache=cache, write_artifacts=write_artifacts)
 
 
 # Extensions

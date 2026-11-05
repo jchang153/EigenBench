@@ -153,6 +153,8 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
     if phased:
         records, logs = _collect_phased(spec_ref, panel, task, kwargs)
     else:
+        from .model_mapping import check_distinct_local_servers
+        check_distinct_local_servers(panel)
         logs = inspect_eval(tasks=task, model=None, **kwargs)
         if len(logs) != 1:
             raise RuntimeError("pairwise collection did not return one complete log")

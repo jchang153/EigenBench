@@ -47,7 +47,7 @@ from pipeline.protocol.direct_rating import (
     resolve_direct_sampling_settings,
 )
 
-from inspect_pipeline.model_mapping import model_identity, to_inspect_model
+from inspect_pipeline.model_mapping import check_distinct_local_servers, model_identity, to_inspect_model
 from inspect_pipeline.phases import (
     FAILURE_POLICIES,
     ResponsePool,
@@ -433,6 +433,8 @@ def eigenbench(
             "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "
             "only; pairwise runs use inspect_pipeline.pairwise."
         )
+    # One task serves the whole panel concurrently.
+    check_distinct_local_servers(ctx["models"])
     criteria = ctx["criteria"]
     from inspect_pipeline.metrics import analysis_config, panel_scorer
     samples = build_edge_samples(ctx["assignments"])
