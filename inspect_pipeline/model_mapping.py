@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Mapping
 
 from inspect_ai.model import Model
@@ -79,7 +80,35 @@ def vllm_server_args(model_id: str | None = None, revision: str | None = None) -
     return {key: value for key, value in args.items() if value is not None}
 
 
+@lru_cache(maxsize=None)
+def _root_adapter_base(repo_id: str, revision: str | None) -> str | None:
+    """The base model a root adapter_config.json names, for a reference of no declared kind.
+
+    A full model has no such file. If the Hub cannot be checked, the reference keeps its
+    previous meaning (a full model), as the context-window lookup does.
+    """
+
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
+
+    try:
+        config_path = hf_hub_download(repo_id=repo_id, filename="adapter_config.json", revision=revision)
+    except EntryNotFoundError as exc:
+        if isinstance(exc, LocalEntryNotFoundError):
+            print(f"  Could not check {repo_id} for an adapter; serving it as a full model")
+        return None
+    except Exception as exc:
+        print(f"  Could not check {repo_id} for an adapter ({type(exc).__name__}); serving it as a full model")
+        return None
+    return _base_model_from_adapter_config(config_path)
+
+
 def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
+    if ref.kind is None and not ref.expects_lora:
+        # As the legacy collector did, a repo holding an adapter at its root is a LoRA.
+        base_model_id = _root_adapter_base(ref.repo_id, ref.revision)
+        if base_model_id is not None:
+            ref = replace(ref, kind="lora", base_model_id=base_model_id)
     if not ref.expects_lora:
         model_args: dict = vllm_server_args(ref.repo_id, ref.revision)
         if ref.revision:
@@ -124,6 +153,37 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
         model_args=model_args,
         is_local=True,
     )
+
+
+def check_distinct_local_servers(models: Mapping[str, object]) -> None:
+    """Refuse a concurrent panel that would need one vLLM server at two revisions.
+
+    Inspect keeps one server per base model id, whatever the revision, so two members on
+    the same base at different revisions would both be answered by whichever started
+    first. Phased collection serves one model at a time and is unaffected.
+    """
+
+    by_base: dict[str, dict] = {}
+    for nick, value in models.items():
+        if isinstance(value, Model):
+            continue
+        ref = to_inspect_model(value)
+        if not ref.name.startswith("vllm/"):
+            continue
+        base = ref.name.removeprefix("vllm/").split(":", 1)[0]
+        by_base.setdefault(base, {}).setdefault(ref.model_args.get("revision"), []).append(nick)
+    clashes = []
+    for base, revisions in by_base.items():
+        if len(revisions) > 1:
+            members = [f"{', '.join(nicks)} at {rev or 'the default revision'}"
+                       for rev, nicks in revisions.items()]
+            clashes.append(f"{base} ({'; '.join(members)})")
+    if clashes:
+        raise ValueError(
+            "These local models share a base model at different revisions, which one vLLM "
+            f"server cannot serve together: {'; '.join(clashes)}. "
+            "Set collection.inspect.phased=true to serve them one at a time."
+        )
 
 
 def to_inspect_model(model_ref: object) -> InspectModelRef:

@@ -158,10 +158,25 @@ def build_summary_from_eigentrust(et_scores: list[float], model_names: list[str]
     return rows
 
 
-def find_btd_dir(run_dir: Path) -> Path | None:
-    """Find the btd_d* output directory (picks first match)."""
-    candidates = sorted(run_dir.glob("btd_d*"))
-    return candidates[0] if candidates else None
+def btd_dir_name(spec: dict) -> str:
+    """The published BTD dimension: the first in training.dims, as analysis defaults it."""
+
+    dims = list(spec.get("training", {}).get("dims", [2]))
+    if not dims:
+        raise ValueError("training.dims is empty; nothing to publish")
+    return f"btd_d{int(dims[0])}"
+
+
+def find_btd_dir(run_dir: Path, spec: dict) -> Path | None:
+    """Find the configured BTD dimension's output directory, never another dimension's."""
+
+    name = btd_dir_name(spec)
+    candidates = [run_dir / name]
+    configured = spec.get("training", {}).get("output_dir")
+    if configured:
+        root = Path(str(configured)).expanduser()
+        candidates.append((root if root.is_absolute() else run_dir / root) / name)
+    return next((candidate for candidate in candidates if candidate.is_dir()), None)
 
 
 def find_direct_dir(run_dir: Path, spec: dict) -> Path | None:
@@ -283,9 +298,9 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
         analysis_config = _load_json(analysis_dir / "analysis_config.json", {})
         log = dict(analysis_config)
     else:
-        analysis_dir = find_btd_dir(run_dir)
+        analysis_dir = find_btd_dir(run_dir, spec)
         if analysis_dir is None:
-            raise FileNotFoundError(f"No btd_d* directory found in {run_dir}")
+            raise FileNotFoundError(f"No {btd_dir_name(spec)} directory found in {run_dir}")
         log_path = analysis_dir / "log_train.txt"
         log = parse_log_train(log_path) if log_path.exists() else {}
         analysis_config = {
@@ -418,6 +433,29 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     return meta, summary_data
 
 
+def _load_index(repo_id: str) -> dict:
+    """The dataset's catalogue. Only a missing index.json starts a new one.
+
+    Any other failure (offline, authentication, timeout, unreadable JSON) aborts, so a
+    failed read can never replace the catalogue with only the runs being uploaded.
+    """
+
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
+
+    try:
+        index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset")
+    except LocalEntryNotFoundError:
+        raise  # the Hub was unreachable, not the file absent
+    except EntryNotFoundError:
+        return {"last_updated": None, "runs": []}
+    with open(index_path) as f:
+        index = json.load(f)
+    if not isinstance(index, dict) or not isinstance(index.get("runs"), list):
+        raise ValueError(f"index.json in {repo_id} is not a run catalogue; not overwriting it")
+    return index
+
+
 def upload_run(
     name: str,
     run_dir: Path,
@@ -530,13 +568,7 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
             sys.exit(1)
 
         # Build index.json in staging
-        try:
-            from huggingface_hub import hf_hub_download
-            index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset")
-            with open(index_path) as f:
-                index = json.load(f)
-        except Exception:
-            index = {"last_updated": None, "runs": []}
+        index = _load_index(repo_id)
 
         for name, meta, summary in all_metas:
             entry = build_index_entry(name, meta, summary, group=prefix, note=note)
@@ -584,13 +616,7 @@ def update_index(
 ):
     """Update the global index.json with this run's entry."""
     # Try to fetch existing index
-    try:
-        from huggingface_hub import hf_hub_download
-        index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset")
-        with open(index_path) as f:
-            index = json.load(f)
-    except Exception:
-        index = {"last_updated": None, "runs": []}
+    index = _load_index(repo_id)
 
     entry = build_index_entry(name, meta, summary, group=group, note=note)
     runs = [r for r in index["runs"] if r["slug"] != slug]
