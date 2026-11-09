@@ -168,15 +168,19 @@ def btd_dir_name(spec: dict) -> str:
 
 
 def find_btd_dir(run_dir: Path, spec: dict) -> Path | None:
-    """Find the configured BTD dimension's output directory, never another dimension's."""
+    """Find the configured BTD dimension's output directory, never another dimension's.
+
+    A configured training.output_dir is the only place looked, so an older folder in the
+    run directory cannot stand in for missing results.
+    """
 
     name = btd_dir_name(spec)
-    candidates = [run_dir / name]
     configured = spec.get("training", {}).get("output_dir")
+    root = run_dir
     if configured:
         root = Path(str(configured)).expanduser()
-        candidates.append((root if root.is_absolute() else run_dir / root) / name)
-    return next((candidate for candidate in candidates if candidate.is_dir()), None)
+        root = root if root.is_absolute() else run_dir / root
+    return root / name if (root / name).is_dir() else None
 
 
 def find_direct_dir(run_dir: Path, spec: dict) -> Path | None:
@@ -437,14 +441,17 @@ def _load_index(repo_id: str) -> dict:
     """The dataset's catalogue. Only a missing index.json starts a new one.
 
     Any other failure (offline, authentication, timeout, unreadable JSON) aborts, so a
-    failed read can never replace the catalogue with only the runs being uploaded.
+    failed read can never replace the catalogue with only the runs being uploaded. The
+    read is always fresh: after a timeout the Hub client would otherwise return a stale
+    cached copy, and writing it back would drop runs added since.
     """
 
     from huggingface_hub import hf_hub_download
     from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
 
     try:
-        index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset")
+        index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset",
+                                     force_download=True)
     except LocalEntryNotFoundError:
         raise  # the Hub was unreachable, not the file absent
     except EntryNotFoundError:

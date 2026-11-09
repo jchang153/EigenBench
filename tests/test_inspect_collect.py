@@ -379,6 +379,8 @@ def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
     import inspect_pipeline.eigenbench as task_module
     import inspect_pipeline.model_mapping as mapping
 
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
+
     monkeypatch.setattr(mapping, "resolve_max_model_len", lambda *args: 8192)
     ref = {"provider": "hf_local", "repo_id": "org/base", "revision": "pinned"}
     under_test = get_model("vllm/org/base", revision="changed", memoize=False)
@@ -451,6 +453,8 @@ def test_eval_model_joins_the_panel(run_dir):
 def test_local_models_preserve_vllm_defaults_and_overrides(monkeypatch):
     import inspect_pipeline.model_mapping as mapping
     from inspect_pipeline.model_mapping import VLLM_SERVER_DEFAULTS
+
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
 
     monkeypatch.delenv("EIGENBENCH_TENSOR_PARALLEL_SIZE", raising=False)
     monkeypatch.delenv("EIGENBENCH_VLLM_SERVER_ARGS", raising=False)
@@ -1079,8 +1083,11 @@ def test_phased_extension_closes_after_failed_eval(monkeypatch):
     assert closed == [True]
 
 
-def test_extension_phasing_defaults_to_local_models():
+def test_extension_phasing_defaults_to_local_models(monkeypatch):
+    import inspect_pipeline.model_mapping as mapping
     from inspect_pipeline.extend import _use_phased_extension
+
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
     prepared = {"spec": {"collection": {}}, "models": {"local": "hf_local:org/model"}}
     assert _use_phased_extension(prepared)
     prepared["spec"]["collection"]["inspect"] = {"phased": False}

@@ -84,8 +84,9 @@ def vllm_server_args(model_id: str | None = None, revision: str | None = None) -
 def _root_adapter_base(repo_id: str, revision: str | None) -> str | None:
     """The base model a root adapter_config.json names, for a reference of no declared kind.
 
-    A full model has no such file. If the Hub cannot be checked, the reference keeps its
-    previous meaning (a full model), as the context-window lookup does.
+    Only a confirmed answer is returned (and cached): the base model, or None when the Hub
+    reports no such file. A lookup that cannot complete raises, so it is retried on the
+    next call rather than remembered as a full model.
     """
 
     from huggingface_hub import hf_hub_download
@@ -94,13 +95,17 @@ def _root_adapter_base(repo_id: str, revision: str | None) -> str | None:
     try:
         config_path = hf_hub_download(repo_id=repo_id, filename="adapter_config.json", revision=revision)
     except EntryNotFoundError as exc:
-        if isinstance(exc, LocalEntryNotFoundError):
-            print(f"  Could not check {repo_id} for an adapter; serving it as a full model")
-        return None
+        if not isinstance(exc, LocalEntryNotFoundError):
+            return None  # a full model
+        error = exc
     except Exception as exc:
-        print(f"  Could not check {repo_id} for an adapter ({type(exc).__name__}); serving it as a full model")
-        return None
-    return _base_model_from_adapter_config(config_path)
+        error = exc
+    else:
+        return _base_model_from_adapter_config(config_path)
+    raise RuntimeError(
+        f"Could not check {repo_id} for a root adapter_config.json ({type(error).__name__}: "
+        f"{error}). Retry, or declare kind='base' or kind='lora' for this model in the spec."
+    ) from error
 
 
 def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
@@ -165,9 +170,9 @@ def check_distinct_local_servers(models: Mapping[str, object]) -> None:
 
     by_base: dict[str, dict] = {}
     for nick, value in models.items():
-        if isinstance(value, Model):
-            continue
-        ref = to_inspect_model(value)
+        # A constructed model (e.g. from --model) is checked like a spec reference.
+        ref = InspectModelRef(name=str(value), model_args=value.model_args) if isinstance(value, Model) \
+            else to_inspect_model(value)
         if not ref.name.startswith("vllm/"):
             continue
         base = ref.name.removeprefix("vllm/").split(":", 1)[0]
