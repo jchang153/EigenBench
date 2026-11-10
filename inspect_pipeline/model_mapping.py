@@ -15,12 +15,14 @@ any Inspect provider can be used directly (e.g. ``inspect:anthropic/claude-…``
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import Mapping
 
 from inspect_ai.model import Model
+from inspect_ai.model._providers.vllm import VLLMAPI
 
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
 from pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
@@ -160,6 +162,21 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
     )
 
 
+def with_effective_vllm_revision(ref: InspectModelRef) -> InspectModelRef:
+    """Pin the revision in the arguments Inspect uses to memoize model instances."""
+    if not ref.name.startswith("vllm/") or "revision" in ref.model_args:
+        return ref
+
+    from inspect_ai._util.local_server import merge_env_server_args
+    from inspect_ai.model._providers.vllm import VLLM_DEFAULT_SERVER_ARGS
+
+    defaults = merge_env_server_args(VLLM_DEFAULT_SERVER_ARGS, {}, logging.getLogger(__name__))
+    revision = defaults.get("revision")
+    if revision is None:
+        return ref
+    return replace(ref, model_args={**ref.model_args, "revision": revision})
+
+
 def check_distinct_local_servers(models: Mapping[str, object]) -> None:
     """Refuse a concurrent panel that would need one vLLM server at two revisions.
 
@@ -170,13 +187,18 @@ def check_distinct_local_servers(models: Mapping[str, object]) -> None:
 
     by_base: dict[str, dict] = {}
     for nick, value in models.items():
-        # A constructed model (e.g. from --model) is checked like a spec reference.
-        ref = InspectModelRef(name=str(value), model_args=value.model_args) if isinstance(value, Model) \
-            else to_inspect_model(value)
-        if not ref.name.startswith("vllm/"):
-            continue
-        base = ref.name.removeprefix("vllm/").split(":", 1)[0]
-        by_base.setdefault(base, {}).setdefault(ref.model_args.get("revision"), []).append(nick)
+        if isinstance(value, Model):
+            if not isinstance(value.api, VLLMAPI):
+                continue
+            base = value.api.base_model
+            server_args = value.api.server_args
+        else:
+            ref = with_effective_vllm_revision(to_inspect_model(value))
+            if not ref.name.startswith("vllm/"):
+                continue
+            base = ref.name.removeprefix("vllm/").split(":", 1)[0]
+            server_args = ref.model_args
+        by_base.setdefault(base, {}).setdefault(server_args.get("revision"), []).append(nick)
     clashes = []
     for base, revisions in by_base.items():
         if len(revisions) > 1:
@@ -218,14 +240,20 @@ def model_identity(value: object) -> dict:
     """Requested identity, stable across provider startup and spec reloads."""
 
     if isinstance(value, Model):
+        args = value.model_args
+        if isinstance(value.api, VLLMAPI):
+            revision = value.api.server_args.get("revision")
+            if revision is not None:
+                args = {**args, "revision": revision}
         return {
             "name": str(value),
             # Runtime callbacks and output iterators are not stable provider settings.
-            "args": json.loads(json.dumps(value.model_args, default=lambda _: None)),
+            "args": json.loads(json.dumps(args, default=lambda _: None)),
             "base_url": value.explicit_base_url,
             "config": value.config.model_dump(exclude_none=True),
         }
     ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
+    ref = with_effective_vllm_revision(ref)
     return {"name": ref.name, "args": ref.model_args}
 
 

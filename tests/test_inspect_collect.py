@@ -274,7 +274,11 @@ def test_programmatic_run_and_analysis(run_dir):
     assert (out_dir / "trust_matrix.csv").exists()
 
 
-def test_model_mapping():
+def test_model_mapping(monkeypatch):
+    from inspect_pipeline import model_mapping
+
+    monkeypatch.setattr(model_mapping, "_root_adapter_base", lambda *_: None)
+    monkeypatch.setattr(model_mapping, "resolve_max_model_len", lambda _model, _revision, cap: cap)
     ref = to_inspect_model("anthropic/claude-sonnet-4")
     assert ref.name == "openrouter/anthropic/claude-sonnet-4"
     assert not ref.is_local

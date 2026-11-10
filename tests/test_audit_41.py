@@ -77,6 +77,44 @@ def test_spec_and_cli_models_on_one_base_at_two_revisions_are_refused(mapping):
     mapping.check_distinct_local_servers({"spec": spec_member, "cli": same})
 
 
+def test_vllm_revision_guard_uses_effective_provider_args(mapping, monkeypatch):
+    from inspect_ai.model import get_model
+
+    monkeypatch.setenv("VLLM_DEFAULT_SERVER_ARGS", json.dumps({"revision": "commit-a"}))
+    spec_member = {"provider": "hf_local", "repo_id": "org/base", "kind": "base"}
+    same = get_model("vllm/org/base", revision="commit-a", memoize=False)
+    mapping.check_distinct_local_servers({"spec": spec_member, "cli": same})
+
+    unpinned = get_model("vllm/org/base", revision=None, memoize=False)
+    with pytest.raises(ValueError, match="share a base model at different revisions"):
+        mapping.check_distinct_local_servers({"spec": spec_member, "cli": unpinned})
+
+
+@pytest.mark.parametrize("revision", ["commit-a", None])
+def test_vllm_spec_ignores_models_memoized_under_previous_defaults(mapping, monkeypatch, revision):
+    from inspect_ai.model import get_model
+    from inspect_pipeline.eigenbench import _model_resolver
+
+    spec = {"provider": "hf_local", "repo_id": "org/memoized-base", "kind": "base"}
+    monkeypatch.setenv("VLLM_DEFAULT_SERVER_ARGS", json.dumps({"revision": "commit-b"}))
+    ref = mapping.to_inspect_model(spec)
+    old = get_model(ref.name, **ref.model_args)
+    assert old.api.server_args["revision"] == "commit-b"
+
+    if revision is None:
+        monkeypatch.delenv("VLLM_DEFAULT_SERVER_ARGS")
+        with pytest.raises(RuntimeError, match="different vLLM revision"):
+            _model_resolver({"spec": spec})("spec")
+        fresh = _model_resolver({"spec": spec}, memoize=False)("spec")
+        assert "revision" not in fresh.api.server_args
+    else:
+        monkeypatch.setenv("VLLM_DEFAULT_SERVER_ARGS", json.dumps({"revision": revision}))
+        model = _model_resolver({"spec": spec})("spec")
+        assert model is not old
+        assert model.api.server_args["revision"] == revision
+    assert mapping.model_identity(spec)["args"].get("revision") == revision
+
+
 def test_inconclusive_adapter_lookup_is_retried_not_cached(tmp_path, monkeypatch, mapping):
     """F15: a timed-out lookup must not be remembered as a full model."""
     import huggingface_hub
