@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 import os
 import random
+import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -90,6 +91,17 @@ def build_model_labels(num_models: int, spec_models: dict, extracted_name_map: d
             labels[idx] = name.strip()
 
     return labels
+
+
+def check_model_order(observed, spec_names) -> None:
+    """Raise if records name a spec model at a different index than the spec lists it."""
+    position = {name: idx for idx, name in enumerate(spec_names)}
+    for idx, name in observed:
+        if name in position and position[name] != idx:
+            raise ValueError(
+                f"records give model {name!r} index {idx}, but the spec lists it at index "
+                f"{position[name]}; restore the spec's model order from collection"
+            )
 
 
 def eigentrust_to_elo(trust_scores, num_models: int) -> np.ndarray:
@@ -213,6 +225,9 @@ def group_split_comparisons(comparisons, test_size=0.2, random_state=42, verbose
     random.shuffle(group_keys)
 
     n_test_groups = int(len(group_keys) * test_size)
+    if test_size > 0 and n_test_groups == 0:
+        warnings.warn(f"test_size={test_size} leaves no test groups out of {len(group_keys)}; "
+                      "test loss is not reported", RuntimeWarning, stacklevel=2)
     test_keys = set(group_keys[:n_test_groups])
     train_keys = set(group_keys[n_test_groups:])
 

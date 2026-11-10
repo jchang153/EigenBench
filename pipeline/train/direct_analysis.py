@@ -10,7 +10,7 @@ import numpy as np
 
 from pipeline.trust.direct_rating import build_direct_trust
 from .plots import save_eigenbench_plot
-from .train import eigentrust_to_elo
+from .train import check_model_order, eigentrust_to_elo
 
 
 def _save_matrix(path: Path, matrix: np.ndarray) -> None:
@@ -162,6 +162,12 @@ def run_direct_analysis(
     sampler_mode = str(collection_cfg.get("sampler_mode", "all_to_all")).strip().lower()
     allow_sparse = sampler_mode != "all_to_all" or collection_cfg.get("failure_policy") == "omit_invalid_judgments"
     labels = list(models)
+    check_model_order(
+        ((record[role]["index"], record[role].get("name"))
+         for record in records if record.get("record_type") == "direct_rating"
+         for role in ("judge", "evaluee") if isinstance(record.get(role), dict)),
+        labels,
+    )
     result = build_direct_trust(
         records,
         num_models=len(labels),
