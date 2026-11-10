@@ -597,6 +597,8 @@ def extend_run(
                 prepared, eval_kwargs(inspect_cfg, log_dir), seen_logs,
             )
         else:
+            from inspect_pipeline.model_mapping import check_distinct_local_servers
+            check_distinct_local_servers(prepared["models"])
             task = _extension_task(prepared)
             logs = inspect_eval(tasks=task, model=None, **eval_kwargs(inspect_cfg, log_dir))
             seen_logs.extend(logs)
@@ -650,4 +652,6 @@ def extend_model(
             "this extension requires phased execution; use scripts/extend_run.py "
             "instead of the native Inspect task"
         )
+    from inspect_pipeline.model_mapping import check_distinct_local_servers
+    check_distinct_local_servers(prepared["models"])
     return _extension_task(prepared)

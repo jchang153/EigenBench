@@ -15,11 +15,14 @@ any Inspect provider can be used directly (e.g. ``inspect:anthropic/claude-…``
 from __future__ import annotations
 
 import json
+import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Mapping
 
 from inspect_ai.model import Model
+from inspect_ai.model._providers.vllm import VLLMAPI
 
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
 from pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
@@ -79,7 +82,40 @@ def vllm_server_args(model_id: str | None = None, revision: str | None = None) -
     return {key: value for key, value in args.items() if value is not None}
 
 
+@lru_cache(maxsize=None)
+def _root_adapter_base(repo_id: str, revision: str | None) -> str | None:
+    """The base model a root adapter_config.json names, for a reference of no declared kind.
+
+    Only a confirmed answer is returned (and cached): the base model, or None when the Hub
+    reports no such file. A lookup that cannot complete raises, so it is retried on the
+    next call rather than remembered as a full model.
+    """
+
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
+
+    try:
+        config_path = hf_hub_download(repo_id=repo_id, filename="adapter_config.json", revision=revision)
+    except EntryNotFoundError as exc:
+        if not isinstance(exc, LocalEntryNotFoundError):
+            return None  # a full model
+        error = exc
+    except Exception as exc:
+        error = exc
+    else:
+        return _base_model_from_adapter_config(config_path)
+    raise RuntimeError(
+        f"Could not check {repo_id} for a root adapter_config.json ({type(error).__name__}: "
+        f"{error}). Retry, or declare kind='base' or kind='lora' for this model in the spec."
+    ) from error
+
+
 def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
+    if ref.kind is None and not ref.expects_lora:
+        # As the legacy collector did, a repo holding an adapter at its root is a LoRA.
+        base_model_id = _root_adapter_base(ref.repo_id, ref.revision)
+        if base_model_id is not None:
+            ref = replace(ref, kind="lora", base_model_id=base_model_id)
     if not ref.expects_lora:
         model_args: dict = vllm_server_args(ref.repo_id, ref.revision)
         if ref.revision:
@@ -126,6 +162,57 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
     )
 
 
+def with_effective_vllm_revision(ref: InspectModelRef) -> InspectModelRef:
+    """Pin the revision in the arguments Inspect uses to memoize model instances."""
+    if not ref.name.startswith("vllm/") or "revision" in ref.model_args:
+        return ref
+
+    from inspect_ai._util.local_server import merge_env_server_args
+    from inspect_ai.model._providers.vllm import VLLM_DEFAULT_SERVER_ARGS
+
+    defaults = merge_env_server_args(VLLM_DEFAULT_SERVER_ARGS, {}, logging.getLogger(__name__))
+    revision = defaults.get("revision")
+    if revision is None:
+        return ref
+    return replace(ref, model_args={**ref.model_args, "revision": revision})
+
+
+def check_distinct_local_servers(models: Mapping[str, object]) -> None:
+    """Refuse a concurrent panel that would need one vLLM server at two revisions.
+
+    Inspect keeps one server per base model id, whatever the revision, so two members on
+    the same base at different revisions would both be answered by whichever started
+    first. Phased collection serves one model at a time and is unaffected.
+    """
+
+    by_base: dict[str, dict] = {}
+    for nick, value in models.items():
+        if isinstance(value, Model):
+            if not isinstance(value.api, VLLMAPI):
+                continue
+            base = value.api.base_model
+            server_args = value.api.server_args
+        else:
+            ref = with_effective_vllm_revision(to_inspect_model(value))
+            if not ref.name.startswith("vllm/"):
+                continue
+            base = ref.name.removeprefix("vllm/").split(":", 1)[0]
+            server_args = ref.model_args
+        by_base.setdefault(base, {}).setdefault(server_args.get("revision"), []).append(nick)
+    clashes = []
+    for base, revisions in by_base.items():
+        if len(revisions) > 1:
+            members = [f"{', '.join(nicks)} at {rev or 'the default revision'}"
+                       for rev, nicks in revisions.items()]
+            clashes.append(f"{base} ({'; '.join(members)})")
+    if clashes:
+        raise ValueError(
+            "These local models share a base model at different revisions, which one vLLM "
+            f"server cannot serve together: {'; '.join(clashes)}. "
+            "Set collection.inspect.phased=true to serve them one at a time."
+        )
+
+
 def to_inspect_model(model_ref: object) -> InspectModelRef:
     if isinstance(model_ref, str) and model_ref.startswith(INSPECT_PREFIX):
         name = model_ref.removeprefix(INSPECT_PREFIX).strip()
@@ -153,14 +240,20 @@ def model_identity(value: object) -> dict:
     """Requested identity, stable across provider startup and spec reloads."""
 
     if isinstance(value, Model):
+        args = value.model_args
+        if isinstance(value.api, VLLMAPI):
+            revision = value.api.server_args.get("revision")
+            if revision is not None:
+                args = {**args, "revision": revision}
         return {
             "name": str(value),
             # Runtime callbacks and output iterators are not stable provider settings.
-            "args": json.loads(json.dumps(value.model_args, default=lambda _: None)),
+            "args": json.loads(json.dumps(args, default=lambda _: None)),
             "base_url": value.explicit_base_url,
             "config": value.config.model_dump(exclude_none=True),
         }
     ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
+    ref = with_effective_vllm_revision(ref)
     return {"name": ref.name, "args": ref.model_args}
 
 

@@ -350,7 +350,7 @@ def write_omissions(evaluations_path: str | Path, *, planned: int, records: list
 
 
 def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
-    """Write jsonl with the same serialization as pipeline.utils.transcripts."""
+    """Write records as pipeline.utils.transcripts does: JSONL for .jsonl, else a JSON list."""
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -359,8 +359,11 @@ def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            for record in records:
-                handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+            if target.suffix.lower() == ".jsonl":
+                for record in records:
+                    handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+            else:
+                json.dump(records, handle, indent=4)
         os.replace(tmp_path, target)
     finally:
         if os.path.exists(tmp_path):

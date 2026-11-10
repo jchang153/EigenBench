@@ -34,7 +34,8 @@ def test_mpt_window_caps_inspect_models(configs):
     model_id = "mosaicml/mpt-7b-instruct"
     configs[(model_id, None)] = MptConfig(max_seq_len=2048)
     assert resolve_max_model_len(model_id) == 2048
-    assert to_inspect_model(f"hf_local:{model_id}").model_args["max_model_len"] == 2048
+    ref = to_inspect_model({"provider": "hf_local", "repo_id": model_id, "kind": "base"})
+    assert ref.model_args["max_model_len"] == 2048
 
 
 def test_longer_windows_keep_the_default(configs):

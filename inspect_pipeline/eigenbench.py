@@ -47,7 +47,12 @@ from pipeline.protocol.direct_rating import (
     resolve_direct_sampling_settings,
 )
 
-from inspect_pipeline.model_mapping import model_identity, to_inspect_model
+from inspect_pipeline.model_mapping import (
+    check_distinct_local_servers,
+    model_identity,
+    to_inspect_model,
+    with_effective_vllm_revision,
+)
 from inspect_pipeline.phases import (
     FAILURE_POLICIES,
     ResponsePool,
@@ -157,10 +162,14 @@ def build_edge_samples(assignments: list[dict]) -> list[Sample]:
 
 def _model_resolver(models: dict[str, object], *, memoize: bool = True):
     """Resolve nick -> Model lazily so tasks build without provider API keys."""
+    from inspect_ai.model._providers.vllm import VLLMAPI
 
     # Validate the mapping eagerly; only client creation is deferred.
     refs = {
-        nick: (value if isinstance(value, Model) else to_inspect_model(value))
+        nick: (
+            value if isinstance(value, Model)
+            else with_effective_vllm_revision(to_inspect_model(value))
+        )
         for nick, value in models.items()
     }
     cache: dict[str, Model] = {}
@@ -169,7 +178,18 @@ def _model_resolver(models: dict[str, object], *, memoize: bool = True):
         model = cache.get(nick)
         if model is None:
             ref = refs[nick]
-            model = ref if isinstance(ref, Model) else get_model(ref.name, memoize=memoize, **ref.model_args)
+            if isinstance(ref, Model):
+                model = ref
+            else:
+                model = get_model(ref.name, memoize=memoize, **ref.model_args)
+                # Inspect can reuse an unpinned model memoized under earlier env defaults.
+                if isinstance(model, Model) and isinstance(model.api, VLLMAPI):
+                    revision = ref.model_args.get("revision")
+                    if model.api.server_args.get("revision") != revision:
+                        raise RuntimeError(
+                            f"{ref.name} was resolved with a different vLLM revision than "
+                            "requested. Start a fresh Inspect process after changing the defaults."
+                        )
             # Provider initialization can replace the adapter name with its base.
             # Capture the requested identity before any generation takes place.
             identity = model_identity(ref)
@@ -433,6 +453,8 @@ def eigenbench(
             "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "
             "only; pairwise runs use inspect_pipeline.pairwise."
         )
+    # One task serves the whole panel concurrently.
+    check_distinct_local_servers(ctx["models"])
     criteria = ctx["criteria"]
     from inspect_pipeline.metrics import analysis_config, panel_scorer
     samples = build_edge_samples(ctx["assignments"])
