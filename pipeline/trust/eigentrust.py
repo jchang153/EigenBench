@@ -49,7 +49,7 @@ def damp_matrix(C, alpha: float = 0.0):
 
 
 def _iterate(t, T, tol: float, max_iter: int, verbose: bool):
-    """Power iteration from ``t``; return the last iterate and whether it settled."""
+    """Return the last iterate and whether it converged."""
     steps = tqdm(range(max_iter)) if verbose else range(max_iter)
     for _ in steps:
         t_next = t @ T
@@ -61,15 +61,7 @@ def _iterate(t, T, tol: float, max_iter: int, verbose: bool):
 
 def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True,
                fallback_alpha: float = 0.05):
-    """Stationary trust vector of ``C``.
-
-    Some trust matrices make undamped iteration cycle between answers, so the
-    result would depend on ``max_iter`` (#41 F03). If iteration has not settled
-    after ``max_iter`` steps, damping by ``fallback_alpha`` is switched on and
-    iteration continues from the current vector. A damped matrix has one
-    stationary vector, so the result no longer depends on the step count.
-    Matrices that settle within ``max_iter`` give exactly the undamped result.
-    """
+    """Stationary trust vector of ``C``; damps by ``fallback_alpha`` if not converged after ``max_iter``."""
     t = torch.full((C.size(0),), 1.0 / C.size(0), device=C.device, dtype=C.dtype)
     t, settled = _iterate(t, damp_matrix(C, alpha), tol, max_iter, verbose)
     if settled:
@@ -78,7 +70,7 @@ def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, v
         raise RuntimeError(f"EigenTrust did not converge within {max_iter} iterations (alpha={alpha})")
     warnings.warn(
         f"EigenTrust did not converge within {max_iter} iterations; "
-        f"continuing with damping alpha={fallback_alpha} (#41 F03)",
+        f"continuing with damping alpha={fallback_alpha}",
         RuntimeWarning,
         stacklevel=2,
     )

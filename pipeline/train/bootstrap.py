@@ -41,8 +41,6 @@ def _build_model_and_loader(
         )
         return model, loader, True, True
 
-    # The paper fits Bradley-Terry-Davidson only. Plain BT has no tie outcome
-    # for the 0/1/2 verdicts, and its route crashed on criterion rows (#41 F05).
     raise ValueError(f"Unsupported model kind: {model_kind!r}; EigenBench rankings use 'btd_ties'")
 
 

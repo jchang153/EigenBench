@@ -1,4 +1,4 @@
-"""Scoring changes for the #41 audit flags F01, F02, F03 and F05 (offline)."""
+"""Comparison cleaning, EigenTrust damping and the BT route."""
 
 import sys
 from collections import Counter
@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def planned_rows(prefer):
-    """F01's fixture: two models, uniform sampling, group_size=2, groups=3, seed 42."""
     from inspect_pipeline.pairwise_plan import pairwise_comparisons, plan_pairwise_groups
 
     groups = plan_pairwise_groups([(0, "s0")], ["a", "b"], sampler_mode="uniform",
@@ -22,12 +21,11 @@ def planned_rows(prefer):
 
 
 def test_repeated_rounds_of_one_pair_are_all_kept():
-    """F01: the planner's six valid comparisons used to be cleaned to none."""
     from pipeline.utils.comparisons import handle_inconsistencies_with_ties_criteria
 
-    rows, groups = planned_rows(lambda p: 1 if p["eval1_idx"] == 0 else 2)  # always prefers model 0
+    rows, groups = planned_rows(lambda p: 1 if p["eval1_idx"] == 0 else 2)
     assert len(rows) == 6
-    for given in (groups, None):  # records without group_id are matched in record order
+    for given in (groups, None):
         cleaned = handle_inconsistencies_with_ties_criteria(rows, given)
         assert Counter(map(tuple, cleaned)) == Counter(map(tuple, rows))
 
@@ -39,7 +37,7 @@ def test_strict_inconsistency_ties_only_its_own_round():
     first = groups[0]
     for row, group in zip(rows, groups):
         if group == first:
-            row[-1] = 1  # picks whichever response is shown first, in both orders
+            row[-1] = 1
     cleaned = handle_inconsistencies_with_ties_criteria(rows, groups)
     assert [row[-1] for row in cleaned].count(0) == 2
     assert len(cleaned) == 6
@@ -53,22 +51,20 @@ def test_same_order_repeats_are_not_turned_into_ties():
 
 
 def test_order_rule_matches_the_paper_for_one_pair():
-    """Section 3.4: opposite positions tie both trits; a one-sided tie is left as is."""
     from pipeline.utils.comparisons import handle_inconsistencies_with_ties_criteria
 
     def clean(first, second):
         return [row[-1] for row in handle_inconsistencies_with_ties_criteria(
             [[0, 0, 0, 1, 2, first], [0, 0, 0, 2, 1, second]])]
 
-    assert clean(1, 2) == [1, 2]  # consistent
-    assert clean(1, 1) == [0, 0]  # strict inconsistency
+    assert clean(1, 2) == [1, 2]
+    assert clean(1, 1) == [0, 0]
     assert clean(2, 2) == [0, 0]
-    assert clean(1, 0) == [1, 0]  # weak inconsistency
+    assert clean(1, 0) == [1, 0]
     assert clean(0, 0) == [0, 0]
 
 
 def test_gaps_in_model_ids_keep_their_comparisons():
-    """F02: IDs 0 and 2 with no model 1 used to drop both rows."""
     from pipeline.utils.comparisons import handle_inconsistencies_with_ties_criteria
 
     rows = [[0, 5, 0, 0, 2, 1], [0, 5, 0, 2, 0, 2]]
@@ -98,7 +94,6 @@ CYCLING = torch.tensor([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtyp
 
 
 def test_eigentrust_damps_only_after_failing_to_converge():
-    """F03: the undamped answer used to flip between 1000 and 1001 iterations."""
     from pipeline.trust.eigentrust import damp_matrix, eigentrust
 
     with pytest.warns(RuntimeWarning, match="continuing with damping alpha=0.05"):
@@ -122,7 +117,6 @@ def test_eigentrust_is_unchanged_when_it_converges(recwarn):
 
 
 def test_bootstrap_refuses_plain_bt():
-    """F05: the paper fits BTD only; the BT route crashed on criterion rows."""
     from pipeline.train.bootstrap import _build_model_and_loader
 
     with pytest.raises(ValueError, match="btd_ties"):

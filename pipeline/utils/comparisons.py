@@ -73,9 +73,8 @@ def extract_comparisons_with_ties_criteria(
     """Extract [criterion, scenario, judge, eval1, eval2, score] rows from evaluations.
 
     ``num_criteria`` is required and used as a hard cap. Any criterion tags
-    above this value are ignored. With ``return_groups``, also return each
-    row's record ``group_id`` (``None`` when absent) as the last value, for
-    ``handle_inconsistencies_with_ties_criteria``.
+    above this value are ignored. ``return_groups`` also returns each row's
+    ``group_id``.
     """
     if num_criteria is None:
         raise ValueError("num_criteria is required.")
@@ -195,17 +194,9 @@ def extract_comparisons_with_ties_criteria(
 
 
 def _resolve_presentations(rows):
-    """Apply the paper's order rule to one judge's view of one pair.
-
-    ``rows`` holds ``(group, row)`` for one criterion, scenario, judge and
-    unordered model pair. Each "A then B" row is matched with a "B then A" row
-    from the same group, in order. A matched pair where the judge picked the
-    same position both times (a strict inconsistency) becomes two ties. Rows in
-    the same order are never matched with each other, and unmatched rows are
-    kept as they are.
-    """
+    """Match each A-B row with a B-A row of the same group; ties both if the judge picked the same position."""
     resolved = [row for _group, row in rows]
-    waiting = defaultdict(list)  # (group, presentation order) -> positions not yet matched
+    waiting = defaultdict(list)
     for n, (group, row) in enumerate(rows):
         forward = (row[3], row[4])
         partners = waiting[(group, forward[::-1])]
@@ -221,14 +212,7 @@ def _resolve_presentations(rows):
 
 
 def handle_inconsistencies_with_ties_criteria(comparisons, groups=None):
-    """Convert strict order-inconsistent transpose pairs into ties.
-
-    ``groups`` optionally gives each row's sampling group (``group_id`` in the
-    records). Reverse presentations are matched only within the same group, so
-    repeated rounds of a pair are each cleaned on their own (#41 F01). Rows
-    without a group are matched in record order. Model and criterion IDs are
-    taken as observed, so gaps in either keep their rows (#41 F02).
-    """
+    """Convert strict order-inconsistent transpose pairs into ties, matching within ``groups`` if given."""
 
     if groups is not None and len(groups) != len(comparisons):
         raise ValueError("groups must give one entry per comparison")
@@ -240,7 +224,7 @@ def handle_inconsistencies_with_ties_criteria(comparisons, groups=None):
         group = groups[n] if groups is not None else None
         buckets[(c, l, judge, min(eval1, eval2), max(eval1, eval2))].append((group, row))
 
-    # Keep the historical output order: criterion, scenario as listed by set(), judge, pair.
+    # Same output order as before.
     scenario_order = {l: n for n, l in enumerate(list(set(row[1] for row in comparisons)))}
     comparisons_new = []
     for key in sorted(buckets, key=lambda k: (k[0], scenario_order[k[1]], k[2], k[3], k[4])):

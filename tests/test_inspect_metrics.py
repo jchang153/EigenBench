@@ -101,7 +101,6 @@ def test_effective_model_order_and_self_setting(tmp_path):
 
 
 def test_repeated_comparisons_are_kept_by_cleaning(tmp_path):
-    # Repeats of a pair used to be dropped by cleaning, leaving no ranking (#41 F01).
     rows, config = _fixture("pairwise", tmp_path)
     config["planned"] *= 2
     actual = compute_panel_metrics(rows + rows, config)
