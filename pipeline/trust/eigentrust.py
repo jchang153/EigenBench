@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 from tqdm import tqdm
 
@@ -46,26 +48,35 @@ def damp_matrix(C, alpha: float = 0.0):
     return (1 - alpha) * C + alpha * E
 
 
-def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True):
-    T = damp_matrix(C, alpha)
-    t = torch.full(
-        (T.size(0),),
-        1.0 / T.size(0),
-        device=T.device,
-        dtype=T.dtype,
+def _iterate(t, T, tol: float, max_iter: int, verbose: bool):
+    """Return the last iterate and whether it converged."""
+    steps = tqdm(range(max_iter)) if verbose else range(max_iter)
+    for _ in steps:
+        t_next = t @ T
+        if torch.norm(t_next - t, p=1) < tol:
+            return t_next, True
+        t = t_next
+    return t, False
+
+
+def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True,
+               fallback_alpha: float = 0.05):
+    """Stationary trust vector of ``C``; damps by ``fallback_alpha`` if not converged after ``max_iter``."""
+    t = torch.full((C.size(0),), 1.0 / C.size(0), device=C.device, dtype=C.dtype)
+    t, settled = _iterate(t, damp_matrix(C, alpha), tol, max_iter, verbose)
+    if settled:
+        return t
+    if not 0 < fallback_alpha <= 1 or fallback_alpha <= alpha:
+        raise RuntimeError(f"EigenTrust did not converge within {max_iter} iterations (alpha={alpha})")
+    warnings.warn(
+        f"EigenTrust did not converge within {max_iter} iterations; "
+        f"continuing with damping alpha={fallback_alpha}",
+        RuntimeWarning,
+        stacklevel=2,
     )
-
-    if verbose:
-        for _ in tqdm(range(max_iter)):
-            t_next = t @ T
-            if torch.norm(t_next - t, p=1) < tol:
-                break
-            t = t_next
-    else:
-        for _ in range(max_iter):
-            t_next = t @ T
-            if torch.norm(t_next - t, p=1) < tol:
-                break
-            t = t_next
-
-    return t_next
+    t, settled = _iterate(t, damp_matrix(C, fallback_alpha), tol, max_iter, verbose)
+    if not settled:
+        raise RuntimeError(
+            f"EigenTrust did not converge within {max_iter} damped iterations (alpha={fallback_alpha})"
+        )
+    return t

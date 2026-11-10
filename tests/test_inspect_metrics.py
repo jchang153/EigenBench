@@ -100,17 +100,15 @@ def test_effective_model_order_and_self_setting(tmp_path):
     assert result["a/eigentrust"] != baseline["a/eigentrust"]
 
 
-def test_legacy_cleaning_loss_is_explicit_and_never_invented(tmp_path):
+def test_repeated_comparisons_are_kept_by_cleaning(tmp_path):
     rows, config = _fixture("pairwise", tmp_path)
     config["planned"] *= 2
-    with pytest.warns(RuntimeWarning, match="retained no rows"):
-        actual = compute_panel_metrics(rows + rows, config)
+    actual = compute_panel_metrics(rows + rows, config)
     assert actual["coverage/scored"] == 108
     assert actual["comparisons_parsed"] == 216
-    assert actual["comparisons_retained"] == 0
-    assert actual["comparisons_dropped"] == 216
-    assert actual["ranking_available"] == 0
-    assert not any(key.endswith("/elo") for key in actual)
+    assert actual["comparisons_retained"] == 216
+    assert actual["comparisons_dropped"] == 0
+    assert actual["ranking_available"] == 1
 
 
 def test_rectangular_criteria_fails_before_fitting(tmp_path, monkeypatch):

@@ -3,12 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from itertools import combinations
 import re
-
-
-def _get_pairs(n: int):
-    return list(combinations(range(n), 2))
 
 
 def _extract_valid_criterion_scores(response: str):
@@ -73,11 +68,13 @@ def extract_comparisons_with_ties_criteria(
     num_criteria: int,
     verbose: bool = False,
     return_name_map: bool = False,
+    return_groups: bool = False,
 ):
     """Extract [criterion, scenario, judge, eval1, eval2, score] rows from evaluations.
 
     ``num_criteria`` is required and used as a hard cap. Any criterion tags
-    above this value are ignored.
+    above this value are ignored. ``return_groups`` also returns each row's
+    ``group_id``.
     """
     if num_criteria is None:
         raise ValueError("num_criteria is required.")
@@ -86,6 +83,7 @@ def extract_comparisons_with_ties_criteria(
         raise ValueError("num_criteria must be positive.")
 
     comparisons = []
+    groups = []
     data_cleaned = []
     parsed_rows = []
     prefix_len_counts = {}
@@ -160,6 +158,7 @@ def extract_comparisons_with_ties_criteria(
             comparisons.append(
                 [j - 1, item["scenario_index"], item["judge"], item["eval1"], item["eval2"], score]
             )
+            groups.append(item.get("group_id"))
             matched_any = True
 
         if prefix_len > max_j:
@@ -181,61 +180,55 @@ def extract_comparisons_with_ties_criteria(
             print(f"Ignored criterion tags above detected/provided count: {ignored_extra_tags}")
         print(f"\nTotal comparisons generated: {len(comparisons)}/{len(data) * detected_count}")
 
+    result = (comparisons, data_cleaned)
     if return_name_map:
         model_name_map = {
             idx: counter.most_common(1)[0][0]
             for idx, counter in name_counts_by_index.items()
             if counter
         }
-        return comparisons, data_cleaned, model_name_map
+        result += (model_name_map,)
+    if return_groups:
+        result += (groups,)
+    return result
 
-    return comparisons, data_cleaned
+
+def _resolve_presentations(rows):
+    """Match each A-B row with a B-A row of the same group; ties both if the judge picked the same position."""
+    resolved = [row for _group, row in rows]
+    waiting = defaultdict(list)
+    for n, (group, row) in enumerate(rows):
+        forward = (row[3], row[4])
+        partners = waiting[(group, forward[::-1])]
+        if not partners:
+            waiting[(group, forward)].append(n)
+            continue
+        m = partners.pop(0)
+        earlier = resolved[m]
+        if row[-1] != 0 and row[-1] == earlier[-1]:
+            resolved[m] = list(earlier[:-1]) + [0]
+            resolved[n] = list(row[:-1]) + [0]
+    return resolved
 
 
-def handle_inconsistencies_with_ties_criteria(comparisons):
-    """Convert strict order-inconsistent transpose pairs into ties."""
+def handle_inconsistencies_with_ties_criteria(comparisons, groups=None):
+    """Convert strict order-inconsistent transpose pairs into ties, matching within ``groups`` if given."""
 
-    num_criteria = len(set([i[0] for i in comparisons]))
-    scenarios = list(set([i[1] for i in comparisons]))
-    num_models = len(set([i[2] for i in comparisons] + [i[3] for i in comparisons] + [i[4] for i in comparisons]))
+    if groups is not None and len(groups) != len(comparisons):
+        raise ValueError("groups must give one entry per comparison")
+    buckets = defaultdict(list)
+    for n, row in enumerate(comparisons):
+        c, l, judge, eval1, eval2 = row[:5]
+        if eval1 == eval2:
+            continue
+        group = groups[n] if groups is not None else None
+        buckets[(c, l, judge, min(eval1, eval2), max(eval1, eval2))].append((group, row))
 
+    # Same output order as before.
+    scenario_order = {l: n for n, l in enumerate(list(set(row[1] for row in comparisons)))}
     comparisons_new = []
-
-    for c in range(num_criteria):
-        criteria_set = [i for i in comparisons if i[0] == c]
-
-        for l in scenarios:
-            scenario_set = [i for i in criteria_set if i[1] == l]
-
-            for judge in range(num_models):
-                judge_set = [i for i in scenario_set if i[2] == judge]
-                if len(judge_set) == 0:
-                    continue
-
-                for eval1, eval2 in _get_pairs(num_models):
-                    subset = [
-                        i for i in judge_set
-                        if (i[3] == eval1 and i[4] == eval2) or (i[4] == eval1 and i[3] == eval2)
-                    ]
-
-                    if len(subset) == 2:
-                        j, k = subset[0], subset[1]
-                        if j[-1] == 0:
-                            comparisons_new.append(j)
-                        elif j[-1] != k[-1]:
-                            comparisons_new.append(j)
-                        else:
-                            comparisons_new.append([c, l, judge, j[3], j[4], 0])
-
-                        if k[-1] == 0:
-                            comparisons_new.append(k)
-                        elif j[-1] != k[-1]:
-                            comparisons_new.append(k)
-                        else:
-                            comparisons_new.append([c, l, judge, k[3], k[4], 0])
-                    elif len(subset) == 1:
-                        comparisons_new.append(subset[0])
-
+    for key in sorted(buckets, key=lambda k: (k[0], scenario_order[k[1]], k[2], k[3], k[4])):
+        comparisons_new.extend(_resolve_presentations(buckets[key]))
     return comparisons_new
 
 __all__ = [
