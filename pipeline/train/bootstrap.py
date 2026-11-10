@@ -10,9 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from .bt_models import CriteriaVectorBTD, VectorBT
+from .bt_models import CriteriaVectorBTD
 from .train import (
-    Comparisons,
     CriteriaComparisons,
     eigentrust_to_elo,
     train_vector_bt,
@@ -42,17 +41,7 @@ def _build_model_and_loader(
         )
         return model, loader, True, True
 
-    if model_kind == "bt":
-        flattened = [[0] + row[1:] for row in sampled_comparisons]
-        model = VectorBT(num_models, dim)
-        loader = DataLoader(
-            Comparisons(flattened),
-            batch_size=batch_size,
-            shuffle=True,
-        )
-        return model, loader, False, False
-
-    raise ValueError(f"Unsupported model kind: {model_kind}")
+    raise ValueError(f"Unsupported model kind: {model_kind!r}; EigenBench rankings use 'btd_ties'")
 
 
 def _train_one_sample(
@@ -223,10 +212,13 @@ def _save_bootstrap_plot(summary_rows: list[dict], save_path: Path) -> None:
     upper = np.array([r["elo_ci_upper"] for r in summary_rows])
 
     x = np.arange(len(summary_rows))
-    yerr = np.vstack([means - lower, upper - means])
 
     fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
-    ax.errorbar(x, means, yerr=yerr, fmt="o", capsize=4)
+    # The mean can fall outside its percentile interval, so draw the interval directly.
+    ax.vlines(x, lower, upper, color="C0")
+    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
+              np.concatenate([x, x]) + 0.1, color="C0")
+    ax.plot(x, means, "o", color="C0")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylabel("EigenBench Elo")

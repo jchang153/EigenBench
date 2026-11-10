@@ -331,55 +331,63 @@ def build_direct_assignments(
                     )
             continue
 
-        used_judges_by_evaluee = [set() for _ in range(num_models)]
-        for sampling_round in range(response_redundancy):
-            round_assignments = None
-            for _attempt in range(1000):
-                shuffled = list(range(num_models))
-                rng.shuffle(shuffled)
-                groups = [
-                    shuffled[start : start + group_size]
-                    for start in range(0, num_models, group_size)
-                ]
-                candidate_assignments = []
-                for group_index, eval_idxs in enumerate(groups):
-                    eligible_judges = [
-                        judge_idx
-                        for judge_idx in range(num_models)
-                        if (include_self or judge_idx not in eval_idxs)
-                        and all(
-                            judge_idx not in used_judges_by_evaluee[eval_idx]
-                            for eval_idx in eval_idxs
-                        )
+        # Early rounds can leave no valid way to finish; restart the scenario's rounds if so.
+        for _restart in range(100):
+            scenario_assignments = []
+            used_judges_by_evaluee = [set() for _ in range(num_models)]
+            for sampling_round in range(response_redundancy):
+                round_assignments = None
+                for _attempt in range(1000):
+                    shuffled = list(range(num_models))
+                    rng.shuffle(shuffled)
+                    groups = [
+                        shuffled[start : start + group_size]
+                        for start in range(0, num_models, group_size)
                     ]
-                    if not eligible_judges:
+                    candidate_assignments = []
+                    for group_index, eval_idxs in enumerate(groups):
+                        eligible_judges = [
+                            judge_idx
+                            for judge_idx in range(num_models)
+                            if (include_self or judge_idx not in eval_idxs)
+                            and all(
+                                judge_idx not in used_judges_by_evaluee[eval_idx]
+                                for eval_idx in eval_idxs
+                            )
+                        ]
+                        if not eligible_judges:
+                            break
+                        judge_idx = rng.choice(eligible_judges)
+                        candidate_assignments.append(
+                            {
+                                "scenario_index": scenario_index,
+                                "scenario": scenario,
+                                "judge_idx": judge_idx,
+                                "judge_nick": model_nicks[judge_idx],
+                                "eval_idxs": list(eval_idxs),
+                                "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+                                "sampler_mode": mode,
+                                "sampling_round": sampling_round,
+                                "group_index": group_index,
+                            }
+                        )
+                    if len(candidate_assignments) == len(groups):
+                        round_assignments = candidate_assignments
                         break
-                    judge_idx = rng.choice(eligible_judges)
-                    candidate_assignments.append(
-                        {
-                            "scenario_index": scenario_index,
-                            "scenario": scenario,
-                            "judge_idx": judge_idx,
-                            "judge_nick": model_nicks[judge_idx],
-                            "eval_idxs": list(eval_idxs),
-                            "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
-                            "sampler_mode": mode,
-                            "sampling_round": sampling_round,
-                            "group_index": group_index,
-                        }
-                    )
-                if len(candidate_assignments) == len(groups):
-                    round_assignments = candidate_assignments
+                if round_assignments is None:
                     break
-            if round_assignments is None:
-                raise ValueError(
-                    "could not construct distinct partitioned direct assignments; "
-                    "reduce response_redundancy or group_size"
-                )
-            assignments.extend(round_assignments)
-            for assignment in round_assignments:
-                for eval_idx in assignment["eval_idxs"]:
-                    used_judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
+                scenario_assignments.extend(round_assignments)
+                for assignment in round_assignments:
+                    for eval_idx in assignment["eval_idxs"]:
+                        used_judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
+            else:
+                break
+        else:
+            raise ValueError(
+                "could not construct distinct partitioned direct assignments; "
+                "reduce response_redundancy or group_size"
+            )
+        assignments.extend(scenario_assignments)
     return assignments
 
 

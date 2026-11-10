@@ -283,6 +283,7 @@ def pairwise_record(md: dict, store: dict, criteria: list[str]) -> dict:
         "judge": int(md["judge_idx"]),
         "judge_name": md["judge_nick"],
         "judge response": store.get(STORE_JUDGE_RESPONSE),
+        "group_id": md.get("group_id"),
     }
 
 
