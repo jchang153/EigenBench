@@ -53,14 +53,15 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
                           train_cfg: dict, output_root=None, verbose: bool = False,
                           model_order: list[str] | None = None) -> dict:
     validate_pairwise_ranking(train_cfg, num_criteria)
-    comparisons, _, extracted_name_map = extract_comparisons_with_ties_criteria(
+    comparisons, _, extracted_name_map, groups = extract_comparisons_with_ties_criteria(
         data,
         num_criteria=num_criteria,
         verbose=verbose,
         return_name_map=True,
+        return_groups=True,
     )
     parsed_count = len(comparisons)
-    comparisons = handle_inconsistencies_with_ties_criteria(comparisons)
+    comparisons = handle_inconsistencies_with_ties_criteria(comparisons, groups)
     diagnostics = {"comparisons_parsed": parsed_count,
                    "comparisons_retained": len(comparisons),
                    "comparisons_dropped": parsed_count - len(comparisons)}

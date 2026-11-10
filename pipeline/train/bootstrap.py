@@ -10,9 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from .bt_models import CriteriaVectorBTD, VectorBT
+from .bt_models import CriteriaVectorBTD
 from .train import (
-    Comparisons,
     CriteriaComparisons,
     eigentrust_to_elo,
     train_vector_bt,
@@ -42,17 +41,9 @@ def _build_model_and_loader(
         )
         return model, loader, True, True
 
-    if model_kind == "bt":
-        flattened = [[0] + row[1:] for row in sampled_comparisons]
-        model = VectorBT(num_models, dim)
-        loader = DataLoader(
-            Comparisons(flattened),
-            batch_size=batch_size,
-            shuffle=True,
-        )
-        return model, loader, False, False
-
-    raise ValueError(f"Unsupported model kind: {model_kind}")
+    # The paper fits Bradley-Terry-Davidson only. Plain BT has no tie outcome
+    # for the 0/1/2 verdicts, and its route crashed on criterion rows (#41 F05).
+    raise ValueError(f"Unsupported model kind: {model_kind!r}; EigenBench rankings use 'btd_ties'")
 
 
 def _train_one_sample(
