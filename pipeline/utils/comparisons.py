@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import hashlib
+import json
 import re
 
 
@@ -73,8 +75,8 @@ def extract_comparisons_with_ties_criteria(
     """Extract [criterion, scenario, judge, eval1, eval2, score] rows from evaluations.
 
     ``num_criteria`` is required and used as a hard cap. Any criterion tags
-    above this value are ignored. ``return_groups`` also returns each row's
-    ``group_id``.
+    above this value are ignored. ``return_groups`` also returns each row's draw
+    key for ``handle_inconsistencies_with_ties_criteria``.
     """
     if num_criteria is None:
         raise ValueError("num_criteria is required.")
@@ -158,7 +160,7 @@ def extract_comparisons_with_ties_criteria(
             comparisons.append(
                 [j - 1, item["scenario_index"], item["judge"], item["eval1"], item["eval2"], score]
             )
-            groups.append(item.get("group_id"))
+            groups.append(_draw_key(item))
             matched_any = True
 
         if prefix_len > max_j:
@@ -193,26 +195,47 @@ def extract_comparisons_with_ties_criteria(
     return result
 
 
-def _resolve_presentations(rows):
-    """Match each A-B row with a B-A row of the same group; ties both if the judge picked the same position."""
+def _draw_key(item: dict):
+    """Identify the sampled draw a comparison belongs to.
+
+    Exports carry ``group_id`` and ``epoch``. Older records don't, so their draw is
+    identified by the two responses and reflections the judge saw.
+    """
+    if item.get("group_id") is not None:
+        return (item["group_id"], item.get("epoch"))
+    sides = sorted([str(item.get(side)), item.get(f"{side} response"), item.get(f"{side} reflection")]
+                   for side in ("eval1", "eval2"))
+    payload = json.dumps([item.get("scenario_index"), item.get("judge"), sides], sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _resolve_presentations(rows, counts):
+    """Tie both rows of a draw if the judge picked the same position in both orders.
+
+    A draw with exactly one row per order is resolved. Anything else is kept unchanged,
+    and a draw with several rows in either order is counted as ambiguous.
+    """
     resolved = [row for _group, row in rows]
-    waiting = defaultdict(list)
+    by_draw = defaultdict(lambda: ([], []))
     for n, (group, row) in enumerate(rows):
-        forward = (row[3], row[4])
-        partners = waiting[(group, forward[::-1])]
-        if not partners:
-            waiting[(group, forward)].append(n)
-            continue
-        m = partners.pop(0)
-        earlier = resolved[m]
-        if row[-1] != 0 and row[-1] == earlier[-1]:
-            resolved[m] = list(earlier[:-1]) + [0]
-            resolved[n] = list(row[:-1]) + [0]
+        by_draw[group][0 if row[3] < row[4] else 1].append(n)
+    for forward, reverse in by_draw.values():
+        if len(forward) == 1 and len(reverse) == 1:
+            m, n = forward[0], reverse[0]
+            if resolved[m][-1] != 0 and resolved[m][-1] == resolved[n][-1]:
+                resolved[m] = list(resolved[m][:-1]) + [0]
+                resolved[n] = list(resolved[n][:-1]) + [0]
+        elif forward and reverse:
+            counts["ambiguous"] += len(forward) + len(reverse)
     return resolved
 
 
-def handle_inconsistencies_with_ties_criteria(comparisons, groups=None):
-    """Convert strict order-inconsistent transpose pairs into ties, matching within ``groups`` if given."""
+def handle_inconsistencies_with_ties_criteria(comparisons, groups=None, diagnostics=None):
+    """Convert strict order-inconsistent transpose pairs into ties, matching within ``groups`` if given.
+
+    ``diagnostics``, if given, receives ``comparisons_ambiguous``: rows kept unchanged
+    because their draw had several rows in one order.
+    """
 
     if groups is not None and len(groups) != len(comparisons):
         raise ValueError("groups must give one entry per comparison")
@@ -227,8 +250,11 @@ def handle_inconsistencies_with_ties_criteria(comparisons, groups=None):
     # Same output order as before.
     scenario_order = {l: n for n, l in enumerate(list(set(row[1] for row in comparisons)))}
     comparisons_new = []
+    counts = {"ambiguous": 0}
     for key in sorted(buckets, key=lambda k: (k[0], scenario_order[k[1]], k[2], k[3], k[4])):
-        comparisons_new.extend(_resolve_presentations(buckets[key]))
+        comparisons_new.extend(_resolve_presentations(buckets[key], counts))
+    if diagnostics is not None:
+        diagnostics["comparisons_ambiguous"] = counts["ambiguous"]
     return comparisons_new
 
 __all__ = [

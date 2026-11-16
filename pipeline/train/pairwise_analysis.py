@@ -61,10 +61,12 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
         return_groups=True,
     )
     parsed_count = len(comparisons)
-    comparisons = handle_inconsistencies_with_ties_criteria(comparisons, groups)
+    cleaning: dict = {}
+    comparisons = handle_inconsistencies_with_ties_criteria(comparisons, groups, cleaning)
     diagnostics = {"comparisons_parsed": parsed_count,
                    "comparisons_retained": len(comparisons),
-                   "comparisons_dropped": parsed_count - len(comparisons)}
+                   "comparisons_dropped": parsed_count - len(comparisons),
+                   **cleaning}
     if not comparisons:
         return {"diagnostics": diagnostics, "dimensions": {},
                 "unavailable_reason": "Legacy comparison cleaning retained no rows (#41)."}

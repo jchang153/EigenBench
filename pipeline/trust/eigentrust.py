@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -81,24 +79,28 @@ def _iterate(t, T, tol: float, max_iter: int, verbose: bool):
     return t, False
 
 
-def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True,
-               fallback_alpha: float = 0.05):
-    """Stationary trust vector of ``C``; damps by ``fallback_alpha`` if not converged after ``max_iter``."""
+def _stationary(T, tol: float):
+    """Solve t T = t, sum(t) = 1 directly; raise if the solution is not unique."""
+    M = T.detach().cpu().to(torch.float64).numpy()
+    n = M.shape[0]
+    A = M.T - np.eye(n)
+    if np.linalg.matrix_rank(A) < n - 1:
+        raise RuntimeError("EigenTrust has no unique stationary vector: the trust matrix is reducible")
+    b = np.zeros(n + 1)
+    b[-1] = 1.0
+    t = np.linalg.lstsq(np.vstack([A, np.ones(n)]), b, rcond=None)[0]
+    if t.min() < -tol or np.abs(t @ M - t).sum() > tol:
+        raise RuntimeError("EigenTrust stationary solve did not meet the residual tolerance")
+    return torch.tensor(np.clip(t, 0, None), dtype=T.dtype, device=T.device)
+
+
+def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, verbose: bool = True):
+    """Stationary trust vector of ``C`` damped by ``alpha``.
+
+    Power iteration is used first. If it has not converged after ``max_iter`` steps
+    (slow mixing, or a periodic matrix), the same matrix is solved directly.
+    """
+    T = damp_matrix(C, alpha)
     t = torch.full((C.size(0),), 1.0 / C.size(0), device=C.device, dtype=C.dtype)
-    t, settled = _iterate(t, damp_matrix(C, alpha), tol, max_iter, verbose)
-    if settled:
-        return t
-    if not 0 < fallback_alpha <= 1 or fallback_alpha <= alpha:
-        raise RuntimeError(f"EigenTrust did not converge within {max_iter} iterations (alpha={alpha})")
-    warnings.warn(
-        f"EigenTrust did not converge within {max_iter} iterations; "
-        f"continuing with damping alpha={fallback_alpha}",
-        RuntimeWarning,
-        stacklevel=2,
-    )
-    t, settled = _iterate(t, damp_matrix(C, fallback_alpha), tol, max_iter, verbose)
-    if not settled:
-        raise RuntimeError(
-            f"EigenTrust did not converge within {max_iter} damped iterations (alpha={fallback_alpha})"
-        )
-    return t
+    t, settled = _iterate(t, T, tol, max_iter, verbose)
+    return t if settled else _stationary(T, tol)

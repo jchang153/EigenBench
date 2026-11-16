@@ -360,6 +360,7 @@ def _expected_records(groups, cached=None):
             "judge": row["judge_idx"], "judge_name": judge,
             "judge response": _verdict(judge, e1, e2),
             "group_id": row["group_id"],
+            "epoch": 1,
         })
     return out
 
