@@ -44,6 +44,14 @@ def test_trust_matrix_keeps_ties_that_outweigh_an_underflowing_win():
     assert torch.allclose(T, torch.full((2, 2), 0.5))
 
 
+def test_trust_matrix_keeps_ties_when_the_other_strength_rounds_away():
+    from pipeline.trust import compute_trust_matrix_ties
+
+    scores = torch.tensor([[20.0, -20.0], [0.0, 0.0]])
+    trust = compute_trust_matrix_ties(_btd(scores, torch.tensor([[20.0], [0.0]])))
+    torch.testing.assert_close(trust[0], torch.tensor([0.75, 0.25]))
+
+
 @pytest.mark.parametrize("module", ["pipeline.train.bootstrap", "pipeline.train.direct_analysis"])
 def test_bootstrap_plot_accepts_a_mean_outside_its_interval(tmp_path, module):
     import importlib
@@ -76,6 +84,7 @@ def _judges_per_evaluee(plan, scenario):
 @pytest.mark.parametrize("models,include_self,group_size,redundancy", [
     (4, False, 3, 3),   # the audit's case, solved by restarting
     (9, True, 4, 9),    # needs the rotating fallback
+    (7, False, 6, 6),   # needs a rotating singleton
 ])
 def test_partitioned_planning_finds_a_schedule(models, include_self, group_size, redundancy):
     from pipeline.protocol.direct_rating import build_direct_assignments
@@ -84,6 +93,13 @@ def test_partitioned_planning_finds_a_schedule(models, include_self, group_size,
                                     include_self=include_self, sampler_mode="partitioned_random_judge",
                                     group_size=group_size, response_redundancy=redundancy, sampler_seed=42)
     for scenario in (0, 1):
+        for sampling_round in range(redundancy):
+            groups = [row["eval_idxs"] for row in plan if row["scenario_index"] == scenario
+                      and row["sampling_round"] == sampling_round]
+            assert sorted(e for group in groups for e in group) == list(range(models))
+            assert [len(group) for group in groups] == [
+                min(group_size, models - i) for i in range(0, models, group_size)
+            ]
         judges = _judges_per_evaluee(plan, scenario)
         assert len(judges) == models
         for evaluee, seen in judges.items():

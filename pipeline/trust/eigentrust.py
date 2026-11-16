@@ -22,38 +22,26 @@ def compute_trust_matrix(model, device: str = "cpu"):
     return S
 
 
-def _log_trust_ties(logits, log_lambda):
-    """The tie-aware trust matrix computed in log space, for values exp() can't hold."""
-    l = logits.to(torch.float64)
-    h = 0.5 * l
-    n = l.shape[1]
-    others = h.unsqueeze(1).expand(-1, n, -1).clone()  # [i, j, k] = h[i, k], excluding k = j
-    others[:, torch.arange(n), torch.arange(n)] = float("-inf")
-    tie = np.log(0.5) + log_lambda.to(torch.float64) + h + torch.logsumexp(others, dim=2)
-    return torch.softmax(torch.logaddexp(l, tie), dim=1).to(logits.dtype)
-
-
 def compute_trust_matrix_ties(model, device: str = "cpu"):
     U = model.u.weight.data.to(device)
     V = model.v.weight.data.to(device)
     log_lambda = model.log_lambda.weight.data.to(device)
 
     logits = U @ V.t()
-    # Ordinary values take the original float path, so existing results are unchanged.
-    if logits.abs().max() > 40 or log_lambda.abs().max() > 40:
-        return _log_trust_ties(logits, log_lambda)
-    s = torch.exp(logits)
-    lambda_i = torch.exp(log_lambda)
-
-    sqrt_s = torch.sqrt(s)
-    sqrt_s_sum = sqrt_s.sum(dim=1, keepdim=True)
-    tie_terms = sqrt_s * (sqrt_s_sum - sqrt_s)
-    tie_contribution = 0.5 * lambda_i * tie_terms
-
-    S = s + tie_contribution
-    Z_i = S.sum(dim=1, keepdim=True)
-    T = S / Z_i
-    return T
+    centered = logits - logits.amax(dim=1, keepdim=True)
+    half = 0.5 * centered
+    # Sum the other models on either side of each column without subtraction.
+    empty = torch.full_like(half[:, :1], -torch.inf)
+    before = torch.cat([empty, half.logcumsumexp(dim=1)[:, :-1]], dim=1)
+    after = torch.cat([half.flip([1]).logcumsumexp(dim=1)[:, :-1].flip([1]), empty], dim=1)
+    others = torch.logaddexp(before, after)
+    # Divide both win and tie weights by exp(max(log_lambda, 0)).
+    wins = centered - log_lambda.clamp_min(0)
+    ties = np.log(0.5) + log_lambda.clamp_max(0) + half + others
+    trust = torch.softmax(torch.logaddexp(wins, ties), dim=1)
+    if not torch.isfinite(trust).all():
+        raise ValueError("trust matrix is not finite")
+    return trust
 
 
 def row_normalize(S):
