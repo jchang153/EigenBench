@@ -154,13 +154,16 @@ def extract_comparisons_with_ties_criteria(
     for item, valid_scores, prefix_len in parsed_rows:
         matched_any = False
         max_j = min(prefix_len, detected_count)
+        if return_groups:
+            draw = _draw_key(item)
 
         for j in range(1, max_j + 1):
             score = valid_scores[j]
             comparisons.append(
                 [j - 1, item["scenario_index"], item["judge"], item["eval1"], item["eval2"], score]
             )
-            groups.append(_draw_key(item))
+            if return_groups:
+                groups.append(draw)
             matched_any = True
 
         if prefix_len > max_j:
@@ -195,18 +198,16 @@ def extract_comparisons_with_ties_criteria(
     return result
 
 
-def _draw_key(item: dict):
+def _draw_key(item: dict) -> tuple:
     """Identify the sampled draw a comparison belongs to.
 
-    Exports carry ``group_id`` and ``epoch``. Older records don't, so their draw is
-    identified by the two responses and reflections the judge saw.
+    Group and epoch IDs repeat across runs. Both orientations must also
+    contain the same responses and reflections.
     """
-    if item.get("group_id") is not None:
-        return (item["group_id"], item.get("epoch"))
     sides = sorted([str(item.get(side)), item.get(f"{side} response"), item.get(f"{side} reflection")]
                    for side in ("eval1", "eval2"))
-    payload = json.dumps([item.get("scenario_index"), item.get("judge"), sides], sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    payload = json.dumps(sides)
+    return (item.get("group_id"), item.get("epoch"), hashlib.sha256(payload.encode("utf-8")).hexdigest())
 
 
 def _resolve_presentations(rows, counts):

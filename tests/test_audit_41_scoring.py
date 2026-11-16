@@ -88,7 +88,7 @@ def test_exported_pairwise_records_carry_their_group():
     assert record["group_id"] == "s0000:r2"
     rows, _, groups = extract_comparisons_with_ties_criteria([record], num_criteria=1,
                                                              return_groups=True)
-    assert rows == [[0, 0, 0, 0, 1, 1]] and groups == [("s0000:r2", None)]
+    assert rows == [[0, 0, 0, 0, 1, 1]] and groups[0][:2] == ("s0000:r2", None)
 
 
 def _legacy(e1, e2, choice, draw, *, group=None, epoch=None):
@@ -120,6 +120,14 @@ def test_epochs_of_one_group_are_separate_draws():
     records = [_legacy(0, 1, 1, "e1", group="g", epoch=1), _legacy(0, 1, 2, "e2", group="g", epoch=2),
                _legacy(1, 0, 1, "e2", group="g", epoch=2)]
     assert _clean(records)[0] == [1, 2, 1]
+
+
+def test_draw_payload_disambiguates_reused_group_and_epoch():
+    forward = _legacy(0, 1, 1, "first", group="g", epoch=1)
+    different_draw = _legacy(1, 0, 1, "second", group="g", epoch=1)
+    same_draw = _legacy(1, 0, 1, "first", group="g", epoch=1)
+    assert _clean([forward, different_draw])[0] == [1, 1]
+    assert _clean([forward, same_draw])[0] == [0, 0]
 
 
 def test_ambiguous_draws_are_kept_and_counted():
