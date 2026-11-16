@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 
+import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -23,13 +24,27 @@ def compute_trust_matrix(model, device: str = "cpu"):
     return S
 
 
+def _log_trust_ties(logits, log_lambda):
+    """The tie-aware trust matrix computed in log space, for values exp() can't hold."""
+    l = logits.to(torch.float64)
+    h = 0.5 * l
+    n = l.shape[1]
+    others = h.unsqueeze(1).expand(-1, n, -1).clone()  # [i, j, k] = h[i, k], excluding k = j
+    others[:, torch.arange(n), torch.arange(n)] = float("-inf")
+    tie = np.log(0.5) + log_lambda.to(torch.float64) + h + torch.logsumexp(others, dim=2)
+    return torch.softmax(torch.logaddexp(l, tie), dim=1).to(logits.dtype)
+
+
 def compute_trust_matrix_ties(model, device: str = "cpu"):
     U = model.u.weight.data.to(device)
     V = model.v.weight.data.to(device)
     log_lambda = model.log_lambda.weight.data.to(device)
 
     logits = U @ V.t()
-    s = torch.exp(logits - _overflow_shift(logits))
+    # Ordinary values take the original float path, so existing results are unchanged.
+    if logits.abs().max() > 40 or log_lambda.abs().max() > 40:
+        return _log_trust_ties(logits, log_lambda)
+    s = torch.exp(logits)
     lambda_i = torch.exp(log_lambda)
 
     sqrt_s = torch.sqrt(s)
@@ -40,8 +55,6 @@ def compute_trust_matrix_ties(model, device: str = "cpu"):
     S = s + tie_contribution
     Z_i = S.sum(dim=1, keepdim=True)
     T = S / Z_i
-    if not torch.isfinite(T).all():
-        raise ValueError("trust matrix is not finite")
     return T
 
 

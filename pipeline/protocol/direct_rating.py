@@ -228,6 +228,43 @@ def resolve_direct_sampling_settings(
     }
 
 
+def _rotation_schedule(rng, model_nicks, scenario_index, scenario, mode, group_size,
+                       response_redundancy, include_self):
+    """A schedule that always exists when the random search fails: fixed groups, rotating judges.
+
+    Models sit in a shuffled ring cut into groups. In round r, the group starting at
+    position p is judged by the model r steps on (from p, or from just past the group
+    when self-judging is off), so every evaluee gets distinct judges across rounds.
+    """
+    n = len(model_nicks)
+    ring = list(range(n))
+    rng.shuffle(ring)
+    starts = list(range(0, n, group_size))
+    if not include_self and response_redundancy > n - group_size:
+        raise ValueError(
+            "could not construct distinct partitioned direct assignments; "
+            "reduce response_redundancy or group_size"
+        )
+    schedule = []
+    for sampling_round in range(response_redundancy):
+        for group_index, start in enumerate(starts):
+            eval_idxs = ring[start:start + group_size]
+            first = start if include_self else start + len(eval_idxs)
+            judge_idx = ring[(first + sampling_round) % n]
+            schedule.append({
+                "scenario_index": scenario_index,
+                "scenario": scenario,
+                "judge_idx": judge_idx,
+                "judge_nick": model_nicks[judge_idx],
+                "eval_idxs": list(eval_idxs),
+                "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+                "sampler_mode": mode,
+                "sampling_round": sampling_round,
+                "group_index": group_index,
+            })
+    return schedule
+
+
 def build_direct_assignments(
     selected_scenarios: list,
     models: dict[str, object],
@@ -383,9 +420,9 @@ def build_direct_assignments(
             else:
                 break
         else:
-            raise ValueError(
-                "could not construct distinct partitioned direct assignments; "
-                "reduce response_redundancy or group_size"
+            scenario_assignments = _rotation_schedule(
+                rng, model_nicks, scenario_index, scenario, mode, group_size,
+                response_redundancy, include_self,
             )
         assignments.extend(scenario_assignments)
     return assignments

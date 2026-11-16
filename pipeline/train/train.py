@@ -94,13 +94,12 @@ def build_model_labels(num_models: int, spec_models: dict, extracted_name_map: d
 
 
 def check_model_order(observed, spec_names) -> None:
-    """Raise if records name a spec model at a different index than the spec lists it."""
-    position = {name: idx for idx, name in enumerate(spec_names)}
+    """Raise unless every recorded name is the spec's model at that index."""
     for idx, name in observed:
-        if name in position and position[name] != idx:
+        if name and 0 <= idx < len(spec_names) and spec_names[idx] != name:
             raise ValueError(
-                f"records give model {name!r} index {idx}, but the spec lists it at index "
-                f"{position[name]}; restore the spec's model order from collection"
+                f"records name model {idx} {name!r}, but the spec lists {spec_names[idx]!r} there; "
+                "analyse these records with the spec they were collected with"
             )
 
 
