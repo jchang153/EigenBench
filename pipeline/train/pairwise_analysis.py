@@ -61,10 +61,12 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
         return_groups=True,
     )
     parsed_count = len(comparisons)
-    comparisons = handle_inconsistencies_with_ties_criteria(comparisons, groups)
+    cleaning: dict = {}
+    comparisons = handle_inconsistencies_with_ties_criteria(comparisons, groups, cleaning)
     diagnostics = {"comparisons_parsed": parsed_count,
                    "comparisons_retained": len(comparisons),
-                   "comparisons_dropped": parsed_count - len(comparisons)}
+                   "comparisons_dropped": parsed_count - len(comparisons),
+                   **cleaning}
     if not comparisons:
         return {"diagnostics": diagnostics, "dimensions": {},
                 "unavailable_reason": "Legacy comparison cleaning retained no rows (#41)."}
@@ -78,6 +80,13 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
                   len(set([i[2] for i in comparisons] + [i[3] for i in comparisons]
                           + [i[4] for i in comparisons])))
     num_criteria_eff = len(set([i[0] for i in comparisons]))
+    if model_order is None:
+        largest = max(max(row[2:5]) for row in comparisons)
+        if largest >= num_models:
+            raise ValueError(
+                f"records use model index {largest} but only {num_models} models appear; "
+                "model indices must run from 0 without gaps"
+            )
     model_labels = (list(model_order) if model_order is not None else
                     build_model_labels(num_models, models, extracted_name_map))
 

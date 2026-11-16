@@ -269,7 +269,8 @@ def panel_scorer(config: dict):
                 record = direct_record(state.metadata, state.store, config["criteria"])
             else:
                 from .pairwise import pairwise_record
-                record = pairwise_record(state.metadata, state.store, config["criteria"])
+                record = {**pairwise_record(state.metadata, state.store, config["criteria"]),
+                          "epoch": int(state.epoch)}
         except ValueError as exc:
             return Score(value=float("nan"), explanation=str(exc), metadata=metadata)
         return Score(value=1.0, metadata={**metadata, "record": record})
