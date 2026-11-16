@@ -22,12 +22,7 @@ def compute_trust_matrix(model, device: str = "cpu"):
     return S
 
 
-def compute_trust_matrix_ties(model, device: str = "cpu"):
-    U = model.u.weight.data.to(device)
-    V = model.v.weight.data.to(device)
-    log_lambda = model.log_lambda.weight.data.to(device)
-
-    logits = U @ V.t()
+def _log_trust_ties(logits, log_lambda):
     centered = logits - logits.amax(dim=1, keepdim=True)
     half = 0.5 * centered
     # Sum the other models on either side of each column without subtraction.
@@ -38,7 +33,31 @@ def compute_trust_matrix_ties(model, device: str = "cpu"):
     # Divide both win and tie weights by exp(max(log_lambda, 0)).
     wins = centered - log_lambda.clamp_min(0)
     ties = np.log(0.5) + log_lambda.clamp_max(0) + half + others
-    trust = torch.softmax(torch.logaddexp(wins, ties), dim=1)
+    return torch.softmax(torch.logaddexp(wins, ties), dim=1)
+
+
+def compute_trust_matrix_ties(model, device: str = "cpu"):
+    U = model.u.weight.data.to(device)
+    V = model.v.weight.data.to(device)
+    log_lambda = model.log_lambda.weight.data.to(device)
+    logits = U @ V.t()
+
+    # Preserve historical bootstrap arithmetic when exponentiation is safe
+    # and the strongest model cannot round away the other strengths.
+    if (
+        logits.dtype in (torch.float32, torch.float64)
+        and logits.abs().amax() <= 20
+        and log_lambda.abs().amax() <= 20
+        and (logits.amax(dim=1) - logits.amin(dim=1)).amax() <= 2
+    ):
+        strengths = logits.exp()
+        sqrt_strengths = strengths.sqrt()
+        other_strengths = sqrt_strengths.sum(dim=1, keepdim=True) - sqrt_strengths
+        tie_terms = sqrt_strengths * other_strengths
+        weights = strengths + (0.5 * log_lambda.exp()) * tie_terms
+        trust = row_normalize(weights)
+    else:
+        trust = _log_trust_ties(logits, log_lambda)
     if not torch.isfinite(trust).all():
         raise ValueError("trust matrix is not finite")
     return trust
