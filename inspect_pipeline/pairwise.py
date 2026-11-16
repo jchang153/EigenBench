@@ -283,6 +283,7 @@ def pairwise_record(md: dict, store: dict, criteria: list[str]) -> dict:
         "judge": int(md["judge_idx"]),
         "judge_name": md["judge_nick"],
         "judge response": store.get(STORE_JUDGE_RESPONSE),
+        "group_id": md.get("group_id"),
     }
 
 
@@ -308,9 +309,10 @@ def records_from_pairwise_log(log, criteria: list[str], *, strict: bool = True) 
             if strict:
                 raise RuntimeError(f"sample {s.id} is missing generated content")
             continue
+        # Each epoch draws fresh responses and reflections, so it is part of the draw.
         rows.append((
-            int(md["edge_index"]),
-            pairwise_record(md, store, criteria),
+            (int(md["edge_index"]), int(s.epoch)),
+            {**pairwise_record(md, store, criteria), "epoch": int(s.epoch)},
         ))
     rows.sort(key=lambda row: row[0])
     return [record for _key, record in rows]
