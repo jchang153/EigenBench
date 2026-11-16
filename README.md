@@ -1,8 +1,10 @@
 # EigenBench: A Comparative Behavioral Measure of Value Alignment
 
+[![arXiv](https://img.shields.io/badge/arXiv-2509.01938-b31b1b?style=flat-square)](https://arxiv.org/abs/2509.01938)
+
 **The official repository for [EigenBench: A Comparative Behavioral Measure of Value Alignment](https://arxiv.org/abs/2509.01938).**
 
-EigenBench is a black-box framework for quantifying value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses. Runs can use the original pairwise Bradley-Terry-Davison (BTD) framework or direct criterion-wise ratings; both routes produce a row-stochastic trust matrix that is aggregated with EigenTrust.
+EigenBench is a black-box framework for quantifying value alignment across language models without relying on ground-truth labels. Given a model ensemble, a constitution describing a value system, and a scenario dataset, models judge each other’s responses. Runs can use the original pairwise Bradley-Terry-Davidson (BTD) framework or direct criterion-wise ratings; both routes produce a row-stochastic trust matrix that is aggregated with EigenTrust.
 
 <p align="center">
   <img src="figs/pipeline.png" alt="EigenBench pipeline" width="90%">
@@ -12,8 +14,9 @@ Compare language models against a constitution: a list of criteria such as
 kindness or honesty. Configure models, scenarios, and criteria in `spec.py`,
 collect judgments, then compute EigenTrust scores and Elo rankings.
 
-The native Inspect default is the direct-rating variant. The paper's grouped
-pairwise method has a separate task. The `numerical_rating/`,
+Collection runs on [Inspect](https://inspect.aisi.org.uk/); the earlier
+collectors have been removed. The native Inspect default is the direct-rating
+variant. The paper's grouped pairwise method has a separate task. The `numerical_rating/`,
 `numerical_rating_criteria/` and Petri experiments are separate entrypoints and
 are outside the proposed Register task. See the
 [reproduction procedure](docs/inspect-reproducibility.md) for pinned setup,
@@ -191,8 +194,10 @@ RUN_SPEC["collection"].update({
 
 Review token budgets against each model's context window. For exhaustive direct
 ratings, use `sampler_mode="all_to_all"`. For grouped sampling, use
-`partitioned_random_judge` and set `group_size`. Re-run `--estimate-calls` after
-changing the model panel, sampler, criteria, or scenario count.
+`partitioned_random_judge` and set `group_size`; if random draws can't complete a
+schedule, the planner constructs one and raises only for infeasible settings.
+Re-run `--estimate-calls` after changing the model panel, sampler, criteria, or
+scenario count.
 
 For pairwise runs, use `evaluation.mode="pairwise_btd"` with
 `random_judge_group` or `uniform`, and collect using `scripts/run.py`. The retired
@@ -211,7 +216,7 @@ RUN_SPEC["training"]["bootstrap"] = {
 }
 ```
 
-Pairwise bootstrap retrains BT/BTD models and can be expensive. Direct-rating
+Pairwise bootstrap retrains BTD models and can be expensive. Direct-rating
 bootstrap recomputes scores without model fitting.
 
 ## Collect, resume, and score
@@ -231,6 +236,25 @@ controls instead; use `--no-score` there to skip all scorers. Set
 `RUN_SPEC["collection"]["enabled"] = False` to skip collection. Inspect reads
 `collection.cached_responses_path` and generates missing responses during collection.
 An analysis-only run never generates responses. See the [migration guide](docs/inspect-migration.md).
+
+### How scores are computed
+
+- **Pairwise rankings use BTD only.** `training.model` must be `btd_ties`, the
+  model the paper fits; judges' ties are an outcome, not dropped.
+- **Order consistency.** Each judge compares a pair in both orders. Two
+  judgments count as reversals of each other only when they come from the same
+  draw: the same `group_id` and `epoch`, and the same responses and reflections.
+  If the judge prefers whichever answer is shown first both times, both become
+  ties (paper §3.4). Rows that can't be matched unambiguously are kept unchanged
+  and counted as `comparisons_ambiguous` in the analysis diagnostics.
+- **EigenTrust.** Scores are the stationary distribution of the trust matrix.
+  Power iteration is used first; if it hasn't converged after `max_iter` steps,
+  the stationary vector is solved directly. A matrix without a unique answer
+  raises an error. Damping applies only to direct ratings, and only when
+  `evaluation.direct_rating.eigentrust_alpha` is set.
+- **Model identity.** Analysis refuses records whose model names don't match the
+  spec's model at the same index, and pairwise records with gaps in model
+  indices. Analyse records with the spec they were collected with.
 
 ### Inspect logs and retries
 
@@ -438,6 +462,9 @@ Default locations inside the run folder:
 | `inspect_logs/` | Inspect evaluation logs. |
 | `inspect_run.json` | References to the run's Inspect logs. |
 | `direct_call_estimate.json` | Planned direct-rating call counts. |
+| `collection_report.json` | Planned, logged, exported, omitted and unstarted judgments. |
+| `omitted_samples.json` | Judgments omitted under `failure_policy="omit_invalid_judgments"`. |
+| `collection_fingerprint.json` | Plan identity checked before an existing collection is reused. |
 | `direct_rating/summary.json` | Direct-rating scores and ranking. |
 | `direct_rating/analysis_config.json` | Analysis settings and coverage statistics. |
 | `direct_rating/trust_matrix.csv` | Aggregated judge-to-model trust matrix. |
