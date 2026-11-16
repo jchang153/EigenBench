@@ -10,7 +10,7 @@ import numpy as np
 
 from pipeline.trust.direct_rating import build_direct_trust
 from .plots import save_eigenbench_plot
-from .train import eigentrust_to_elo
+from .train import check_model_order, eigentrust_to_elo
 
 
 def _save_matrix(path: Path, matrix: np.ndarray) -> None:
@@ -41,7 +41,11 @@ def _save_bootstrap_plot(summary_rows: list[dict], path: Path) -> None:
     upper = np.array([row["elo_ci_upper"] for row in summary_rows])
     x = np.arange(len(summary_rows))
     fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
-    ax.errorbar(x, means, yerr=np.vstack([means - lower, upper - means]), fmt="o", capsize=4)
+    # The mean can fall outside its percentile interval, so draw the interval directly.
+    ax.vlines(x, lower, upper, color="C0")
+    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
+              np.concatenate([x, x]) + 0.1, color="C0")
+    ax.plot(x, means, "o", color="C0")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylabel("EigenBench Elo")
@@ -162,6 +166,12 @@ def run_direct_analysis(
     sampler_mode = str(collection_cfg.get("sampler_mode", "all_to_all")).strip().lower()
     allow_sparse = sampler_mode != "all_to_all" or collection_cfg.get("failure_policy") == "omit_invalid_judgments"
     labels = list(models)
+    check_model_order(
+        ((record[role]["index"], record[role].get("name"))
+         for record in records if record.get("record_type") == "direct_rating"
+         for role in ("judge", "evaluee") if isinstance(record.get(role), dict)),
+        labels,
+    )
     result = build_direct_trust(
         records,
         num_models=len(labels),

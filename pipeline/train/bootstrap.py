@@ -212,10 +212,13 @@ def _save_bootstrap_plot(summary_rows: list[dict], save_path: Path) -> None:
     upper = np.array([r["elo_ci_upper"] for r in summary_rows])
 
     x = np.arange(len(summary_rows))
-    yerr = np.vstack([means - lower, upper - means])
 
     fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
-    ax.errorbar(x, means, yerr=yerr, fmt="o", capsize=4)
+    # The mean can fall outside its percentile interval, so draw the interval directly.
+    ax.vlines(x, lower, upper, color="C0")
+    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
+              np.concatenate([x, x]) + 0.1, color="C0")
+    ax.plot(x, means, "o", color="C0")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylabel("EigenBench Elo")

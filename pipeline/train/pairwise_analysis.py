@@ -175,7 +175,7 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
                     loss = loss_fn(p, r)
                 total_test_loss += loss.item() * r.size(0)
 
-        avg_test_loss = total_test_loss / max(1, len(test_loader.dataset))
+        avg_test_loss = total_test_loss / len(test_loader.dataset) if len(test_loader.dataset) else None
 
         # Always compute EigenTrust at the end of every training run.
         if use_btd:
@@ -233,7 +233,8 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
                 f.write(f"lr = {lr}\n")
                 f.write(f"epochs = {max_epochs}\n")
                 f.write(f"min_train_loss = {np.round(min(loss_history), 6)}\n")
-                f.write(f"test_loss = {np.round(avg_test_loss, 6)}\n")
+                if avg_test_loss is not None:
+                    f.write(f"test_loss = {np.round(avg_test_loss, 6)}\n")
 
             print(f"Finished dim={d}; outputs in {out_dir}")
 

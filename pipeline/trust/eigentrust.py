@@ -7,32 +7,60 @@ import torch
 from tqdm import tqdm
 
 
+def _overflow_shift(logits):
+    """Per-row shift for logits whose exponent would overflow; rows are normalised, so it cancels."""
+    if logits.max() < 80:
+        return 0.0
+    return logits.max(dim=1, keepdim=True).values
+
+
 def compute_trust_matrix(model, device: str = "cpu"):
     U = model.u.weight.data.to(device)
     V = model.v.weight.data.to(device)
     S = U @ V.t()
-    S = torch.exp(S)
+    S = torch.exp(S - _overflow_shift(S))
     return S
+
+
+def _log_trust_ties(logits, log_lambda):
+    centered = logits - logits.amax(dim=1, keepdim=True)
+    half = 0.5 * centered
+    # Sum the other models on either side of each column without subtraction.
+    empty = torch.full_like(half[:, :1], -torch.inf)
+    before = torch.cat([empty, half.logcumsumexp(dim=1)[:, :-1]], dim=1)
+    after = torch.cat([half.flip([1]).logcumsumexp(dim=1)[:, :-1].flip([1]), empty], dim=1)
+    others = torch.logaddexp(before, after)
+    # Divide both win and tie weights by exp(max(log_lambda, 0)).
+    wins = centered - log_lambda.clamp_min(0)
+    ties = np.log(0.5) + log_lambda.clamp_max(0) + half + others
+    return torch.softmax(torch.logaddexp(wins, ties), dim=1)
 
 
 def compute_trust_matrix_ties(model, device: str = "cpu"):
     U = model.u.weight.data.to(device)
     V = model.v.weight.data.to(device)
     log_lambda = model.log_lambda.weight.data.to(device)
-
     logits = U @ V.t()
-    s = torch.exp(logits)
-    lambda_i = torch.exp(log_lambda)
 
-    sqrt_s = torch.sqrt(s)
-    sqrt_s_sum = sqrt_s.sum(dim=1, keepdim=True)
-    tie_terms = sqrt_s * (sqrt_s_sum - sqrt_s)
-    tie_contribution = 0.5 * lambda_i * tie_terms
-
-    S = s + tie_contribution
-    Z_i = S.sum(dim=1, keepdim=True)
-    T = S / Z_i
-    return T
+    # Preserve historical bootstrap arithmetic when exponentiation is safe
+    # and the strongest model cannot round away the other strengths.
+    if (
+        logits.dtype in (torch.float32, torch.float64)
+        and logits.abs().amax() <= 20
+        and log_lambda.abs().amax() <= 20
+        and (logits.amax(dim=1) - logits.amin(dim=1)).amax() <= 2
+    ):
+        strengths = logits.exp()
+        sqrt_strengths = strengths.sqrt()
+        other_strengths = sqrt_strengths.sum(dim=1, keepdim=True) - sqrt_strengths
+        tie_terms = sqrt_strengths * other_strengths
+        weights = strengths + (0.5 * log_lambda.exp()) * tie_terms
+        trust = row_normalize(weights)
+    else:
+        trust = _log_trust_ties(logits, log_lambda)
+    if not torch.isfinite(trust).all():
+        raise ValueError("trust matrix is not finite")
+    return trust
 
 
 def row_normalize(S):

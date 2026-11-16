@@ -228,6 +228,127 @@ def resolve_direct_sampling_settings(
     }
 
 
+def _pack_no_self_groups(ring, group_size, rounds):
+    """Allocate groups for no-self rounds above the fixed rotation limit."""
+    n = len(ring)
+    groups_per_round, remainder = divmod(n, group_size)
+    full_per_judge = (n - 1) // group_size
+    vacancies = n * full_per_judge - rounds * groups_per_round
+    capacity_error = (
+        "partitioned direct groups exceed the capacity of distinct non-self judges; "
+        "reduce response_redundancy or group_size"
+    )
+    # With equal group sizes the fixed rotation already attains judge capacity.
+    if remainder == 0 or vacancies < 0:
+        raise ValueError(capacity_error)
+
+    # Start with every judge filled with full-sized groups. Allocate the
+    # unused full-group slots to maximize the number of remainder groups.
+    remainder_capacity = [
+        (n - 1 - (full_per_judge - removed) * group_size) // remainder
+        for removed in range(full_per_judge + 1)
+    ]
+    capacity = {0: 0}
+    choices = []
+    for _ in ring:
+        best = {}
+        selected = {}
+        for used, previous in capacity.items():
+            for removed in range(min(vacancies - used, full_per_judge) + 1):
+                total = used + removed
+                candidate = previous + remainder_capacity[removed]
+                if candidate > best.get(total, -1):
+                    best[total] = candidate
+                    selected[total] = removed
+        capacity = best
+        choices.append(selected)
+    if capacity[vacancies] < rounds:
+        raise ValueError(capacity_error)
+
+    full_judges = []
+    remainder_judges = []
+    for judge, selected in zip(ring, reversed(choices)):
+        removed = selected[vacancies]
+        vacancies -= removed
+        full_judges.extend([judge] * (full_per_judge - removed))
+        remainder_judges.extend([judge] * remainder_capacity[removed])
+    full_judges = iter(full_judges)
+    return [
+        [(next(full_judges), group_size) for _ in range(groups_per_round)] + [(judge, remainder)]
+        for judge in remainder_judges[:rounds]
+    ]
+
+
+def _assign_no_self_groups(judge_groups, n):
+    """Fill judge seats with evaluees via perfect matchings of rounds and judges."""
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    rounds = len(judge_groups)
+    seats = np.zeros((n, n), dtype=int)
+    for row, groups in enumerate(judge_groups):
+        for judge, size in groups:
+            seats[row, judge] += size
+    # This extra round assigns each matching its evaluee and uses up that
+    # evaluee's self-judgment. Dummy rounds make every judge's degree n.
+    seats[rounds, :] = 1
+    unfilled = (
+        judge for judge, degree in enumerate(seats.sum(axis=0))
+        for _ in range(n - degree)
+    )
+    for row in range(rounds + 1, n):
+        for _ in range(n):
+            seats[row, next(unfilled)] += 1
+
+    evaluees = [[[] for _ in range(n)] for _ in judge_groups]
+    for _ in range(n):
+        rows, judges = linear_sum_assignment(seats == 0)
+        seats[rows, judges] -= 1
+        judges = judges.tolist()
+        evaluee = judges[rounds]
+        for row, judge in enumerate(judges[:rounds]):
+            evaluees[row][judge].append(evaluee)
+
+    for groups, by_judge in zip(judge_groups, evaluees):
+        by_judge = [iter(values) for values in by_judge]
+        yield [(judge, [next(by_judge[judge]) for _ in range(size)]) for judge, size in groups]
+
+
+def _rotation_schedule(rng, model_nicks, scenario_index, scenario, mode, group_size,
+                       response_redundancy, include_self):
+    """Rotate judges over a shuffled panel when the random search runs out."""
+    n = len(model_nicks)
+    ring = list(range(n))
+    rng.shuffle(ring)
+    if not include_self and response_redundancy > n - group_size:
+        packed = _pack_no_self_groups(ring, group_size, response_redundancy)
+        rounds = _assign_no_self_groups(packed, n)
+    else:
+        groups = [ring[start:start + group_size] for start in range(0, n, group_size)]
+        rounds = (
+            [
+                (ring[(index * group_size + (0 if include_self else len(group)) + offset) % n], group)
+                for index, group in enumerate(groups)
+            ]
+            for offset in range(response_redundancy)
+        )
+    return [
+        {
+            "scenario_index": scenario_index,
+            "scenario": scenario,
+            "judge_idx": judge_idx,
+            "judge_nick": model_nicks[judge_idx],
+            "eval_idxs": list(eval_idxs),
+            "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+            "sampler_mode": mode,
+            "sampling_round": sampling_round,
+            "group_index": group_index,
+        }
+        for sampling_round, groups in enumerate(rounds)
+        for group_index, (judge_idx, eval_idxs) in enumerate(groups)
+    ]
+
+
 def build_direct_assignments(
     selected_scenarios: list,
     models: dict[str, object],
@@ -331,55 +452,63 @@ def build_direct_assignments(
                     )
             continue
 
-        used_judges_by_evaluee = [set() for _ in range(num_models)]
-        for sampling_round in range(response_redundancy):
-            round_assignments = None
-            for _attempt in range(1000):
-                shuffled = list(range(num_models))
-                rng.shuffle(shuffled)
-                groups = [
-                    shuffled[start : start + group_size]
-                    for start in range(0, num_models, group_size)
-                ]
-                candidate_assignments = []
-                for group_index, eval_idxs in enumerate(groups):
-                    eligible_judges = [
-                        judge_idx
-                        for judge_idx in range(num_models)
-                        if (include_self or judge_idx not in eval_idxs)
-                        and all(
-                            judge_idx not in used_judges_by_evaluee[eval_idx]
-                            for eval_idx in eval_idxs
-                        )
+        # Early rounds can leave no valid way to finish; restart the scenario's rounds if so.
+        for _restart in range(100):
+            scenario_assignments = []
+            used_judges_by_evaluee = [set() for _ in range(num_models)]
+            for sampling_round in range(response_redundancy):
+                round_assignments = None
+                for _attempt in range(1000):
+                    shuffled = list(range(num_models))
+                    rng.shuffle(shuffled)
+                    groups = [
+                        shuffled[start : start + group_size]
+                        for start in range(0, num_models, group_size)
                     ]
-                    if not eligible_judges:
+                    candidate_assignments = []
+                    for group_index, eval_idxs in enumerate(groups):
+                        eligible_judges = [
+                            judge_idx
+                            for judge_idx in range(num_models)
+                            if (include_self or judge_idx not in eval_idxs)
+                            and all(
+                                judge_idx not in used_judges_by_evaluee[eval_idx]
+                                for eval_idx in eval_idxs
+                            )
+                        ]
+                        if not eligible_judges:
+                            break
+                        judge_idx = rng.choice(eligible_judges)
+                        candidate_assignments.append(
+                            {
+                                "scenario_index": scenario_index,
+                                "scenario": scenario,
+                                "judge_idx": judge_idx,
+                                "judge_nick": model_nicks[judge_idx],
+                                "eval_idxs": list(eval_idxs),
+                                "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
+                                "sampler_mode": mode,
+                                "sampling_round": sampling_round,
+                                "group_index": group_index,
+                            }
+                        )
+                    if len(candidate_assignments) == len(groups):
+                        round_assignments = candidate_assignments
                         break
-                    judge_idx = rng.choice(eligible_judges)
-                    candidate_assignments.append(
-                        {
-                            "scenario_index": scenario_index,
-                            "scenario": scenario,
-                            "judge_idx": judge_idx,
-                            "judge_nick": model_nicks[judge_idx],
-                            "eval_idxs": list(eval_idxs),
-                            "eval_nicks": [model_nicks[idx] for idx in eval_idxs],
-                            "sampler_mode": mode,
-                            "sampling_round": sampling_round,
-                            "group_index": group_index,
-                        }
-                    )
-                if len(candidate_assignments) == len(groups):
-                    round_assignments = candidate_assignments
+                if round_assignments is None:
                     break
-            if round_assignments is None:
-                raise ValueError(
-                    "could not construct distinct partitioned direct assignments; "
-                    "reduce response_redundancy or group_size"
-                )
-            assignments.extend(round_assignments)
-            for assignment in round_assignments:
-                for eval_idx in assignment["eval_idxs"]:
-                    used_judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
+                scenario_assignments.extend(round_assignments)
+                for assignment in round_assignments:
+                    for eval_idx in assignment["eval_idxs"]:
+                        used_judges_by_evaluee[eval_idx].add(assignment["judge_idx"])
+            else:
+                break
+        else:
+            scenario_assignments = _rotation_schedule(
+                rng, model_nicks, scenario_index, scenario, mode, group_size,
+                response_redundancy, include_self,
+            )
+        assignments.extend(scenario_assignments)
     return assignments
 
 
