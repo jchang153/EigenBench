@@ -14,6 +14,7 @@ any Inspect provider can be used directly (e.g. ``inspect:anthropic/claude-…``
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import Mapping
 
-from inspect_ai.model import Model
+from inspect_ai.model import Model, ModelName
 from inspect_ai.model._providers.vllm import VLLMAPI
 
 from pipeline.model_refs import HFLocalModelRef, is_hf_local_model, parse_hf_local_model
@@ -43,7 +44,10 @@ class InspectModelRef:
 
     name: str
     model_args: dict = field(default_factory=dict)
-    is_local: bool = False
+
+    @property
+    def is_local(self) -> bool:
+        return model_execution(self) == "managed_vllm"
 
 
 def _base_model_from_adapter_config(adapter_config_path: str) -> str:
@@ -121,7 +125,7 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
         if ref.revision:
             model_args["revision"] = ref.revision
         return InspectModelRef(
-            name=f"vllm/{ref.repo_id}", model_args=model_args, is_local=True
+            name=f"vllm/{ref.repo_id}", model_args=model_args
         )
 
     base_model_id = ref.base_model_id
@@ -158,7 +162,6 @@ def _resolve_hf_local(ref: HFLocalModelRef) -> InspectModelRef:
     return InspectModelRef(
         name=f"vllm/{base_model_id}:{adapter_ref}",
         model_args=model_args,
-        is_local=True,
     )
 
 
@@ -177,13 +180,47 @@ def with_effective_vllm_revision(ref: InspectModelRef) -> InspectModelRef:
     return replace(ref, model_args={**ref.model_args, "revision": revision})
 
 
-def check_distinct_local_servers(models: Mapping[str, object]) -> None:
-    """Refuse a concurrent panel that would need one vLLM server at two revisions.
+def _vllm_endpoint(model_args: dict, base_url: str | None = None) -> str | None:
+    port = model_args.get("port")
+    return base_url or model_args.get("base_url") or (
+        f"http://localhost:{port}/v1" if port else os.environ.get("VLLM_BASE_URL")
+    )
 
-    Inspect keeps one server per base model id, whatever the revision, so two members on
-    the same base at different revisions would both be answered by whichever started
-    first. Phased collection serves one model at a time and is unaffected.
-    """
+
+def check_vllm_endpoint(model: Model) -> None:
+    """A live server shared by base model must match this run's requested endpoint."""
+    if not isinstance(model.api, VLLMAPI):
+        return
+    server = model.api._server
+    if server.base_url is None:
+        return
+    requested = _vllm_endpoint(model.model_args, model.explicit_base_url)
+    active = None if server.process is not None else str(server.base_url)
+    if (requested or "").rstrip("/") != (active or "").rstrip("/"):
+        raise RuntimeError(
+            f"vLLM already has a different server for {model.api.base_model}. "
+            "Start a fresh Inspect process to change endpoints."
+        )
+
+
+def model_execution(value: object) -> str:
+    """Identify managed vLLM, OpenRouter, or another provider without loading weights."""
+    if isinstance(value, Model):
+        provider = ModelName(value).api
+        args, base_url = value.model_args, value.explicit_base_url
+    elif is_hf_local_model(value):
+        # A cost estimate needs only the provider, even for an adapter subfolder.
+        provider, args, base_url = "vllm", vllm_server_args(), None
+    else:
+        ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
+        provider, args, base_url = ModelName(ref.name).api, ref.model_args, None
+    if provider == "vllm" and not _vllm_endpoint(args, base_url):
+        return "managed_vllm"
+    return "openrouter" if provider == "openrouter" else "other"
+
+
+def check_distinct_local_servers(models: Mapping[str, object]) -> None:
+    """Inspect shares a vLLM server by base model, including across endpoints."""
 
     by_base: dict[str, dict] = {}
     for nick, value in models.items():
@@ -192,22 +229,25 @@ def check_distinct_local_servers(models: Mapping[str, object]) -> None:
                 continue
             base = value.api.base_model
             server_args = value.api.server_args
+            endpoint = _vllm_endpoint(value.model_args, value.explicit_base_url)
         else:
             ref = with_effective_vllm_revision(to_inspect_model(value))
             if not ref.name.startswith("vllm/"):
                 continue
             base = ref.name.removeprefix("vllm/").split(":", 1)[0]
             server_args = ref.model_args
-        by_base.setdefault(base, {}).setdefault(server_args.get("revision"), []).append(nick)
+            endpoint = _vllm_endpoint(server_args)
+        identity = endpoint, server_args.get("revision")
+        by_base.setdefault(base, {}).setdefault(identity, []).append(nick)
     clashes = []
     for base, revisions in by_base.items():
         if len(revisions) > 1:
             members = [f"{', '.join(nicks)} at {rev or 'the default revision'}"
-                       for rev, nicks in revisions.items()]
+                       for (_, rev), nicks in revisions.items()]
             clashes.append(f"{base} ({'; '.join(members)})")
     if clashes:
         raise ValueError(
-            "These local models share a base model at different revisions, which one vLLM "
+            "These local models share a base model at different revisions or endpoints, which one vLLM "
             f"server cannot serve together: {'; '.join(clashes)}. "
             "Set collection.inspect.phased=true to serve them one at a time."
         )
@@ -239,22 +279,33 @@ def to_inspect_model(model_ref: object) -> InspectModelRef:
 def model_identity(value: object) -> dict:
     """Requested identity, stable across provider startup and spec reloads."""
 
+    endpoint = None
     if isinstance(value, Model):
         args = value.model_args
         if isinstance(value.api, VLLMAPI):
+            endpoint = _vllm_endpoint(args, value.explicit_base_url)
             revision = value.api.server_args.get("revision")
             if revision is not None:
                 args = {**args, "revision": revision}
-        return {
+        identity = {
             "name": str(value),
             # Runtime callbacks and output iterators are not stable provider settings.
             "args": json.loads(json.dumps(args, default=lambda _: None)),
             "base_url": value.explicit_base_url,
             "config": value.config.model_dump(exclude_none=True),
         }
-    ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
-    ref = with_effective_vllm_revision(ref)
-    return {"name": ref.name, "args": ref.model_args}
+    else:
+        ref = value if isinstance(value, InspectModelRef) else to_inspect_model(value)
+        ref = with_effective_vllm_revision(ref)
+        if ref.name.startswith("vllm/"):
+            endpoint = _vllm_endpoint(ref.model_args)
+        identity = {"name": ref.name, "args": ref.model_args}
+    if endpoint:
+        # An endpoint can contain credentials; retain only its fingerprint in run metadata.
+        identity.pop("base_url", None)
+        identity["args"] = {k: v for k, v in identity["args"].items() if k != "base_url"}
+        identity["vllm_endpoint_sha256"] = hashlib.sha256(endpoint.rstrip("/").encode()).hexdigest()
+    return identity
 
 
 def resolve_spec_models(models: Mapping[str, object]) -> dict[str, InspectModelRef]:

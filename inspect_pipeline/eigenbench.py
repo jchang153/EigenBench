@@ -49,6 +49,8 @@ from pipeline.protocol.direct_rating import (
 
 from inspect_pipeline.model_mapping import (
     check_distinct_local_servers,
+    check_vllm_endpoint,
+    model_execution,
     model_identity,
     to_inspect_model,
     with_effective_vllm_revision,
@@ -199,6 +201,8 @@ def _model_resolver(models: dict[str, object], *, memoize: bool = True):
                 json.dumps(identity, sort_keys=True, default=str).encode()
             ).hexdigest()
             cache[nick] = model
+        if isinstance(model, Model):
+            check_vllm_endpoint(model)
         return model
 
     return resolve
@@ -379,9 +383,7 @@ def cached_seed(path: str | None, selected, nicks, *, merge_rows: bool) -> dict[
 def has_local_models(models: dict[str, object]) -> bool:
     """Whether any model needs a vLLM server, and so GPU memory."""
 
-    return any(
-        not isinstance(v, Model) and to_inspect_model(v).is_local for v in models.values()
-    )
+    return any(model_execution(value) == "managed_vllm" for value in models.values())
 
 
 def sanitize(nick: str) -> str:

@@ -31,12 +31,22 @@ def _response_cells(samples):
 
 
 def estimate_pairwise_calls(spec_ref: str, *, models=None) -> dict:
-    from .pairwise import build_pairwise_task
-    from .pairwise_plan import pairwise_call_counts
+    from pipeline.config import load_run_spec
+    from .eigenbench import cached_seed, load_selection, resolve_spec_ref
+    from .model_mapping import model_execution
+    from .pairwise import pairwise_comparison_samples, planned_pairwise_comparisons
+    from .pairwise_plan import pairwise_call_counts, resolve_pairwise_generation_settings
 
-    task = build_pairwise_task(spec_ref, models=models)
-    return {"mode": "pairwise_btd",
-            **pairwise_call_counts([sample.metadata for sample in task.dataset])}
+    spec, run_dir = load_run_spec(resolve_spec_ref(spec_ref))
+    panel = models if models is not None else spec["models"]
+    selected, _ = load_selection(spec, run_dir)
+    collection = spec["collection"]
+    resolve_pairwise_generation_settings(collection)
+    _, _, comparisons = planned_pairwise_comparisons(spec, selected, list(panel))
+    seed = cached_seed(collection.get("cached_responses_path"), selected, panel, merge_rows=False)
+    samples = pairwise_comparison_samples(comparisons, cached=seed)
+    routes = {nick: model_execution(value) for nick, value in panel.items()}
+    return {"mode": "pairwise_btd", **pairwise_call_counts([s.metadata for s in samples], model_routes=routes)}
 
 
 def _collect_phased(spec_ref, models, task, eval_kw):

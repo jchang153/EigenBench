@@ -54,6 +54,32 @@ def panel(calls, *, invalid=False):
     return {nick: mock(nick) for nick in ("a", "b", "c")}
 
 
+@pytest.mark.parametrize("cached", [False, True])
+def test_pairwise_estimate_by_provider(tmp_path, monkeypatch, cached):
+    import inspect_pipeline.model_mapping as mapping
+
+    spec = Path(write_spec(tmp_path))
+    if cached:
+        cache = tmp_path / "cache.jsonl"
+        cache.write_text(json.dumps({
+            "scenario_index": 0, "responses": {"a": "a", "c": "c"},
+        }) + "\n")
+        with spec.open("a") as handle:
+            handle.write(f'RUN_SPEC["collection"]["cached_responses_path"] = {str(cache)!r}\n')
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    monkeypatch.setattr(mapping, "_resolve_hf_local", lambda *_: pytest.fail("resolved weights for estimate"))
+    models = {"a": "hf_local:org/adapter/subfolder", "b": "inspect:anthropic/test", "c": "org/third"}
+    estimate = estimate_pairwise_calls(str(spec), models=models)
+    # a and c each judge two groups (3 reflections + 6 comparisons per group).
+    # Each of their cached scenario-0 answers supplies both groups on that scenario.
+    assert estimate["openrouter_requests"] == estimate["local_logical_generations"] == (20 if cached else 22)
+    assert estimate["other_logical_generations"] == 4
+    models.update(b="inspect:vllm/org/b", c="inspect:vllm/org/c")
+    estimate = estimate_pairwise_calls(str(spec), models=models)
+    assert estimate["openrouter_requests"] == estimate["other_logical_generations"] == 0
+    assert estimate["local_logical_generations"] == (44 if cached else 48)
+
+
 def test_fresh_pairwise_single_and_phased_match(tmp_path):
     results = []
     for phased in (False, True):
@@ -64,7 +90,8 @@ def test_fresh_pairwise_single_and_phased_match(tmp_path):
         assert estimate == {
             "mode": "pairwise_btd", "response_tasks": 12,
             "reflection_tasks": 12, "comparison_tasks": 24,
-            "total_logical_generations": 48,
+            "total_logical_generations": 48, "num_openrouter_models": 0,
+            "openrouter_requests": 0, "local_logical_generations": 0, "other_logical_generations": 48,
         }
         records = collect_pairwise_inspect(spec, models=models)
         assert len(records) == 24
