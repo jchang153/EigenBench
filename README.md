@@ -285,18 +285,16 @@ exports only the successful subset; that output is not a complete benchmark.
 Do not reuse responses or logs from a run with incorrect model identities or
 scenario indexing.
 
-For a hosted direct-rating run with frozen answers in
-`collection.cached_responses_path`, resume and re-export in one command:
+To resume hosted direct ratings, keep the original answers in
+`collection.cached_responses_path` and pass the latest `.eval` log for the same
+plan, including logs with omitted judgments.
 
 ```bash
 python scripts/run.py runs/my_run/spec.py --resume-log "$LOG_FILE"
 ```
 
-Pass the latest judgment log for the same plan, including a log marked
-successful with omitted samples. Inspect retains successful samples and runs
-only failed or unstarted judgments. The saved answers are required for the
-outstanding judgments, and the export is replaced only after all judgments
-pass strict validation. If another retry is needed, use the new Inspect log.
+Inspect retries only failed or unstarted judgments. The runner replaces the
+export after strict validation. Use the new log for another retry.
 
 ### Native Inspect command
 
