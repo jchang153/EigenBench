@@ -7,6 +7,7 @@ from dataclasses import replace
 import anyio
 from inspect_ai import Task, eval as inspect_eval
 from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import Model
 
 from .eigenbench import _model_resolver, _run_context, sanitize
 from .export import records_from_log
@@ -26,7 +27,8 @@ def _isolated_context(prepared, nick):
         if name != nick:
             raise RuntimeError(f"phased task for {nick!r} attempted to load {name!r}")
         model = resolve(name)
-        if not loaded:
+        # Hosted Model objects supplied by the caller may be reused after this phase.
+        if not loaded and (not isinstance(prepared["models"][name], Model) or str(model).startswith("vllm/")):
             loaded.append(model)
         return model
 

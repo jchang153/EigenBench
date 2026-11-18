@@ -165,6 +165,23 @@ def test_a_changed_model_reference_is_named(tmp_path):
         check_reusable(evaluations, [], _ctx({"a": "openai/gpt-4o", "b": "anthropic/claude-sonnet-4"}), [])
 
 
+@pytest.mark.parametrize("instance", [False, True], ids=["spec-string", "native-model"])
+def test_changed_vllm_endpoint_refuses_saved_export(tmp_path, monkeypatch, instance):
+    from inspect_pipeline.model_mapping import model_identity
+
+    value = get_model("vllm/org/endpoint-test", memoize=False) if instance else "inspect:vllm/org/endpoint-test"
+    ctx = _ctx({"a": value})
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    assert "vllm_endpoint_sha256" not in model_identity(value)
+    monkeypatch.setenv("VLLM_BASE_URL", "http://user:secret@vm-a:8000/v1")
+    previous = collection_identity(ctx)
+    assert "secret" not in json.dumps(previous)
+    (tmp_path / FINGERPRINT_FILE).write_text(json.dumps({"identity": previous}))
+    monkeypatch.setenv("VLLM_BASE_URL", "http://vm-b:8000/v1")
+    with pytest.raises(RuntimeError, match="model references changed: a"):
+        check_reusable(tmp_path / "evaluations.jsonl", [], ctx, [])
+
+
 @pytest.mark.parametrize("before, after", [
     ({"revision": "revision-1"}, {"revision": "revision-2"}),
     ({"base_url": "http://backend-a.invalid/v1"}, {"base_url": "http://backend-b.invalid/v1"}),

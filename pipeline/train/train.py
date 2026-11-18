@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset
 
+from pipeline.elo import elo_scores
+
 
 class Comparisons(Dataset):
     """Legacy comparison format: [l, i, j, k, r]."""
@@ -103,12 +105,9 @@ def check_model_order(observed, spec_names) -> None:
             )
 
 
-def eigentrust_to_elo(trust_scores, num_models: int) -> np.ndarray:
-    """Convert EigenTrust scores to the display Elo scale used by EigenBench."""
-
-    trust_np = np.asarray(trust_scores, dtype=float).reshape(-1)
-    trust_safe = np.clip(trust_np, 1e-12, None)
-    return 1500.0 + 400.0 * np.log10(num_models * trust_safe)
+def eigentrust_to_elo(trust_scores, num_models: int, *, direct_rating: bool = False) -> np.ndarray:
+    trust = np.asarray(trust_scores, dtype=float).reshape(-1)
+    return np.asarray(elo_scores(trust, num_models, direct_rating=direct_rating))
 
 
 def train_vector_bt(

@@ -307,6 +307,80 @@ def test_model_mapping(monkeypatch):
         to_inspect_model("")
 
 
+def test_vllm_phasing_follows_server_ownership(monkeypatch):
+    from inspect_ai.model import get_model
+    from inspect_pipeline.eigenbench import has_local_models
+    from inspect_pipeline.model_mapping import check_distinct_local_servers
+
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    name = "vllm/org/test-base"
+    local = get_model(name, memoize=False)
+    external = get_model(name, base_url="http://localhost:8000/v1", memoize=False)
+    via_port = get_model(name, port=8000, memoize=False)
+    assert has_local_models({"a": "inspect:" + name})
+    assert has_local_models({"a": local})
+    assert not has_local_models({"a": external, "b": via_port})
+    check_distinct_local_servers({"a": external, "b": via_port})
+    with pytest.raises(ValueError, match="different revisions or endpoints"):
+        check_distinct_local_servers({"a": local, "b": external})
+    monkeypatch.setenv("VLLM_BASE_URL", "http://gpu-vm:8001/v1")
+    assert not has_local_models({"a": "inspect:" + name, "b": local, "c": "hf_local:org/adapter/subfolder"})
+
+
+def test_vllm_resolver_refuses_previously_connected_base(monkeypatch):
+    from inspect_ai.model import get_model
+    from inspect_pipeline.eigenbench import _model_resolver
+    from inspect_pipeline.model_mapping import InspectModelRef, model_identity
+
+    name = "vllm/org/shared-endpoint-test"
+    url = "http://user:secret@vm-b/v1"
+    model = get_model(name, base_url=url, memoize=False)
+    # Inspect's already-running server is shared per base name, even with a fresh client.
+    monkeypatch.setattr(model.api._server, "base_url", "http://vm-a/v1")
+    monkeypatch.setenv("VLLM_BASE_URL", "http://vm-a/v1")
+    explicit = model_identity(model)
+    mapped = model_identity(InspectModelRef(name, {"base_url": url}))
+    assert explicit["vllm_endpoint_sha256"] == mapped["vllm_endpoint_sha256"]
+    assert "secret" not in json.dumps([explicit, mapped])
+    monkeypatch.setenv("VLLM_BASE_URL", "http://vm-c/v1")
+    assert model_identity(model) == explicit
+    with pytest.raises(RuntimeError, match="different server"):
+        _model_resolver({"member": model})("member")
+
+
+def test_direct_estimate_counts_the_actual_providers(run_dir, monkeypatch):
+    from pipeline.config import load_run_spec
+    from inspect_pipeline.collect import estimate_direct_calls_for_spec
+    import inspect_pipeline.model_mapping as mapping
+
+    folder, write_spec = run_dir
+    spec, _ = load_run_spec(str(write_spec()))
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    monkeypatch.setattr(mapping, "_resolve_hf_local", lambda *_: pytest.fail("resolved weights for estimate"))
+    spec["models"] = {
+        "local": "hf_local:org/adapter/subfolder", "native": "inspect:vllm/org/base",
+        "router": "org/hosted", "native_router": "inspect:openrouter/org/second",
+        "direct_api": "inspect:anthropic/test",
+    }
+    cache = folder / "estimate-cache.jsonl"
+    cache.write_text(json.dumps({"scenario_index": 0, "responses": {
+        "local": "a", "router": "b", "direct_api": "c",
+    }}) + "\n")
+    spec["collection"]["cached_responses_path"] = str(cache)
+    estimate = estimate_direct_calls_for_spec(spec, folder)
+    # Three scenarios, five judges. Each model has 3 responses and 30 judge calls.
+    assert estimate["total_logical_generations"] == 162
+    assert estimate["num_openrouter_models"] == 2
+    assert estimate["openrouter_requests"] == 65
+    assert estimate["local_logical_generations"] == 65
+    assert estimate["other_logical_generations"] == 32
+    monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+    estimate = estimate_direct_calls_for_spec(spec, folder)
+    assert estimate["openrouter_requests"] == 65
+    assert estimate["local_logical_generations"] == 0
+    assert estimate["other_logical_generations"] == 97
+
+
 def test_default_spec_builds_without_arguments(monkeypatch):
     """`inspect eval inspect_pipeline/eigenbench.py` needs no -T spec."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-key")
@@ -1050,7 +1124,7 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
         return ctx, loaded
 
     async def tracked_close(loaded):
-        assert len(loaded) == 1
+        assert not loaded  # The phase borrows a caller-supplied mock Model.
         await close(loaded)
         closed.extend(active)
         active.clear()

@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Mapping
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +23,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from pipeline.config.run_spec import _resolve_path_for_run
+from pipeline.elo import elo_scores
 from pipeline.utils import load_records, save_records
 
 
@@ -61,8 +61,9 @@ def parse_log_train(log_path: Path) -> dict:
 def parse_eigentrust(et_path: Path) -> list[float]:
     """Parse eigentrust.txt into a list of floats."""
     text = et_path.read_text()
-    numbers = re.findall(r"[\d.]+(?:e[+-]?\d+)?", text)
-    return [float(x) for x in numbers]
+    values = text.strip().removeprefix("EigenTrust scores:").strip()
+    values = values.removeprefix("[").removesuffix("]")
+    return [float(token) for token in values.replace(",", " ").split()]
 
 
 def evaluation_mode(spec: dict) -> str:
@@ -146,14 +147,13 @@ def get_git_info(repo_dir: Path) -> tuple[str | None, str | None]:
     return commit, repo_url
 
 
-def build_summary_from_eigentrust(et_scores: list[float], model_names: list[str]) -> list[dict]:
-    """Build a summary.json-compatible list from eigentrust scores (no bootstrap CI)."""
-    import math
-    n = len(model_names)
+def build_summary_from_eigentrust(
+    et_scores: list[float], model_names: list[str], *, direct_rating: bool = False,
+) -> list[dict]:
+    """Build a point summary using the same Elo conversion as analysis."""
+    elos = elo_scores(et_scores, len(model_names), direct_rating=direct_rating)
     rows = []
-    for i, name in enumerate(model_names):
-        trust = et_scores[i] if i < len(et_scores) else 0.0
-        elo = 1500.0 + 400.0 * math.log10(max(n * trust, 1e-12))
+    for i, (name, elo) in enumerate(zip(model_names, elos, strict=True)):
         rows.append({
             "model_index": i,
             "model_name": name,
@@ -201,7 +201,7 @@ def _load_json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _point_summary(rows: list[dict], eigentrust: list[float], model_names: list[str]) -> list[dict]:
+def _point_summary(rows: list[dict], trust_summary: list[dict]) -> list[dict]:
     """Convert direct point-estimate rows to the public summary schema."""
 
     if rows and all("elo_mean" in row for row in rows):
@@ -222,7 +222,7 @@ def _point_summary(rows: list[dict], eigentrust: list[float], model_names: list[
             )
         converted.sort(key=lambda row: row["elo_mean"], reverse=True)
         return converted
-    return build_summary_from_eigentrust(eigentrust, model_names)
+    return trust_summary
 
 
 def build_meta(
@@ -324,7 +324,13 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     )
     analysis_config.setdefault("bootstrap_unit", "scenario" if mode == "direct_rating" else "judgment")
     et_path = analysis_dir / "eigentrust.txt"
-    eigentrust = parse_eigentrust(et_path) if et_path.exists() else []
+    eigentrust = []
+    trust_summary = []
+    if et_path.exists():
+        eigentrust = parse_eigentrust(et_path)
+        trust_summary = build_summary_from_eigentrust(
+            eigentrust, list(spec["models"]), direct_rating=mode == "direct_rating",
+        )
 
     # Stage files
     dest = staging_dir / "runs" / name
@@ -340,9 +346,8 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     if stage_bootstrap and bootstrap_summary_path.exists():
         summary_data = _load_json(bootstrap_summary_path, [])
     else:
-        model_names = list(spec.get("models", {}).keys())
         point_rows = _load_json(analysis_dir / "summary.json", []) if mode == "direct_rating" else []
-        summary_data = _point_summary(point_rows, eigentrust, model_names)
+        summary_data = _point_summary(point_rows, trust_summary)
         if bootstrap_unavailable:
             for row in summary_data:
                 for field in ("elo_std", "elo_ci_lower", "elo_ci_upper"):

@@ -71,6 +71,56 @@ def test_stage_uses_bootstrap_artifacts_only_when_enabled(tmp_path, mode, output
     assert (dest / "data/bootstrap_samples.json").exists() is has_samples
 
 
+def test_pairwise_elo_matches_the_paper_and_native_analysis(tmp_path):
+    import math
+    from pipeline.train.train import eigentrust_to_elo
+
+    run = tmp_path / "run"
+    analysis = run / "btd_d2"
+    analysis.mkdir(parents=True)
+    _write_spec(run, "pairwise_btd", models={"a": "a", "b": "b", "c": "c"})
+    scores = [1e-15, 0.25, 0.75 - 1e-15]
+    (analysis / "eigentrust.txt").write_text(f"EigenTrust scores:\n{scores}\n")
+    expected = [1500 + 400 * math.log10(3 * t) for t in scores]
+    _, summary = stage_run("demo", run, tmp_path / "staged")
+    published = sorted(summary, key=lambda row: row["model_index"])
+    assert [row["elo_mean"] for row in published] == eigentrust_to_elo(scores, 3).tolist()
+    assert [row["elo_mean"] for row in published] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(("scores", "message"), [
+    ("[0, 1]", "positive trust"),
+    ("[-0.1, 1.1]", "nonnegative"),
+    ("[nan, 1]", "finite"),
+    ("[1]", "per model"),
+    ("[0.75, 0.75]", "sum to one"),
+])
+@pytest.mark.parametrize("has_bootstrap", [False, True])
+def test_pairwise_publication_refuses_invalid_trust(tmp_path, scores, message, has_bootstrap):
+    run = tmp_path / "run"
+    analysis = run / "btd_d2"
+    analysis.mkdir(parents=True)
+    _write_spec(run, "pairwise_btd", models={"a": "a", "b": "b"},
+                training={"bootstrap": {"enabled": has_bootstrap}})
+    if has_bootstrap:
+        (analysis / "bootstrap").mkdir()
+        (analysis / "bootstrap/summary.json").write_text('[{"elo_mean": 1500}]')
+    (analysis / "eigentrust.txt").write_text(f"EigenTrust scores:\n{scores}\n")
+    with pytest.raises(ValueError, match=message):
+        stage_run("demo", run, tmp_path / "staged")
+
+
+def test_direct_point_summary_preserves_native_zero_trust_elo(tmp_path):
+    import math
+    run = tmp_path / "run"
+    analysis = run / "direct_rating"
+    analysis.mkdir(parents=True)
+    _write_spec(run, models={"a": "a", "b": "b"})
+    (analysis / "eigentrust.txt").write_text("EigenTrust scores:\n[0. 1.]\n")
+    _, summary = stage_run("demo", run, tmp_path / "staged")
+    assert summary[-1]["elo_mean"] == pytest.approx(1500 + 400 * math.log10(2e-12))
+
+
 def test_stage_uses_configured_analysis_dir_exclusively(tmp_path):
     run = tmp_path / "run"
     (run / "direct_rating").mkdir(parents=True)

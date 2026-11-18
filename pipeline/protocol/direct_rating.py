@@ -526,6 +526,8 @@ def estimate_direct_calls(
     sampler_seed: int | None = None,
     assignments: list[dict] | None = None,
     openrouter_model_indices: set[int] | None = None,
+    other_model_indices: set[int] | None = None,
+    cached_other_responses: int = 0,
 ) -> dict:
     if num_scenarios < 0 or num_models < 0:
         raise ValueError("num_scenarios and num_models must be non-negative")
@@ -581,29 +583,32 @@ def estimate_direct_calls(
         "total_logical_generations": response_tasks + reflection_tasks + rating_tasks,
     }
     if num_openrouter_models is not None:
-        k = num_openrouter_models
-        total_remote_responses = num_scenarios * k
-        remote_responses = total_remote_responses - min(
-            max(0, int(cached_openrouter_responses)), total_remote_responses
-        )
-        if assignments is not None and openrouter_model_indices is not None:
-            remote_judge_tasks = sum(
-                len(assignment["eval_idxs"])
-                for assignment in assignments
-                if int(assignment["judge_idx"]) in openrouter_model_indices
-            )
-        elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
-            remote_judge_tasks = num_scenarios * k * (
-                num_models if include_self else max(0, num_models - 1)
-            )
-        else:
-            remote_judge_tasks = int(round(total_edges * k / num_models)) if num_models else 0
-        result["num_openrouter_models"] = k
+        def calls_for(count: int, indices: set[int] | None, cached: int) -> int:
+            responses = num_scenarios * count
+            responses -= min(max(0, cached), responses)
+            if assignments is not None and indices is not None:
+                judge_tasks = sum(
+                    len(row["eval_idxs"]) for row in assignments if int(row["judge_idx"]) in indices
+                )
+            elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
+                evaluees = num_models if include_self else max(0, num_models - 1)
+                judge_tasks = num_scenarios * count * evaluees
+            else:
+                judge_tasks = int(round(total_edges * count / num_models)) if num_models else 0
+            return responses + 2 * judge_tasks
+
+        result["num_openrouter_models"] = num_openrouter_models
         result["cached_openrouter_response_hits"] = min(
-            max(0, int(cached_openrouter_responses)), total_remote_responses
+            max(0, int(cached_openrouter_responses)), num_scenarios * num_openrouter_models
         )
-        result["openrouter_requests"] = remote_responses + 2 * remote_judge_tasks
+        result["openrouter_requests"] = calls_for(
+            num_openrouter_models, openrouter_model_indices, cached_openrouter_responses
+        )
+        other = 0
+        if other_model_indices is not None:
+            other = calls_for(len(other_model_indices), other_model_indices, cached_other_responses)
+            result["other_logical_generations"] = other
         result["local_logical_generations"] = (
-            result["total_logical_generations"] - result["openrouter_requests"]
+            result["total_logical_generations"] - result["openrouter_requests"] - other
         )
     return result

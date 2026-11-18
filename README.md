@@ -14,13 +14,11 @@ Compare language models against a constitution: a list of criteria such as
 kindness or honesty. Configure models, scenarios, and criteria in `spec.py`,
 collect judgments, then compute EigenTrust scores and Elo rankings.
 
-Collection runs on [Inspect](https://inspect.aisi.org.uk/); the earlier
-collectors have been removed. The native Inspect default is the direct-rating
-variant. The paper's grouped pairwise method has a separate task. The `numerical_rating/`,
-`numerical_rating_criteria/` and Petri experiments are separate entrypoints and
-are outside the proposed Register task. See the
-[reproduction procedure](docs/inspect-reproducibility.md) for pinned setup,
-complete-run evidence and public log preparation. Register submission is pending.
+Collection runs on [Inspect](https://inspect.aisi.org.uk/). Use the
+[pairwise task](docs/inspect-pairwise-protocol.md) for the paper's grouped
+comparisons. The default task runs the direct-rating variant. Its
+[reproduction guide](docs/inspect-reproducibility.md) includes the pinned setup,
+completed runs and public logs.
 
 ## Table of Contents
 - [Install](#install)
@@ -96,7 +94,7 @@ the spec sets different output paths. See [Outputs](#outputs) for the files.
 
 A spec is a Python file defining `RUN_SPEC`. Start from the
 [direct-rating example](runs/example_inspect/spec.py) or the
-[pairwise example](runs/example/spec.py).
+[pairwise example](runs/example_pairwise/spec.py).
 
 | Setting | Purpose |
 | --- | --- |
@@ -252,6 +250,8 @@ An analysis-only run never generates responses. See the [migration guide](docs/i
   the stationary vector is solved directly. A matrix without a unique answer
   raises an error. Damping applies only to direct ratings, and only when
   `evaluation.direct_rating.eigentrust_alpha` is set.
+- **Pairwise Elo.** For a panel of `N` models, a model with trust `t` scores
+  `1500 + 400 log10(N × t)` (paper §3.6). Zero trust has no finite Elo score.
 - **Model identity.** Analysis refuses records whose model names don't match the
   spec's model at the same index, and pairwise records with gaps in model
   indices. Analyse records with the spec they were collected with.
@@ -374,7 +374,10 @@ RUN_SPEC["collection"]["inspect"] = {
 
 Phased collection generates responses one model at a time, then loads each
 judge in turn. It limits GPU memory use for panels with multiple base models.
-The upstream wrapper enables phasing by default when local models are present.
+On a rented Linux GPU, run `scripts/run.py` on the VM and let Inspect start vLLM.
+The runner enables phasing when Inspect manages a vLLM server. To reuse a server
+you started yourself, set `VLLM_BASE_URL` to its API URL. See the
+[GPU VM setup](docs/inspect-migration.md#vllm-on-a-gpu-vm).
 
 Adapters sharing one base can share a vLLM server. Setting `phased=False` allows
 concurrent requests when the server and GPU can support them. Multi-adapter

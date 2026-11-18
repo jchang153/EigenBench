@@ -7,7 +7,7 @@ followed by ``scripts/export_evaluations.py``; used by scripts/run_inspect.py.
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from secrets import randbits
 
@@ -16,17 +16,15 @@ from inspect_ai import eval_retry
 from inspect_ai.log import EvalLog, read_eval_log
 
 from pipeline.config import load_run_spec
-from pipeline.protocol.response_cache import count_cached_responses
 from pipeline.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     build_direct_assignments,
     estimate_direct_calls,
     resolve_direct_sampling_settings,
 )
-from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import load_records
 
-from .eigenbench import _run_context, eigenbench, has_local_models, load_selection, resolve_spec_ref
+from .eigenbench import _run_context, eigenbench, cached_seed, has_local_models, load_selection, resolve_spec_ref
 from .phased import eigenbench_judge, eigenbench_responses
 from .export import (
     check_complete,
@@ -41,6 +39,7 @@ from .coverage import (
     _exported_key, evaluations_sha256, judgment_key, planned_from_assignments, record_collection,
 )
 from .provenance import check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint
+from .model_mapping import model_execution
 from .phases import STORE_RESPONSE
 
 
@@ -60,28 +59,24 @@ def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
     assignments = build_direct_assignments(
         selected, models, include_self=include_self, **sampling
     )
-    openrouter_nicks = {
-        nick for nick, value in models.items() if not is_hf_local_model(value)
-    }
-    cached_total, cached_remote = count_cached_responses(
-        collection_cfg.get("cached_responses_path"),
-        scenario_indices={int(item[0]) for item in selected},
-        model_nicks=set(models),
-        openrouter_nicks=openrouter_nicks,
-    )
+    routes = {nick: model_execution(value) for nick, value in models.items()}
+    seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, models, merge_rows=True)
+    cached_routes = Counter(routes[nick] for _, nick in seed)
+    openrouter_indices = {i for i, route in enumerate(routes.values()) if route == "openrouter"}
+    other_indices = {i for i, route in enumerate(routes.values()) if route == "other"}
     estimate = {
         "mode": "direct_rating",
         **estimate_direct_calls(
             num_scenarios=len(selected),
             num_models=len(models),
-            num_openrouter_models=len(openrouter_nicks),
+            num_openrouter_models=len(openrouter_indices),
             include_self=include_self,
-            cached_responses=cached_total,
-            cached_openrouter_responses=cached_remote,
+            cached_responses=len(seed),
+            cached_openrouter_responses=cached_routes["openrouter"],
             assignments=assignments,
-            openrouter_model_indices={
-                idx for idx, nick in enumerate(models) if nick in openrouter_nicks
-            },
+            openrouter_model_indices=openrouter_indices,
+            other_model_indices=other_indices,
+            cached_other_responses=cached_routes["other"],
             **sampling,
         ),
     }
@@ -141,27 +136,10 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
                       error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
 
 
-def _is_local(model) -> bool:
-    """Whether a resolved model runs on a local vLLM server, whatever its spec reference."""
+def _uses_vllm(model) -> bool:
+    """Inspect shares a vLLM client by base name, including for external servers."""
 
     return str(model).startswith("vllm/")
-
-
-async def _close_model(nick: str, resolve_model) -> None:
-    """Terminate a local model's server so the next one can have the GPU; API clients stay open."""
-
-    try:
-        model = resolve_model(nick)
-    except Exception:
-        return
-    if not _is_local(model):
-        return
-    aclose = getattr(model.api, "aclose", None)
-    if aclose is not None:
-        try:
-            await aclose()
-        except Exception as exc:  # a stuck server must not sink the run
-            print(f"  warning: could not close {nick}: {exc}")
 
 
 def _persist_responses(ctx, responses, generated) -> None:
@@ -206,8 +184,15 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     judge_logs = []
     response_errors: dict[tuple[int, str], str] = {}
 
-    def close(nick: str) -> None:
-        anyio.run(_close_model, nick, resolve_model)
+    def run_phase(task, nick: str) -> EvalLog:
+        model = resolve_model(nick)
+        try:
+            logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kw)
+            seen_logs.extend(logs)
+            return logs[0]
+        finally:
+            if _uses_vllm(model):
+                anyio.run(model.api.aclose)
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
@@ -215,25 +200,18 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
         missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
         if not missing:
             continue
-        logs = inspect_eval(
-            tasks=eigenbench_responses(spec_ref, model_nick=nick, models=models,
-                                       scenario_indices=missing),
-            model=None,
-            max_tasks=1,
-            **eval_kw,
-        )
-        seen_logs.append(logs[0])
-        for sample in logs[0].samples or []:
+        task = eigenbench_responses(spec_ref, model_nick=nick, models=models, scenario_indices=missing)
+        log = run_phase(task, nick)
+        for sample in log.samples or []:
             content = (sample.store or {}).get(STORE_RESPONSE)
             if isinstance(content, str) and content.strip():
                 responses[int(sample.metadata["scenario_index"])][nick] = content
                 generated.add((int(sample.metadata["scenario_index"]), nick))
             elif sample.error is not None:
                 response_errors[(int(sample.metadata["scenario_index"]), nick)] = sample.error.message
-        if logs[0].error is not None:
+        if log.error is not None:
             for s in missing:
-                response_errors.setdefault((int(s), nick), logs[0].error.message)
-        close(nick)
+                response_errors.setdefault((int(s), nick), log.error.message)
     _persist_responses(ctx, responses, generated)
 
     # Every policy needs every response: a judgment cannot be made without one.
@@ -277,17 +255,8 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     print(f"Phase 2/2: judgments, {len(edges_by_judge)} judge(s), one at a time")
     for nick, edges in edges_by_judge.items():
-        logs = inspect_eval(
-            tasks=eigenbench_judge(
-                spec_ref, judge_nick=nick, edges=edges, models=models
-            ),
-            model=None,
-            max_tasks=1,
-            **eval_kw,
-        )
-        judge_logs.append(logs[0])
-        seen_logs.append(logs[0])
-        close(nick)
+        task = eigenbench_judge(spec_ref, judge_nick=nick, edges=edges, models=models)
+        judge_logs.append(run_phase(task, nick))
 
     return judge_logs
 
@@ -401,7 +370,7 @@ def collect_direct_ratings_inspect(
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
     existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
-    estimate_spec = spec
+    estimate_spec = {**spec, "models": spec_models}
     if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
@@ -411,9 +380,9 @@ def collect_direct_ratings_inspect(
         else:
             resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
                              else randbits(64))
-        estimate_spec = {**spec, "collection": {**collection_cfg, "sampler_seed": resolved_seed}}
+        estimate_spec = {**estimate_spec, "collection": {**collection_cfg, "sampler_seed": resolved_seed}}
     estimate = write_call_estimate(estimate_spec, run_dir)
-    expected = estimate["rating_tasks"]
+    planned = estimate["rating_tasks"]
     ctx = _run_context(spec_ref, models, resolved_sampler_seed=resolved_seed)
     # A completed run short-circuits only if it is this plan's collection; anything else
     # is refused with what differs.
@@ -432,8 +401,6 @@ def collect_direct_ratings_inspect(
         f"{estimate['reflection_tasks']} reflections, {estimate['rating_tasks']} ratings)"
     )
 
-    # The estimate counts the spec's own models, so check completeness against it only then.
-    planned = expected if models is None else None
     eval_kw = eval_kwargs(inspect_cfg, log_dir)
     if previous is not None:
         # An explicit resume is a request to fill the gaps, not omit them again.
@@ -448,10 +415,9 @@ def collect_direct_ratings_inspect(
             judge_logs = _run_phased(spec_ref, spec_models, ctx, eval_kw, seen_logs)
             omissions: list[dict] = []
             records = records_from_logs(judge_logs, failure_policy=failure_policy, omissions=omissions)
-            if planned is not None:
-                check_complete(planned=planned, records=records, omissions=omissions)
+            check_complete(planned=planned, records=records, omissions=omissions)
             write_evaluations_atomic(evaluations_path, records)
-            write_omissions(evaluations_path, planned=planned or len(records) + len(omissions),
+            write_omissions(evaluations_path, planned=planned,
                             records=records, omissions=omissions)
             # The full-panel score is primary; retain every inference log behind it.
             others = [log for log in seen_logs if all(log is not judge for judge in judge_logs)]

@@ -51,9 +51,10 @@ overrides are recorded as custom generation settings. The direct-rating
 original OpenRouter collector. This prevents an older pairwise spec carrying
 direct-rating settings from silently changing its protocol.
 
-The Inspect scorer records criterion choices and judgment validity. These are
-collection diagnostics. EigenTrust and BTD scores still come from the existing
-analysis pipeline, pending native aggregate metrics in issue #34.
+The Inspect scorer records criterion choices and judgment validity for each
+sample. The full-panel metric fits BTD and reports EigenTrust, Elo and rank for
+each model. See [native metrics](inspect-native-metrics.md) for coverage and
+bootstrap intervals.
 
 Invalid verdicts are retried under the existing Inspect validation contract.
 The original collector recorded them unretried and dropped them during analysis.

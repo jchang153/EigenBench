@@ -33,3 +33,22 @@ Install with `pip install -e .`, or `pip install -e ".[local]"` for local vLLM
 models on Linux. The flat `requirements.txt` remains usable by hosted builds
 that install it from another working directory. Provider SDKs used by Inspect
 remain dependencies.
+
+### vLLM on a GPU VM
+
+Use `"inspect:vllm/Qwen/Qwen2.5-7B-Instruct"` in the spec. On a Linux GPU
+VM, the runner lets Inspect start the server and schedules one panel model at
+a time. For a server you already run, set
+`VLLM_BASE_URL=http://localhost:8000/v1` (or its network address). Inspect
+connects to that endpoint and EigenBench leaves phasing off by default when
+all models are externally served. Set `collection.inspect.phased` to override
+the schedule. The estimate counts managed generations under
+`local_logical_generations` and externally served generations under
+`other_logical_generations`. Only the OpenRouter provider adds to
+`openrouter_requests`.
+
+For an external server, preload LoRA adapters and select them by name, e.g.
+`"inspect:vllm/org/base:my-adapter"`. A downloaded `hf_local:` subfolder
+requires the same filesystem path on the server. Start a fresh Inspect process
+when switching a running base model to another endpoint.
+See [Inspect’s vLLM provider](https://inspect.aisi.org.uk/providers.html#vllm).

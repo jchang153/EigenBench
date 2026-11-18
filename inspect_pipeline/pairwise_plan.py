@@ -218,7 +218,7 @@ def pairwise_comparisons(groups: list[PairwiseGroup]) -> list[dict]:
     return rows
 
 
-def pairwise_call_counts(comparisons: list[dict]) -> dict:
+def pairwise_call_counts(comparisons: list[dict], *, model_routes: dict[str, str] | None = None) -> dict:
     """Count generations after cached responses have been added to the samples.
 
     Count one response per response group and evaluee unless supplied, one
@@ -233,9 +233,22 @@ def pairwise_call_counts(comparisons: list[dict]) -> dict:
             if not (isinstance(text, str) and text.strip()):
                 responses.add((row["response_group"], nick))
             reflections.add((row["group_id"], row["judge_nick"], nick))
-    return {
+    result = {
         "response_tasks": len(responses),
         "reflection_tasks": len(reflections),
         "comparison_tasks": len(comparisons),
         "total_logical_generations": len(responses) + len(reflections) + len(comparisons),
     }
+    if model_routes is not None:
+        from collections import Counter
+
+        calls = Counter(model_routes[nick] for _, nick in responses)
+        calls.update(model_routes[judge] for _, judge, _ in reflections)
+        calls.update(model_routes[row["judge_nick"]] for row in comparisons)
+        result.update(
+            num_openrouter_models=sum(route == "openrouter" for route in model_routes.values()),
+            openrouter_requests=calls["openrouter"],
+            local_logical_generations=calls["managed_vllm"],
+            other_logical_generations=calls["other"],
+        )
+    return result

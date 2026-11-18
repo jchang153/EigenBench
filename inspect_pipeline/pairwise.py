@@ -347,6 +347,19 @@ def pairwise_comparison_samples(
     return samples
 
 
+def planned_pairwise_comparisons(run_spec, selected, nicks):
+    mode = run_spec["evaluation"]["mode"]
+    if mode != "pairwise_btd":
+        raise ValueError(
+            "inspect_pipeline.pairwise supports evaluation.mode='pairwise_btd' only; "
+            "direct-rating runs use inspect_pipeline.eigenbench."
+        )
+    collection_cfg = run_spec["collection"]
+    sampling = resolve_pairwise_sampling_settings(collection_cfg, num_models=len(nicks))
+    groups = plan_pairwise_groups(selected, nicks, **sampling)
+    return sampling, len(groups), pairwise_comparisons(groups)
+
+
 def build_pairwise_task(
     spec: str,
     *,
@@ -371,19 +384,11 @@ def build_pairwise_task(
         spec, models, cache, build_assignments=False
     )
     run_spec = ctx["run_spec"]
-    mode = run_spec["evaluation"]["mode"]
-    if mode != "pairwise_btd":
-        raise ValueError(
-            "inspect_pipeline.pairwise supports evaluation.mode='pairwise_btd' only; "
-            "direct-rating runs use inspect_pipeline.eigenbench."
-        )
-    collection_cfg = ctx["collection_cfg"]
-    nicks = list(ctx["models"])
-    sampling = resolve_pairwise_sampling_settings(collection_cfg, num_models=len(nicks))
+    sampling, num_groups, comparisons = planned_pairwise_comparisons(
+        run_spec, ctx["selected"], list(ctx["models"])
+    )
     generation = ctx["generation"]
-    allow_ties = bool(collection_cfg.get("allow_ties", True))
-    groups = plan_pairwise_groups(ctx["selected"], nicks, **sampling)
-    comparisons = pairwise_comparisons(groups)
+    allow_ties = bool(ctx["collection_cfg"].get("allow_ties", True))
     criteria = ctx["criteria"]
     run_name = sanitize(str(run_spec["name"]))
     task_name = name or f"eigenbench_pairwise_{run_name}"
@@ -420,7 +425,7 @@ def build_pairwise_task(
                 **sampling,
                 "allow_ties": allow_ties,
                 "generation": generation,
-                "num_groups": len(groups),
+                "num_groups": num_groups,
             }
         },
     )

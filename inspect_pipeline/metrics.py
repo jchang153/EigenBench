@@ -171,7 +171,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
         if bootstrap_cfg.get("enabled", False) and bootstrap is None:
             values["bootstrap_unavailable_nonunique_eigentrust"] = 1.0
         values.update(_ranking_metrics(
-            result.eigentrust_scores, eigentrust_to_elo(result.eigentrust_scores, len(labels)),
+            result.eigentrust_scores, eigentrust_to_elo(result.eigentrust_scores, len(labels), direct_rating=True),
             labels, bootstrap=bootstrap,
         ))
     else:
