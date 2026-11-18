@@ -1008,13 +1008,22 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
     collect_direct_ratings_inspect(str(spec))
     target = tmp_path / "evaluations.jsonl"
     baseline = target.read_bytes()
+    manifest = tmp_path / "inspect_run.json"
+    baseline_provenance = json.loads(manifest.read_text())["model_provenance"][target.name]
+
+    def restore_baseline():
+        target.write_bytes(baseline)
+        info = json.loads(manifest.read_text())
+        info["model_provenance"][target.name] = baseline_provenance
+        manifest.write_text(json.dumps(info))
+
     with spec.open("a") as handle:
         handle.write('\nRUN_SPEC["dataset"]["count"] = 5\n')
     factory = runpy.run_path(str(spec))["_mock"]
     newcomers = {n: factory(n) for n in ("delta", "epsilon")}
     extend_run(str(spec), new_models=newcomers, additional_scenarios=2)
     single = [json.loads(line) for line in target.read_text().splitlines()]
-    target.write_bytes(baseline)
+    restore_baseline()
     with spec.open("a") as handle:
         handle.write('\nRUN_SPEC["collection"]["inspect"]["phased"] = True\n')
 
@@ -1066,7 +1075,7 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
     judge_log = tmp_path / "inspect_logs" / info["log_file"]
     with pytest.raises(ValueError, match="only one judge"):
         export_log(judge_log, evaluations_path=tmp_path / "partial.jsonl", append=True)
-    target.write_bytes(baseline)
+    restore_baseline()
     with pytest.raises(ValueError, match="requires phased execution"):
         extend_model(str(spec), new_model="delta", model_id="inspect:mockllm/model")
 
@@ -1099,3 +1108,55 @@ def test_extension_phasing_defaults_to_local_models(monkeypatch):
     prepared["models"] = {"api": "inspect:mockllm/model"}
     prepared["spec"]["collection"]["inspect"] = {"phased": True}
     assert _use_phased_extension(prepared)
+
+
+@pytest.mark.parametrize("layout", ["native", "phased", "single"])
+def test_extension_keeps_model_identities_across_exports(run_dir, layout):
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import extend_model, extend_run
+    from inspect_pipeline.export import export_log
+
+    tmp_path, write_spec = run_dir
+    base_spec = write_spec()
+    baseline_text = base_spec.read_text().replace(
+        'get_model("mockllm/model",', 'get_model(f"mockllm/{nick}-v1",',
+    )
+    base_spec.write_text(baseline_text)
+    collect_direct_ratings_inspect(str(base_spec), scoring=False)
+    source = tmp_path / "evaluations.jsonl"
+    source_before = source.read_bytes()
+    # Exercise the older direct collector's fingerprint, before manifests stored identities.
+    (tmp_path / "inspect_run.json").unlink()
+    (tmp_path / "collection_report.json").unlink()
+
+    output_dir = tmp_path / "expanded"
+    output_dir.mkdir()
+    spec = output_dir / "extension.py"
+    expanded_text = baseline_text.replace(repr(NICKS), repr(NICKS + ["delta"]))
+    first_extension = expanded_text + '\nRUN_SPEC["extension"] = {"from_evaluations": "../evaluations.jsonl"}\n'
+    spec.write_text(first_extension + '\nRUN_SPEC["models"]["alpha"] = "inspect:mockllm/alpha-v2"\n')
+    with pytest.raises(ValueError, match="references changed for existing nicks: alpha"):
+        extend_run(str(spec), dry_run=True)
+    output = output_dir / "evaluations.jsonl"
+    assert not output.exists()
+
+    spec.write_text(first_extension)
+    if layout == "native":
+        [log] = inspect_eval(extend_model(str(spec)), model=None, display="none",
+                             log_dir=str(output_dir / "custom-logs"))
+        export_log(log.location, append=True)
+    else:
+        with spec.open("a") as handle:
+            handle.write(f'\nRUN_SPEC["collection"]["inspect"]["phased"] = {layout == "phased"!r}\n')
+        extend_run(str(spec))
+    output_before = output.read_bytes()
+
+    spec.write_text(expanded_text.replace(repr(NICKS + ["delta"]), repr(NICKS + ["delta", "epsilon"]))
+                    + '\nRUN_SPEC["models"]["alpha"] = "inspect:mockllm/alpha-v2"\n'
+                    + '\nRUN_SPEC["models"]["delta"] = "inspect:mockllm/delta-v2"\n')
+    with pytest.raises(ValueError, match="references changed for existing nicks: alpha, delta"):
+        extend_run(str(spec), dry_run=True)
+    assert source.read_bytes() == source_before
+    assert output.read_bytes() == output_before

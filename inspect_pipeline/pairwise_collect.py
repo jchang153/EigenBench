@@ -186,7 +186,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
     record_collection(output.parent, "collection", planned=planned, logs=logs,
                       records=records, failure_policy=failure_policy,
                       evaluations_path=output)
-    write_inspect_run_info(output.parent, logs)
+    write_inspect_run_info(output.parent, logs, evaluations=(output, records))
     _persist_responses(cfg.get("cached_responses_path"), records)
     from .metrics import record_analysis_status
     if scoring:

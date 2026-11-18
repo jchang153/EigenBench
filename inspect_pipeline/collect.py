@@ -368,7 +368,8 @@ def collect_direct_ratings_inspect(
                 if panel_log is not None:
                     seen_logs.append(panel_log)
             write_inspect_run_info(evaluations_path.parent,
-                                   ([panel_log] if panel_log is not None else []) + judge_logs + others)
+                                   ([panel_log] if panel_log is not None else []) + judge_logs + others,
+                                   evaluations=(evaluations_path, records))
             target = evaluations_path
         else:
             task = eigenbench(spec_ref, models=models, panel_metrics=scoring,

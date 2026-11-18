@@ -1,6 +1,7 @@
 """Extend a finished run with models and scenarios, reusing existing records.
 """
 
+import json
 import random
 from collections import Counter
 from itertools import combinations
@@ -446,15 +447,57 @@ def check_spec_covers(spec_models, records: list[dict]) -> None:
         )
 
 
+def _source_model_identities(source: Path, records: list[dict], mode: str) -> dict[str, dict]:
+    """Read known contributors without inferring identities from a historical spec."""
+    from inspect_ai.log import read_eval_log
+
+    from inspect_pipeline.coverage import REPORT_FILE, evaluations_sha256
+    from inspect_pipeline.export import panel_model_identities, records_fingerprint
+    from inspect_pipeline.provenance import FINGERPRINT_FILE
+
+    manifest = source.with_name("inspect_run.json")
+    if manifest.is_file():
+        provenance = json.loads(manifest.read_text(encoding="utf-8")).get("model_provenance", {})
+        if source.name in provenance:
+            entry = provenance[source.name]
+            if entry["records_sha256"] != records_fingerprint(records):
+                raise ValueError(f"source records no longer match their model provenance: {source}")
+            return entry["models"]
+
+    # Older collection reports link exported rows to their judgment logs.
+    report_path = source.with_name(REPORT_FILE)
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else None
+    linked = report is not None and report.get("evaluations_sha256") == evaluations_sha256(source)
+    if linked:
+        for collection in report.get("collections", []):
+            if collection["kind"] != "collection" or collection["status"] != "exported":
+                continue
+            for entry in collection["logs"]:
+                path = source.parent / "inspect_logs" / Path(entry["file"]).name
+                if entry["role"] != "judgments" or entry["status"] != "success" or not path.is_file():
+                    continue
+                log = read_eval_log(path, header_only=True)
+                meta = (log.eval.metadata or {}).get("eigenbench", {})
+                if log.status == "success" and meta.get("panel") and not meta.get("extension_source"):
+                    return panel_model_identities(meta["panel"])
+
+    # Older direct runs also stored the original panel in their collection fingerprint.
+    fingerprint = source.with_name(FINGERPRINT_FILE)
+    legacy_path = report is None and source.name == "evaluations.jsonl"
+    if mode == DIRECT and fingerprint.is_file() and (linked or legacy_path):
+        identity = json.loads(fingerprint.read_text(encoding="utf-8")).get("identity", {})
+        return panel_model_identities(identity.get("models", []))
+    return {}
+
+
 def _prepare_extension(
     spec_ref, new_models=None, *, additional_scenarios=None, include_self=None, seed=42,
 ):
-    from pathlib import Path
-
     from pipeline.config import load_run_spec
     from pipeline.utils import load_records
 
     from inspect_pipeline.eigenbench import load_selection, resolve_spec_ref
+    from inspect_pipeline.model_mapping import model_identity
     from inspect_pipeline.provenance import changed_scenarios, constitution_differs
 
     spec_ref = resolve_spec_ref(spec_ref)
@@ -482,6 +525,15 @@ def _prepare_extension(
     additions = [name for name in models if name not in order]
     # Record indices, rather than spec insertion order, are authoritative.
     models = {name: models[name] for name in order + additions}
+    known = _source_model_identities(source, records, mode)
+    identities = {
+        nick: json.loads(json.dumps(model_identity(model), default=str))
+        for nick, model in models.items()
+    }
+    changed = [nick for nick in order if nick in known and known[nick] != identities[nick]]
+    if changed:
+        raise ValueError(f"extension model references changed for existing nicks: {', '.join(changed)}; "
+                         "retain the source model or use a new nickname")
     selected, criteria = load_selection(spec, run_dir)
     if constitution_differs(records, criteria):
         raise ValueError("extension criteria differ from the source records")
@@ -508,10 +560,17 @@ def _prepare_extension(
         records, additions, new_scenarios=extra, include_self=include_self, seed=seed,
         pairwise_group_size=spec["collection"].get("group_size", 4),
     )
+    # Keep source evidence and record only models that contribute during this extension.
+    active = {edge.judge for edge in plan.edges}
+    for edge in plan.edges:
+        for nick, response in ((edge.evaluee, edge.response), (edge.opponent, edge.opponent_response)):
+            if nick is not None and (not isinstance(response, str) or not response.strip()):
+                active.add(nick)
     return {
         "spec_ref": spec_ref, "spec": spec, "records": records, "models": models,
         "order": order, "plan": plan, "source": source, "output": output,
         "scenarios": {**old_scenarios, **extra},
+        "model_identities": {nick: identities[nick] for nick in models if nick in known or nick in active},
     }
 
 
@@ -529,6 +588,7 @@ def _extension_task(prepared, *, context=None, task_label=None):
     from inspect_pipeline.export import records_fingerprint
     result.metadata["eigenbench"]["extension_source"] = str(prepared["source"])
     result.metadata["eigenbench"]["extension_source_sha256"] = records_fingerprint(prepared["records"])
+    result.metadata["eigenbench"]["extension_model_identities"] = prepared["model_identities"]
     result.metadata["eigenbench"]["extension_expected_edges"] = len(plan.edges)
     result.metadata["eigenbench"]["extends_with"] = plan.new_models
     result.metadata["eigenbench"]["additional_scenarios"] = list(plan.new_scenarios)
@@ -558,9 +618,6 @@ def extend_run(
 
     The legacy positional (spec, nickname, reference) call remains supported.
     """
-    import json
-    from pathlib import Path
-
     from inspect_ai import eval as inspect_eval
 
     from inspect_pipeline.collect import eval_kwargs, log_names, record_refusal
@@ -617,7 +674,8 @@ def extend_run(
             raise RuntimeError("source records changed during collection; export the log manually")
         if prepared["output"] != prepared["source"] and prepared["output"].exists():
             raise RuntimeError("output appeared during collection; export the log manually")
-        write_evaluations_atomic(prepared["output"], prepared["records"] + new_records)
+        combined = prepared["records"] + new_records
+        write_evaluations_atomic(prepared["output"], combined)
     except BaseException as exc:  # interrupts too: report what ran, then stop
         record_refusal(run_dir, "extension", exc, planned=planned, logs=seen_logs,
                        log_dir=log_dir, before=before, failure_policy=failure_policy,
@@ -625,7 +683,8 @@ def extend_run(
         raise
     # Judgment logs first: the first is the primary log the viewer opens.
     others = [log for log in seen_logs if all(log is not judged for judged in logs)]
-    write_inspect_run_info(run_dir, list(logs) + others, append=True)
+    write_inspect_run_info(run_dir, list(logs) + others, append=True,
+                           evaluations=(prepared["output"], combined))
     record_collection(run_dir, "extension", planned=planned, logs=seen_logs, records=new_records,
                       failure_policy=failure_policy, evaluations_path=prepared["output"])
     missing = [name for name in plan.new_models if name not in spec["models"]]
