@@ -24,7 +24,7 @@ from inspect_ai.model import ChatMessageSystem, ChatMessageUser, Model  # noqa: 
 from inspect_ai.scorer import Score, Target, mean, scorer  # noqa: E402
 from inspect_ai.solver import Generate, Solver, TaskState, solver  # noqa: E402
 
-from pipeline.protocol.pairwise import (  # noqa: E402
+from eigenbench.protocol.pairwise import (  # noqa: E402
     build_comparison_prompt,
     build_reflection_prompt,
     build_reflection_user,

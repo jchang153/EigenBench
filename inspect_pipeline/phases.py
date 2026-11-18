@@ -22,7 +22,7 @@ from inspect_ai.model import (
 from inspect_ai.scorer import Score, Target, mean, scorer
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
-from pipeline.protocol import RESPONSE_SYSTEM_MESSAGE
+from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
 from pipeline.protocol.direct_rating import (
     build_direct_rating_prompt,
     build_direct_rating_user_prompt,

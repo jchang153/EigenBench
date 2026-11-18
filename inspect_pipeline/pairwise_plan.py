@@ -8,8 +8,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from eigenbench.protocol.samplers import select_sampler
 from pipeline.protocol.direct_rating import resolve_direct_generation_settings
-from pipeline.protocol.samplers import select_sampler
 
 PAIRWISE_PLAN_VERSION = 1
 
