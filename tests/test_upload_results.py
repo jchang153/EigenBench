@@ -227,3 +227,53 @@ def test_stage_rebuilds_report_only_for_matching_judgment_content(tmp_path):
     assert not (dest / log_file).exists()
     assert not (dest / "collection_report.json").exists()
     assert json.loads((dest / "evaluations.jsonl").read_text().splitlines()[0]) == rows[0]
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_catalogue_replaces_runs_against_the_revision_it_read(tmp_path, monkeypatch, batch):
+    from types import SimpleNamespace
+
+    import huggingface_hub
+    from scripts import upload_results as upload
+
+    revision = "a" * 40
+    published = {}
+    slug = "group/run" if batch else "run"
+    current = {"runs": [{"slug": "keep", "timestamp": "0"}, {"slug": slug, "timestamp": "1"}]}
+    source = tmp_path / "old-index.json"
+    source.write_text(json.dumps(current))
+    def download(*, revision, token, **kwargs):
+        assert revision == "a" * 40 and token == "test-token"
+        return str(source)
+
+    class Api:
+        token = "test-token"
+
+        def upload_folder(self, **kwargs):
+            return SimpleNamespace(oid=revision)
+
+        def dataset_info(self, repo_id):
+            assert batch  # Single publication uses its own artifact commit.
+            return SimpleNamespace(sha=revision)
+
+        def upload_file(self, *, path_or_fileobj, parent_commit, **kwargs):
+            assert parent_commit == revision
+            published.update(json.loads(path_or_fileobj))
+
+        def create_commit(self, *, operations, parent_commit, **kwargs):
+            assert parent_commit == revision
+            index = next(op for op in operations if op.path_in_repo == "index.json")
+            published.update(json.loads(index.path_or_fileobj))
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda **kwargs: Api())
+    monkeypatch.setattr(upload, "stage_run", lambda *args: (_meta({}), []))
+    base = tmp_path / "group"
+    run = base / "run"
+    run.mkdir(parents=True)
+    (run / "spec.py").touch()
+    if batch:
+        upload.upload_batch(base, "group", "org/runs")
+    else:
+        upload.upload_run(slug, run, "org/runs")
+    assert [item["slug"] for item in published["runs"]] == [slug, "keep"]
