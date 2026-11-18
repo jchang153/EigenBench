@@ -150,12 +150,18 @@ def test_public_commands_use_inspect_and_never_precollect(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize("script", ["run_collect.py", "run_collect_responses.py"])
-def test_retired_commands_fail_before_loading_a_spec(script):
+def test_retired_commands_fail_before_loading_a_spec(tmp_path, script):
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / script), "missing.py"],
-                            cwd=ROOT, text=True, capture_output=True)
+                            cwd=tmp_path, text=True, capture_output=True)
     assert result.returncode != 0
     assert "retired" in result.stderr and "scripts/run.py" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_retired_commands_share_the_migration_message():
+    from scripts import run_collect, run_collect_responses
+
+    assert run_collect_responses.main is run_collect.main
 
 
 def _assert_equal(actual, expected):
