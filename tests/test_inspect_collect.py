@@ -872,10 +872,16 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
     # Native Inspect export also includes the baseline when writing a fresh output.
     log = next((expanded / "inspect_logs").glob("*.eval"))
     exported = expanded / "exported.jsonl"
+    from inspect_pipeline.export import load_log, records_fingerprint
     with pytest.raises(ValueError, match="require --append"):
         export_log(log, evaluations_path=exported)
-    export_log(log, evaluations_path=exported, append=True)
+    legacy_log = load_log(log)
+    legacy_log.eval.metadata["eigenbench"].pop("extension_model_identities")
+    export_log(legacy_log, evaluations_path=exported, append=True)
     assert [json.loads(line) for line in exported.read_text().splitlines()] == combined
+    provenance = json.loads((expanded / "inspect_run.json").read_text())["model_provenance"][exported.name]
+    assert provenance["records_sha256"] == records_fingerprint(combined)
+    assert set(provenance["models"]) == set(expected_order)
 
     # A missing or modified baseline must never produce an extension-only output.
     rejected = expanded / "rejected.jsonl"
@@ -892,7 +898,6 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
     source.write_bytes(before)
     # Formatting changes are harmless, but old logs without a fingerprint and
     # successful logs containing only a subset of the plan must be rejected.
-    from inspect_pipeline.export import load_log
     source.write_text("\n".join(json.dumps(r, sort_keys=True) for r in original) + "\n")
     export_log(log, evaluations_path=expanded / "reformatted.jsonl", append=True)
     source.write_bytes(before)
@@ -1160,3 +1165,36 @@ def test_extension_keeps_model_identities_across_exports(run_dir, layout):
         extend_run(str(spec), dry_run=True)
     assert source.read_bytes() == source_before
     assert output.read_bytes() == output_before
+
+
+def test_appending_an_inspect_log_preserves_model_provenance(run_dir):
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.eigenbench import eigenbench
+    from inspect_pipeline.export import export_log, records_fingerprint
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec()
+    baseline = collect_direct_ratings_inspect(str(spec), scoring=False)
+    output = tmp_path / "evaluations.jsonl"
+    initial_bytes = output.read_bytes()
+    info_path = tmp_path / "inspect_run.json"
+    initial_info = info_path.read_bytes()
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["dataset"]["start"] = 3\n')
+    [log] = inspect_eval(eigenbench(str(spec), panel_metrics=False), model=None, display="none",
+                         log_dir=str(tmp_path / "inspect_logs"))
+    changed = log.model_copy(deep=True)
+    changed.eval.metadata["eigenbench"]["panel"][0]["name"] = "mockllm/other"
+    with pytest.raises(ValueError, match="model references for existing nicks: alpha"):
+        export_log(changed, append=True)
+    assert output.read_bytes() == initial_bytes
+    assert info_path.read_bytes() == initial_info
+
+    appended, _ = export_log(log, append=True)
+    assert len(appended) == len(baseline)
+    refreshed = json.loads(info_path.read_text())["model_provenance"][output.name]
+    previous = json.loads(initial_info)["model_provenance"][output.name]
+    assert refreshed["models"] == previous["models"]
+    assert refreshed["records_sha256"] == records_fingerprint(baseline + appended)

@@ -290,7 +290,8 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
 
 def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False,
                            primary: bool = True,
-                           evaluations: tuple[Path, list[dict]] | None = None) -> Path:
+                           evaluations: tuple[Path, list[dict]] | None = None,
+                           model_identities: dict[str, dict] | None = None) -> Path:
     """Record which log(s) produced a run, so the upload can carry them.
 
     ``log_files`` lists every log; ``append`` (an extension) adds to the run's earlier ones.
@@ -314,7 +315,9 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: 
         output, records = evaluations
         for item in logs:
             meta = (item.eval.metadata or {}).get("eigenbench", {})
-            if append and "extension_model_identities" in meta:
+            if model_identities is not None:
+                models = model_identities
+            elif append and "extension_model_identities" in meta:
                 models = meta["extension_model_identities"]
             elif not append and "panel" in meta:
                 models = panel_model_identities(meta["panel"])
@@ -393,6 +396,23 @@ def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
             os.unlink(tmp_path)
 
 
+def _appended_model_identities(target: Path, existing: list[dict], records: list[dict],
+                               panel: list[dict], *, direct: bool, log_dir: Path) -> dict[str, dict]:
+    from .extend import DIRECT, PAIRWISE, _source_model_identities
+
+    mode = DIRECT if direct else PAIRWISE
+    known = _source_model_identities(target, existing, mode, log_dir=log_dir) if existing else {}
+    if direct:
+        observed = {row[role]["name"] for row in records for role in ("judge", "evaluee")}
+    else:
+        observed = {row[field] for row in records for field in ("judge_name", "eval1_name", "eval2_name")}
+    added = {nick: identity for nick, identity in panel_model_identities(panel).items() if nick in observed}
+    changed = sorted(nick for nick in known.keys() & added.keys() if known[nick] != added[nick])
+    if changed:
+        raise ValueError(f"appended log changes model references for existing nicks: {', '.join(changed)}")
+    return known | added
+
+
 def export_log(
     log: str | Path | EvalLog,
     *,
@@ -455,6 +475,7 @@ def export_log(
     if meta.get("extension_source") and not append:
         raise ValueError("extension logs require --append to preserve the source records")
     combined = records
+    model_identities = None
     if append:
         from pipeline.utils import load_records
 
@@ -476,6 +497,11 @@ def export_log(
             existing = source_records
         else:
             existing = load_records(str(target)) if target.exists() else []
+        if "extension_model_identities" not in meta:
+            model_identities = _appended_model_identities(
+                source or target, existing, records, meta.get("panel") or [], direct=direct,
+                log_dir=Path(str(log.location)).resolve().parent,
+            )
         def identity(r):
             if r.get("record_type") == "direct_rating":
                 return (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
@@ -492,7 +518,8 @@ def export_log(
         if direct:
             write_omissions(target, planned=planned or _logged_plan(log), records=records,
                             omissions=omissions)
-    write_inspect_run_info(target.parent, log, append=append, evaluations=(target, combined))
+    write_inspect_run_info(target.parent, log, append=append, evaluations=(target, combined),
+                           model_identities=model_identities)
     if report:
         from .coverage import record_collection
 

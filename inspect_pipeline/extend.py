@@ -447,7 +447,8 @@ def check_spec_covers(spec_models, records: list[dict]) -> None:
         )
 
 
-def _source_model_identities(source: Path, records: list[dict], mode: str) -> dict[str, dict]:
+def _source_model_identities(source: Path, records: list[dict], mode: str, *,
+                             log_dir: str | Path | None = None) -> dict[str, dict]:
     """Read known contributors without inferring identities from a historical spec."""
     from inspect_ai.log import read_eval_log
 
@@ -469,17 +470,23 @@ def _source_model_identities(source: Path, records: list[dict], mode: str) -> di
     report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else None
     linked = report is not None and report.get("evaluations_sha256") == evaluations_sha256(source)
     if linked:
+        directories = [source.parent / "inspect_logs"]
+        if log_dir:
+            directories.insert(0, source.parent / log_dir)
         for collection in report.get("collections", []):
             if collection["kind"] != "collection" or collection["status"] != "exported":
                 continue
             for entry in collection["logs"]:
-                path = source.parent / "inspect_logs" / Path(entry["file"]).name
-                if entry["role"] != "judgments" or entry["status"] != "success" or not path.is_file():
+                if entry["role"] != "judgments" or entry["status"] != "success":
                     continue
-                log = read_eval_log(path, header_only=True)
-                meta = (log.eval.metadata or {}).get("eigenbench", {})
-                if log.status == "success" and meta.get("panel") and not meta.get("extension_source"):
-                    return panel_model_identities(meta["panel"])
+                for directory in dict.fromkeys(directories):
+                    path = directory / Path(entry["file"]).name
+                    if not path.is_file():
+                        continue
+                    log = read_eval_log(path, header_only=True)
+                    meta = (log.eval.metadata or {}).get("eigenbench", {})
+                    if log.status == "success" and meta.get("panel") and not meta.get("extension_source"):
+                        return panel_model_identities(meta["panel"])
 
     # Older direct runs also stored the original panel in their collection fingerprint.
     fingerprint = source.with_name(FINGERPRINT_FILE)
@@ -525,7 +532,8 @@ def _prepare_extension(
     additions = [name for name in models if name not in order]
     # Record indices, rather than spec insertion order, are authoritative.
     models = {name: models[name] for name in order + additions}
-    known = _source_model_identities(source, records, mode)
+    inspect_cfg = spec["collection"].get("inspect") or {}
+    known = _source_model_identities(source, records, mode, log_dir=inspect_cfg.get("log_dir"))
     identities = {
         nick: json.loads(json.dumps(model_identity(model), default=str))
         for nick, model in models.items()

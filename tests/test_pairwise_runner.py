@@ -172,3 +172,31 @@ def test_pairwise_refusal_keeps_a_concurrent_export_report(tmp_path, monkeypatch
         collect_pairwise_inspect(spec, models=panel([]))
     assert output.read_text() == '{"concurrent": true}\n'
     assert report_path.read_text() == concurrent_report
+
+
+def test_pairwise_extension_checks_legacy_provenance_in_configured_log_dir(tmp_path):
+    from inspect_pipeline.export import export_log, load_log
+    from inspect_pipeline.extend import extend_run
+
+    spec = Path(write_spec(tmp_path, groups=1))
+    with spec.open("a") as handle:
+        handle.write(
+            '\nfrom test_pairwise_runner import panel\n'
+            'RUN_SPEC["models"] = panel([])\n'
+            'RUN_SPEC["collection"]["inspect"]["log_dir"] = "custom_logs"\n'
+        )
+    collect_pairwise_inspect(str(spec))
+    info_path = tmp_path / "inspect_run.json"
+    info = json.loads(info_path.read_text())
+    del info["model_provenance"]
+    info_path.write_text(json.dumps(info))
+    log = load_log(tmp_path / "custom_logs" / info["log_file"])
+    log.eval.metadata["eigenbench"]["panel"][0]["name"] = "mockllm/different"
+    with pytest.raises(ValueError, match="appended log changes model references for existing nicks: a"):
+        export_log(log, append=True)
+
+    extend_run(str(spec), new_models={"d": "inspect:mockllm/model"}, dry_run=True)
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["models"]["a"] = "inspect:mockllm/different"\n')
+    with pytest.raises(ValueError, match="model references changed for existing nicks: a"):
+        extend_run(str(spec), new_models={"d": "inspect:mockllm/model"}, dry_run=True)
