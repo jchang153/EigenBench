@@ -12,6 +12,8 @@ from pathlib import Path
 from secrets import randbits
 
 from inspect_ai import eval as inspect_eval
+from inspect_ai import eval_retry
+from inspect_ai.log import EvalLog, read_eval_log
 
 from pipeline.config import load_run_spec
 from pipeline.protocol.response_cache import count_cached_responses
@@ -24,18 +26,21 @@ from pipeline.protocol.direct_rating import (
 from pipeline.model_refs import is_hf_local_model
 from pipeline.utils import load_records
 
-from .eigenbench import _run_context, eigenbench, has_local_models, load_selection
+from .eigenbench import _run_context, eigenbench, has_local_models, load_selection, resolve_spec_ref
 from .phased import eigenbench_judge, eigenbench_responses
 from .export import (
     check_complete,
     export_log,
+    records_from_log,
     records_from_logs,
     write_evaluations_atomic,
     write_inspect_run_info,
     write_omissions,
 )
-from .coverage import planned_from_assignments, record_collection
-from .provenance import check_reusable, read_resolved_sampler_seed, write_fingerprint
+from .coverage import (
+    _exported_key, evaluations_sha256, judgment_key, planned_from_assignments, record_collection,
+)
+from .provenance import check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint
 from .phases import STORE_RESPONSE
 
 
@@ -287,12 +292,90 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     return judge_logs
 
 
+def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dict],
+                      eval_kw: dict, seen_logs: list) -> list[EvalLog]:
+    """Resume a hosted direct task without recomputing answers or valid judgments."""
+    args = log.eval.task_args_passed or {}
+    original_spec = args.get("spec")
+    if (log.eval.task != task.name or log.eval.model != "none/none"
+            or not isinstance(original_spec, str)
+            or Path(resolve_spec_ref(original_spec)).resolve() != Path(resolve_spec_ref(spec_ref)).resolve()
+            or args.get("models") is not None):
+        raise ValueError("Resume requires an Inspect log from this spec's hosted direct-rating task")
+
+    old_meta = (log.eval.metadata or {}).get("eigenbench", {})
+    identity = ("criteria_sha256", "dataset", "panel", "include_self", "scale_min",
+                "scale_max", "sampling", "generation")
+    if any(key not in old_meta or old_meta[key] != ctx["meta"][key] for key in identity):
+        raise ValueError("Cannot resume: the log's dataset, rubric, model panel or settings differ")
+    config = log.eval.config
+    if (config.limit is not None or config.sample_id is not None or config.sample_shuffle
+            or config.epochs not in (None, 1)):
+        raise ValueError("Resume requires a log of the full judgment plan, not a sample selection")
+    if config.log_samples is False or log.invalidated:
+        raise ValueError("Resume requires a log with intact sample records")
+
+    wanted = {sample.id: sample.metadata for sample in task.dataset}
+    logged = set()
+    done = set()
+    for sample in log.samples or []:
+        md = wanted.get(sample.id)
+        if (md is None or sample.id in logged or sample.epoch != 1
+                or judgment_key(sample.metadata) != judgment_key(md)
+                or sample.metadata.get("scenario") != md["scenario"]):
+            raise ValueError("Cannot resume: logged samples do not match the planned judgments")
+        logged.add(sample.id)
+        if sample.error is None:
+            done.add(sample.id)
+
+    prior = records_from_log(log, strict=False) if logged else []
+    if len(prior) != len(done):
+        raise ValueError("Cannot resume: a successful sample is missing judgment content")
+    _require_retained_records(existing, prior)
+    missing = wanted.keys() - done
+    for sample_id in missing:
+        md = wanted[sample_id]
+        if (int(md["scenario_index"]), md["eval_nick"]) not in ctx["seed"]:
+            raise ValueError(f"Cannot resume without the original cached answer for {sample_id}")
+    for row in prior:
+        key = (row["scenario_index"], row["evaluee"]["name"])
+        if key in ctx["seed"] and ctx["seed"][key] != row["response"]:
+            raise ValueError(f"Cannot resume: cached answer differs from the log at {key}")
+
+    if not missing:
+        seen_logs.append(log)
+        return [log]
+    resume_identity = old_meta.get("resume_identity")
+    if resume_identity is None:
+        # Older logs cannot prove the contents of their original cache for unstarted samples.
+        print("Warning: this log predates answer fingerprints; use its original frozen response cache.")
+    elif resume_identity != direct_resume_identity(ctx):
+        raise ValueError("Cannot resume: cached answers or judging prompts changed since this log")
+    print(f"Resuming {len(missing)}/{len(wanted)} judgments with Inspect; retaining {len(done)}")
+    # The solver's attempt cache can contain the same invalid completions. Disable
+    # it only for this retry; Inspect supplies completed samples from the original log.
+    retry_log = log.model_copy(update={
+        "eval": log.eval.model_copy(update={"task_args_passed": {**args, "cache": False}})
+    })
+    logs = eval_retry(retry_log, **eval_kw)
+    seen_logs.extend(logs)
+    _require_retained_records(prior, records_from_log(logs[0], strict=False))
+    return logs
+
+
+def _require_retained_records(prior: list[dict], current: list[dict]) -> None:
+    by_key = {_exported_key(row): row for row in current}
+    if any(by_key.get(_exported_key(row)) != row for row in prior):
+        raise ValueError("Cannot resume: the Inspect log would discard or change existing judgments")
+
+
 def collect_direct_ratings_inspect(
     spec_ref: str,
     *,
     models: dict[str, object] | None = None,
     analysis_status: dict | None = None,
     scoring: bool = True,
+    resume_log: str | None = None,
 ) -> list[dict]:
     """Run collection for a run spec and write evaluations.jsonl."""
 
@@ -309,21 +392,32 @@ def collect_direct_ratings_inspect(
     if not log_dir.is_absolute():
         log_dir = evaluations_path.parent / log_dir
 
+    spec_models = models if models is not None else spec["models"]
+    phased = bool(inspect_cfg.get("phased", has_local_models(spec_models)))
+    if resume_log and (phased or models is not None):
+        raise ValueError("Resuming from a log supports hosted direct ratings without model overrides")
+    previous = read_eval_log(str(Path(resume_log).resolve())) if resume_log else None
+    before_resume = evaluations_sha256(evaluations_path) if previous is not None else None
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
+    existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
     estimate_spec = spec
     if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
             and collection_cfg.get("sampler_seed") is None):
-        resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
-                         else randbits(64))
+        if previous is not None:
+            resolved_seed = (previous.eval.task_args_passed or {}).get("resolved_sampler_seed")
+            if type(resolved_seed) is not int:
+                raise ValueError("Cannot resume: the log does not record the resolved sampler seed")
+        else:
+            resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
+                             else randbits(64))
         estimate_spec = {**spec, "collection": {**collection_cfg, "sampler_seed": resolved_seed}}
     estimate = write_call_estimate(estimate_spec, run_dir)
     expected = estimate["rating_tasks"]
     ctx = _run_context(spec_ref, models, resolved_sampler_seed=resolved_seed)
     # A completed run short-circuits only if it is this plan's collection; anything else
     # is refused with what differs.
-    if has_output:
-        existing = load_records(str(evaluations_path))
+    if has_output and previous is None:
         omitted_path = evaluations_path.with_name("omitted_samples.json")
         omitted = []
         if failure_policy == "omit_invalid_judgments" and omitted_path.exists():
@@ -341,8 +435,9 @@ def collect_direct_ratings_inspect(
     # The estimate counts the spec's own models, so check completeness against it only then.
     planned = expected if models is None else None
     eval_kw = eval_kwargs(inspect_cfg, log_dir)
-    spec_models = models if models is not None else spec["models"]
-    phased = bool(inspect_cfg.get("phased", has_local_models(spec_models)))
+    if previous is not None:
+        # An explicit resume is a request to fill the gaps, not omit them again.
+        failure_policy = "strict"
 
     seen_logs: list = []
     planned_judgments = None
@@ -376,8 +471,13 @@ def collect_direct_ratings_inspect(
                               write_artifacts=bool(spec.get("training", {}).get("enabled", True)),
                               resolved_sampler_seed=resolved_seed)
             planned_judgments = [sample.metadata for sample in task.dataset]
-            logs = inspect_eval(tasks=task, model=None, **eval_kw)
-            seen_logs.extend(logs)
+            if previous is not None:
+                logs = _resume_judgments(previous, task, ctx, spec_ref, existing, eval_kw, seen_logs)
+                if evaluations_sha256(evaluations_path) != before_resume:
+                    raise RuntimeError("Saved judgments changed during the retry; nothing overwritten")
+            else:
+                logs = inspect_eval(tasks=task, model=None, **eval_kw)
+                seen_logs.extend(logs)
             records, target = export_log(
                 logs[0],
                 evaluations_path=str(evaluations_path),
@@ -387,9 +487,14 @@ def collect_direct_ratings_inspect(
                 report=False,
             )
     except BaseException as exc:  # interrupts too: report what ran, then stop
-        record_refusal(evaluations_path.parent, "collection", exc, planned=planned_judgments,
-                       logs=seen_logs, log_dir=log_dir, before=before,
-                       failure_policy=failure_policy, evaluations_path=evaluations_path)
+        if previous is not None and evaluations_path.exists():
+            # A refused retry did not replace the existing export or its provenance.
+            for log in seen_logs:
+                print(f"Retry did not replace the saved output. Inspect log: {log.location}")
+        else:
+            record_refusal(evaluations_path.parent, "collection", exc, planned=planned_judgments,
+                           logs=seen_logs, log_dir=log_dir, before=before,
+                           failure_policy=failure_policy, evaluations_path=evaluations_path)
         raise
     record_collection(evaluations_path.parent, "collection", planned=planned_judgments,
                       logs=seen_logs, records=records, failure_policy=failure_policy,

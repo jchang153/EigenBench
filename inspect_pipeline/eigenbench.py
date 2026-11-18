@@ -462,6 +462,7 @@ def eigenbench(
     check_distinct_local_servers(ctx["models"])
     criteria = ctx["criteria"]
     from inspect_pipeline.metrics import analysis_config, panel_scorer
+    from inspect_pipeline.provenance import direct_resume_identity
     samples = build_edge_samples(ctx["assignments"])
     config = analysis_config(ctx, planned=len(samples), write_artifacts=write_artifacts) if panel_metrics else None
     return Task(
@@ -484,7 +485,8 @@ def eigenbench(
         viewer=ViewerConfig(task_samples_view=_samples_view(criteria)),
         name=f"eigenbench_{ctx['run_spec']['name']}",
         display_name=f"EigenBench direct rating — {ctx['run_spec']['name']}",
-        metadata={"eigenbench": {**ctx["meta"], **({"analysis": config} if config is not None else {})}},
+        metadata={"eigenbench": {**ctx["meta"], "resume_identity": direct_resume_identity(ctx),
+                                 **({"analysis": config} if config is not None else {})}},
         # Omitting invalid judgments needs the eval to survive a failed sample; export still vets each.
         fail_on_error=(False if ctx["meta"]["failure_policy"] == "omit_invalid_judgments" else None),
     )

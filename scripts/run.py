@@ -103,7 +103,7 @@ def _resolve_upload_backend(upload_cfg: dict) -> str:
     return backend
 
 
-def main(spec_ref: str, collection_enabled: bool | None = None):
+def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: str | None = None):
     spec, run_dir = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
     training_cfg = spec.get("training", {})
@@ -113,6 +113,11 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
     upload_to_space = upload_enabled and upload_backend == "valuearena_space"
     upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
+    if resume_log is not None and (
+        evaluation_mode != "direct_rating" or spec.get("extension")
+        or not (collection_cfg.get("enabled", True) if collection_enabled is None else collection_enabled)
+    ):
+        raise ValueError("--resume-log requires an enabled direct-rating collection, not an extension")
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
     space_spec_path = None
     if upload_to_space:
@@ -135,7 +140,9 @@ def main(spec_ref: str, collection_enabled: bool | None = None):
             collect_pairwise_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status)
         else:
             from inspect_pipeline.collect import collect_direct_ratings_inspect
-            collect_direct_ratings_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status)
+            resume = {"resume_log": resume_log} if resume_log is not None else {}
+            collect_direct_ratings_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status,
+                                           **resume)
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
 
@@ -255,19 +262,23 @@ def cli() -> None:
     parser.add_argument("spec", help="Path to run spec")
     parser.add_argument("--collection-enabled", type=str.lower, choices=["true", "false"], default=None,
                         help="Override collection.enabled (true/false)")
+    parser.add_argument("--resume-log", metavar="EVAL_LOG",
+                        help="Retry only unfinished hosted direct judgments from this Inspect log")
     parser.add_argument(
         "--estimate-calls",
         action="store_true",
         help="Print the planned logical generation/API counts without running collection",
     )
     args = parser.parse_args()
+    if args.estimate_calls and args.resume_log:
+        parser.error("--estimate-calls and --resume-log cannot be combined")
     collection_override = None
     if args.collection_enabled is not None:
         collection_override = args.collection_enabled.lower() == "true"
     if args.estimate_calls:
         print(pprint.pformat(estimate_calls(args.spec), sort_dicts=False))
     else:
-        main(args.spec, collection_enabled=collection_override)
+        main(args.spec, collection_enabled=collection_override, resume_log=args.resume_log)
 
 
 if __name__ == "__main__":
