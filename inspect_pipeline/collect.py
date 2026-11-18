@@ -136,27 +136,10 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
                       error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
 
 
-def _is_local(model) -> bool:
-    """Whether a resolved model runs on a local vLLM server, whatever its spec reference."""
+def _uses_vllm(model) -> bool:
+    """Inspect shares a vLLM client by base name, including for external servers."""
 
     return str(model).startswith("vllm/")
-
-
-async def _close_model(nick: str, resolve_model) -> None:
-    """Terminate a local model's server so the next one can have the GPU; API clients stay open."""
-
-    try:
-        model = resolve_model(nick)
-    except Exception:
-        return
-    if not _is_local(model):
-        return
-    aclose = getattr(model.api, "aclose", None)
-    if aclose is not None:
-        try:
-            await aclose()
-        except Exception as exc:  # a stuck server must not sink the run
-            print(f"  warning: could not close {nick}: {exc}")
 
 
 def _persist_responses(ctx, responses, generated) -> None:
@@ -201,8 +184,15 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     judge_logs = []
     response_errors: dict[tuple[int, str], str] = {}
 
-    def close(nick: str) -> None:
-        anyio.run(_close_model, nick, resolve_model)
+    def run_phase(task, nick: str) -> EvalLog:
+        model = resolve_model(nick)
+        try:
+            logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kw)
+            seen_logs.extend(logs)
+            return logs[0]
+        finally:
+            if _uses_vllm(model):
+                anyio.run(model.api.aclose)
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
@@ -210,25 +200,18 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
         missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
         if not missing:
             continue
-        logs = inspect_eval(
-            tasks=eigenbench_responses(spec_ref, model_nick=nick, models=models,
-                                       scenario_indices=missing),
-            model=None,
-            max_tasks=1,
-            **eval_kw,
-        )
-        seen_logs.append(logs[0])
-        for sample in logs[0].samples or []:
+        task = eigenbench_responses(spec_ref, model_nick=nick, models=models, scenario_indices=missing)
+        log = run_phase(task, nick)
+        for sample in log.samples or []:
             content = (sample.store or {}).get(STORE_RESPONSE)
             if isinstance(content, str) and content.strip():
                 responses[int(sample.metadata["scenario_index"])][nick] = content
                 generated.add((int(sample.metadata["scenario_index"]), nick))
             elif sample.error is not None:
                 response_errors[(int(sample.metadata["scenario_index"]), nick)] = sample.error.message
-        if logs[0].error is not None:
+        if log.error is not None:
             for s in missing:
-                response_errors.setdefault((int(s), nick), logs[0].error.message)
-        close(nick)
+                response_errors.setdefault((int(s), nick), log.error.message)
     _persist_responses(ctx, responses, generated)
 
     # Every policy needs every response: a judgment cannot be made without one.
@@ -272,17 +255,8 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     print(f"Phase 2/2: judgments, {len(edges_by_judge)} judge(s), one at a time")
     for nick, edges in edges_by_judge.items():
-        logs = inspect_eval(
-            tasks=eigenbench_judge(
-                spec_ref, judge_nick=nick, edges=edges, models=models
-            ),
-            model=None,
-            max_tasks=1,
-            **eval_kw,
-        )
-        judge_logs.append(logs[0])
-        seen_logs.append(logs[0])
-        close(nick)
+        task = eigenbench_judge(spec_ref, judge_nick=nick, edges=edges, models=models)
+        judge_logs.append(run_phase(task, nick))
 
     return judge_logs
 

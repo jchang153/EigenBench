@@ -183,11 +183,43 @@ def test_changed_cached_answers_refuse_completed_export(run, phased, change_path
 def test_phased_run_closes_only_local_models(run, local, monkeypatch):
     import inspect_pipeline.collect as collect_module
 
-    # Mock models are Model objects, which never count as local; mark them as the spec says.
-    monkeypatch.setattr(collect_module, "_is_local", lambda value: getattr(value, "_eb_local", False))
+    # Mark the mock vLLM clients whose close calls this fixture tracks.
+    monkeypatch.setattr(collect_module, "_uses_vllm", lambda value: getattr(value, "_eb_local", False))
     tmp_path, write = run
     records = collect(write(phased=True, local=local))
 
     assert len(records) == PLANNED
     # A local model is released after each of its phases; an API model never is.
     assert lines(tmp_path / "closed.txt") == sorted(local * 2)
+
+
+@pytest.mark.parametrize("failure", ["eval", "close"])
+def test_direct_phase_releases_gpu_and_stops_on_failure(run, monkeypatch, failure):
+    from runpy import run_path
+
+    import inspect_ai
+    from inspect_pipeline import collect as runner
+
+    folder, write = run
+    spec = write(phased=True, local=("a",))
+    models = run_path(spec)["RUN_SPEC"]["models"]
+    active_model = models["a"]
+    monkeypatch.setattr(runner, "_uses_vllm", lambda model: model is active_model)
+
+    if failure == "eval":
+        def fail_eval(**kwargs):
+            raise RuntimeError("interrupted eval")
+        monkeypatch.setattr(inspect_ai, "eval", fail_eval)
+        message = "interrupted eval"
+    else:
+        async def fail_close():
+            (folder / "closed.txt").write_text("a\n")
+            raise RuntimeError("could not release GPU")
+        monkeypatch.setattr(active_model.api, "aclose", fail_close)
+        message = "could not release GPU"
+
+    with pytest.raises(RuntimeError, match=message):
+        runner.collect_direct_ratings_inspect(spec, models=models, scoring=False)
+    assert lines(folder / "closed.txt") == ["a"]
+    assert all(call.startswith("a ") for call in lines(folder / "calls.txt"))
+    assert not (folder / "evaluations.jsonl").exists()

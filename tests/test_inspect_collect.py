@@ -1124,7 +1124,7 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
         return ctx, loaded
 
     async def tracked_close(loaded):
-        assert len(loaded) == 1
+        assert not loaded  # The phase borrows a caller-supplied mock Model.
         await close(loaded)
         closed.extend(active)
         active.clear()
