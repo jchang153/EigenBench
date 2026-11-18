@@ -47,6 +47,7 @@ from pipeline.protocol.direct_rating import (
     resolve_direct_sampling_settings,
 )
 
+from inspect_pipeline.execution import prepared_run_context
 from inspect_pipeline.model_mapping import (
     check_distinct_local_servers,
     check_vllm_endpoint,
@@ -249,9 +250,24 @@ def _samples_view(criteria: list[str]) -> TaskSamplesView:
 
 def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None = None,
                  *, build_assignments: bool = True, resolved_sampler_seed: int | None = None) -> dict:
-    """Everything the three task entrypoints need from a run spec."""
-
     run_spec, run_dir = load_run_spec(resolve_spec_ref(spec))
+    return _run_context_from_spec(
+        run_spec, run_dir, models, cache, build_assignments=build_assignments,
+        resolved_sampler_seed=resolved_sampler_seed,
+    )
+
+
+def _run_context_from_spec(
+    run_spec: dict,
+    run_dir: Path,
+    models: dict[str, object] | None,
+    cache: bool | None = None,
+    *,
+    build_assignments: bool = True,
+    resolved_sampler_seed: int | None = None,
+) -> dict:
+    """Everything the task builders need from a run spec."""
+
     is_direct = run_spec.get("evaluation", {}).get("mode") == "direct_rating"
     spec_models = models if models is not None else run_spec["models"]
     if not spec_models:
@@ -274,18 +290,20 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
     else:
         from inspect_pipeline.pairwise_plan import resolve_pairwise_generation_settings
         generation = resolve_pairwise_generation_settings(collection_cfg)
-    if is_direct and build_assignments:
+    assignments = []
+    if is_direct:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
         )
-        plan_sampling = sampling if resolved_sampler_seed is None else {
-            **sampling, "sampler_seed": resolved_sampler_seed,
-        }
-        assignments = build_direct_assignments(
-            selected, spec_models, include_self=include_self, **plan_sampling
-        )
+        if build_assignments:
+            plan_sampling = sampling if resolved_sampler_seed is None else {
+                **sampling, "sampler_seed": resolved_sampler_seed,
+            }
+            assignments = build_direct_assignments(
+                selected, spec_models, include_self=include_self, **plan_sampling
+            )
     else:
-        sampling, assignments = {"sampler_mode": collection_cfg.get("sampler_mode")}, []
+        sampling = {"sampler_mode": collection_cfg.get("sampler_mode")}
 
     inspect_cfg = collection_cfg.get("inspect", {}) or {}
     cache_enabled = bool(inspect_cfg.get("cache", True)) if cache is None else bool(cache)
@@ -426,8 +444,13 @@ def eigenbench(
     is the spec's models alone.
     """
 
-    ctx = _run_context(spec, with_eval_model(spec, models), cache,
-                       resolved_sampler_seed=resolved_sampler_seed)
+    ctx = prepared_run_context(spec, models)
+    if ctx is None:
+        ctx = _run_context(spec, with_eval_model(spec, models), cache,
+                           resolved_sampler_seed=resolved_sampler_seed)
+    elif cache is not None:
+        ctx = {**ctx, "cache_enabled": bool(cache),
+               "meta": {**ctx["meta"], "cache_enabled": bool(cache)}}
     if not ctx["is_direct"]:
         raise ValueError(
             "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "

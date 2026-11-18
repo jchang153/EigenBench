@@ -1077,6 +1077,7 @@ def test_pairwise_strict_export_rejects_cancelled_and_missing_content():
 def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch):
     import re
     import runpy
+    from contextlib import contextmanager
     from inspect_pipeline.collect import collect_direct_ratings_inspect
     from inspect_pipeline.extend import extend_run, extend_model
     from inspect_pipeline.export import export_log
@@ -1110,27 +1111,22 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
     # never resolve while another model's phase is still open.
     active = set()
     closed = []
-    contexts = phased._isolated_context
-    close = phased._close_loaded
+    model_phase = phased.model_phase
 
-    def isolated(prepared, nick):
-        ctx, loaded = contexts(prepared, nick)
-        resolve = ctx["resolve_model"]
-        def tracked(name):
-            assert not active or active == {name}
-            active.add(name)
-            return resolve(name)
-        ctx["resolve_model"] = tracked
-        return ctx, loaded
-
-    async def tracked_close(loaded):
-        assert not loaded  # The phase borrows a caller-supplied mock Model.
-        await close(loaded)
+    @contextmanager
+    def tracked_phase(context, nick):
+        with model_phase(context, nick) as ctx:
+            resolve = ctx["resolve_model"]
+            def tracked(name):
+                assert not active or active == {name}
+                active.add(name)
+                return resolve(name)
+            ctx["resolve_model"] = tracked
+            yield ctx
         closed.extend(active)
         active.clear()
 
-    monkeypatch.setattr(phased, "_isolated_context", isolated)
-    monkeypatch.setattr(phased, "_close_loaded", tracked_close)
+    monkeypatch.setattr(phased, "model_phase", tracked_phase)
     extend_run(str(spec), new_models=newcomers, additional_scenarios=2)
     actual = [json.loads(line) for line in target.read_text().splitlines()]
     def normalized(rows):
@@ -1159,20 +1155,42 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
         extend_model(str(spec), new_model="delta", model_id="inspect:mockllm/model")
 
 
-def test_phased_extension_closes_after_failed_eval(monkeypatch):
-    from types import SimpleNamespace
-    import inspect_pipeline.extension_phased as phased
+def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clients(monkeypatch):
+    import inspect_ai
+    import inspect_pipeline.eigenbench as eigenbench
+    from inspect_pipeline.execution import eval_phase, model_phase
 
-    closed = []
-    async def close():
-        closed.append(True)
-    model = SimpleNamespace(api=SimpleNamespace(aclose=close))
-    def fail(**kwargs):
-        raise RuntimeError("provider failed")
-    monkeypatch.setattr(phased, "inspect_eval", fail)
-    with pytest.raises(RuntimeError, match="provider failed"):
-        phased._run_one(None, [model], {})
-    assert closed == [True]
+    context = {"models": {"a": "inspect:mockllm/model", "b": "inspect:mockllm/other"}}
+    clients, closed = [], []
+    get_model = eigenbench.get_model
+
+    def track_model(*args, **kwargs):
+        assert not kwargs["memoize"]
+        model = get_model(*args, **kwargs)
+        clients.append(model)
+
+        async def close():
+            closed.append(model)
+
+        model.api.aclose = close
+        return model
+
+    monkeypatch.setattr(eigenbench, "get_model", track_model)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="provider failed"):
+            with model_phase(context, "a") as phase:
+                with pytest.raises(RuntimeError, match="phased task for 'a' attempted to load 'b'"):
+                    phase["resolve_model"]("b")
+
+                def fail(**kwargs):
+                    phase["resolve_model"]("a")
+                    raise RuntimeError("provider failed")
+
+                monkeypatch.setattr(inspect_ai, "eval", fail)
+                eval_phase(None, {}, [])
+    assert len(clients) == len(closed) == 2
+    assert all(client is closed_client for client, closed_client in zip(clients, closed))
+    assert clients[0] is not clients[1]
 
 
 def test_extension_phasing_defaults_to_local_models(monkeypatch):

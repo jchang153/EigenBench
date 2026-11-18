@@ -20,11 +20,16 @@ from pipeline.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     build_direct_assignments,
     estimate_direct_calls,
+    resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
 )
+from pipeline.protocol.response_cache import cached_seed
 from pipeline.utils import load_records
 
-from .eigenbench import _run_context, eigenbench, cached_seed, has_local_models, load_selection, resolve_spec_ref
+from .eigenbench import (
+    _run_context_from_spec, eigenbench, has_local_models, load_selection, resolve_spec_ref,
+)
+from .execution import eval_phase, model_phase, use_run_context
 from .phased import eigenbench_judge, eigenbench_responses
 from .export import (
     check_complete,
@@ -52,6 +57,7 @@ def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
     include_self = bool(
         (evaluation_cfg.get("direct_rating", {}) or {}).get("include_self", True)
     )
+    resolve_direct_generation_settings(collection_cfg)
     selected, _criteria = load_selection(spec, run_dir)
     sampling = resolve_direct_sampling_settings(
         collection_cfg, num_models=len(models), include_self=include_self
@@ -59,8 +65,12 @@ def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
     assignments = build_direct_assignments(
         selected, models, include_self=include_self, **sampling
     )
-    routes = {nick: model_execution(value) for nick, value in models.items()}
     seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, models, merge_rows=True)
+    return _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed)
+
+
+def _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed) -> dict:
+    routes = {nick: model_execution(value) for nick, value in models.items()}
     cached_routes = Counter(routes[nick] for _, nick in seed)
     openrouter_indices = {i for i, route in enumerate(routes.values()) if route == "openrouter"}
     other_indices = {i for i, route in enumerate(routes.values()) if route == "other"}
@@ -83,10 +93,20 @@ def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
     return estimate
 
 
-def write_call_estimate(spec: dict, run_dir: Path) -> dict:
-    estimate = estimate_direct_calls_for_spec(spec, run_dir)
-    collection_cfg = spec.get("collection", {})
-    estimate_path = Path(collection_cfg["evaluations_path"]).with_name(
+def write_call_estimate(
+    spec: dict, run_dir: Path, *, context: dict | None = None, resolved_sampler_seed: int | None = None,
+) -> dict:
+    if context is None:
+        estimate = estimate_direct_calls_for_spec(spec, run_dir)
+    else:
+        sampling = dict(context["sampling"])
+        if resolved_sampler_seed is not None:
+            sampling["sampler_seed"] = resolved_sampler_seed
+        estimate = _estimate_direct_plan(
+            context["selected"], context["models"], context["include_self"],
+            sampling, context["assignments"], context["seed"],
+        )
+    estimate_path = Path(spec["collection"]["evaluations_path"]).with_name(
         "direct_call_estimate.json"
     )
     estimate_path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,12 +156,6 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
                       error=str(exc) or type(exc).__name__, evaluations_path=evaluations_path)
 
 
-def _uses_vllm(model) -> bool:
-    """Inspect shares a vLLM client by base name, including for external servers."""
-
-    return str(model).startswith("vllm/")
-
-
 def _persist_responses(ctx, responses, generated) -> None:
     """Append scenarios with new responses, once every model has one, to the response cache."""
 
@@ -171,11 +185,6 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     seen_logs = seen_logs if seen_logs is not None else []
 
-    import anyio
-
-    from inspect_ai import eval as inspect_eval
-
-    resolve_model = ctx["resolve_model"]
     nicks = list(models)
     responses: dict[int, dict[str, str]] = defaultdict(dict)
     for (s_idx, nick), text in ctx["seed"].items():
@@ -184,24 +193,17 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     judge_logs = []
     response_errors: dict[tuple[int, str], str] = {}
 
-    def run_phase(task, nick: str) -> EvalLog:
-        model = resolve_model(nick)
-        try:
-            logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kw)
-            seen_logs.extend(logs)
-            return logs[0]
-        finally:
-            if _uses_vllm(model):
-                anyio.run(model.api.aclose)
-
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
     for nick in nicks:
         missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
         if not missing:
             continue
-        task = eigenbench_responses(spec_ref, model_nick=nick, models=models, scenario_indices=missing)
-        log = run_phase(task, nick)
+        with model_phase(ctx, nick, reuse_resolver=True) as phase:
+            with use_run_context(spec_ref, models, phase):
+                task = eigenbench_responses(spec_ref, model_nick=nick, models=models, scenario_indices=missing)
+            phase["resolve_model"](nick)
+            log = eval_phase(task, eval_kw, seen_logs, require_complete=False)
         for sample in log.samples or []:
             content = (sample.store or {}).get(STORE_RESPONSE)
             if isinstance(content, str) and content.strip():
@@ -255,8 +257,11 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     print(f"Phase 2/2: judgments, {len(edges_by_judge)} judge(s), one at a time")
     for nick, edges in edges_by_judge.items():
-        task = eigenbench_judge(spec_ref, judge_nick=nick, edges=edges, models=models)
-        judge_logs.append(run_phase(task, nick))
+        with model_phase(ctx, nick, reuse_resolver=True) as phase:
+            with use_run_context(spec_ref, models, phase):
+                task = eigenbench_judge(spec_ref, judge_nick=nick, edges=edges, models=models)
+            phase["resolve_model"](nick)
+            judge_logs.append(eval_phase(task, eval_kw, seen_logs, require_complete=False))
 
     return judge_logs
 
@@ -326,7 +331,8 @@ def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dic
     retry_log = log.model_copy(update={
         "eval": log.eval.model_copy(update={"task_args_passed": {**args, "cache": False}})
     })
-    logs = eval_retry(retry_log, **eval_kw)
+    with use_run_context(original_spec, None, ctx):
+        logs = eval_retry(retry_log, **eval_kw)
     seen_logs.extend(logs)
     _require_retained_records(prior, records_from_log(logs[0], strict=False))
     return logs
@@ -350,11 +356,11 @@ def collect_direct_ratings_inspect(
 
     if analysis_status is not None:
         analysis_status.clear()
-    spec, run_dir = load_run_spec(spec_ref)
+    spec, run_dir = load_run_spec(resolve_spec_ref(spec_ref))
     collection_cfg = spec.get("collection", {})
     evaluations_path = Path(collection_cfg["evaluations_path"])
     inspect_cfg = collection_cfg.get("inspect", {}) or {}
-    # _run_context validates it on every collection path.
+    # The run context validates it on every collection path.
     failure_policy = collection_cfg.get("failure_policy", "strict")
 
     log_dir = Path(inspect_cfg.get("log_dir") or "inspect_logs")
@@ -370,7 +376,6 @@ def collect_direct_ratings_inspect(
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
     existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
-    estimate_spec = {**spec, "models": spec_models}
     if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
@@ -380,10 +385,9 @@ def collect_direct_ratings_inspect(
         else:
             resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
                              else randbits(64))
-        estimate_spec = {**estimate_spec, "collection": {**collection_cfg, "sampler_seed": resolved_seed}}
-    estimate = write_call_estimate(estimate_spec, run_dir)
+    ctx = _run_context_from_spec(spec, run_dir, models, resolved_sampler_seed=resolved_seed)
+    estimate = write_call_estimate(spec, run_dir, context=ctx, resolved_sampler_seed=resolved_seed)
     planned = estimate["rating_tasks"]
-    ctx = _run_context(spec_ref, models, resolved_sampler_seed=resolved_seed)
     # A completed run short-circuits only if it is this plan's collection; anything else
     # is refused with what differs.
     if has_output and previous is None:
@@ -433,9 +437,10 @@ def collect_direct_ratings_inspect(
                                    evaluations=(evaluations_path, records))
             target = evaluations_path
         else:
-            task = eigenbench(spec_ref, models=models, panel_metrics=scoring,
-                              write_artifacts=bool(spec.get("training", {}).get("enabled", True)),
-                              resolved_sampler_seed=resolved_seed)
+            with use_run_context(spec_ref, models, ctx):
+                task = eigenbench(spec_ref, models=models, panel_metrics=scoring,
+                                  write_artifacts=bool(spec.get("training", {}).get("enabled", True)),
+                                  resolved_sampler_seed=resolved_seed)
             planned_judgments = [sample.metadata for sample in task.dataset]
             if previous is not None:
                 logs = _resume_judgments(previous, task, ctx, spec_ref, existing, eval_kw, seen_logs)

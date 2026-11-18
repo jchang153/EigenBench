@@ -4,66 +4,22 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import replace
 
-import anyio
-from inspect_ai import Task, eval as inspect_eval
+from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
-from inspect_ai.model import Model
 
-from .eigenbench import _model_resolver, _run_context, sanitize
+from .eigenbench import _run_context, sanitize
+from .execution import eval_phase, model_phase
 from .export import records_from_log
 from .extend import DIRECT, _extension_task, response_index
 from .pairwise import _group_responses, records_from_pairwise_log
 from .phases import STORE_RESPONSE, response_only_solver
 
 
-def _isolated_context(prepared, nick):
-    ctx = _run_context(prepared["spec_ref"], prepared["models"], build_assignments=False)
-    # A provider closed after response generation must not be reused when the
-    # same model later returns as a judge. Keep clients private to this phase.
-    resolve = _model_resolver(prepared["models"], memoize=False)
-    loaded = []
-
-    def resolve_only_this_model(name):
-        if name != nick:
-            raise RuntimeError(f"phased task for {nick!r} attempted to load {name!r}")
-        model = resolve(name)
-        # Hosted Model objects supplied by the caller may be reused after this phase.
-        if not loaded and (not isinstance(prepared["models"][name], Model) or str(model).startswith("vllm/")):
-            loaded.append(model)
-        return model
-
-    ctx["resolve_model"] = resolve_only_this_model
-    return ctx, loaded
-
-
-async def _close_loaded(loaded):
-    for model in loaded:
-        close = getattr(model.api, "aclose", None)
-        if close is not None:
-            # A failed close must stop execution, not leave a server resident
-            # while the next model tries to claim the GPU.
-            await close()
-
-
-def _run_one(task, loaded, eval_kwargs, seen_logs: list | None = None):
-    try:
-        logs = inspect_eval(tasks=task, model=None, max_tasks=1, **eval_kwargs)
-        if seen_logs is not None:
-            seen_logs.extend(logs)
-        if len(logs) != 1 or logs[0].status != "success":
-            raise RuntimeError("phased task did not complete; nothing exported")
-        log = logs[0]
-        if len(log.samples or []) != len(task.dataset) or any(s.error for s in log.samples):
-            raise RuntimeError("phased task has incomplete samples; nothing exported")
-        return log
-    finally:
-        anyio.run(_close_loaded, loaded)
-
-
 def collect_phased_extension(prepared, eval_kwargs, seen_logs: list | None = None):
     """Collect an extension one model at a time; every log written goes to ``seen_logs``."""
 
     seen_logs = seen_logs if seen_logs is not None else []
+    context = _run_context(prepared["spec_ref"], prepared["models"], build_assignments=False)
     plan = prepared["plan"]
     responses = response_index(prepared["records"], plan.mode)
     required = defaultdict(set)
@@ -82,26 +38,26 @@ def collect_phased_extension(prepared, eval_kwargs, seen_logs: list | None = Non
     for nick in prepared["models"]:
         if not required[nick]:
             continue
-        ctx, loaded = _isolated_context(prepared, nick)
         samples = [Sample(
             input=prepared["scenarios"][s], id=f"s{s} {nick}",
             metadata={"scenario_index": s, "scenario": prepared["scenarios"][s],
                       "eval_nick": nick, "response_group": f"s{s:04d}:extension"},
         ) for s in sorted(required[nick])]
-        if plan.mode == DIRECT:
-            response_solver = response_only_solver(
-                resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
-                max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
+        with model_phase(context, nick) as ctx:
+            if plan.mode == DIRECT:
+                response_solver = response_only_solver(
+                    resolve_model=ctx["resolve_model"], generation_cfg=ctx["generation"]["response"],
+                    max_attempts=ctx["max_attempts"], cache_enabled=ctx["cache_enabled"],
+                )
+            else:
+                response_solver = _group_responses(ctx)
+            task = Task(
+                name=f"extension_responses_{sanitize(nick)}",
+                dataset=MemoryDataset(samples),
+                solver=response_solver,
+                metadata={"eigenbench_phase": "response", "evaluee": nick},
             )
-        else:
-            response_solver = _group_responses(ctx)
-        task = Task(
-            name=f"extension_responses_{sanitize(nick)}",
-            dataset=MemoryDataset(samples),
-            solver=response_solver,
-            metadata={"eigenbench_phase": "response", "evaluee": nick},
-        )
-        log = _run_one(task, loaded, eval_kwargs, seen_logs)
+            log = eval_phase(task, eval_kwargs, seen_logs)
         for sample in log.samples:
             value = (sample.store or {}).get(STORE_RESPONSE)
             if not isinstance(value, str) or not value.strip():
@@ -119,17 +75,17 @@ def collect_phased_extension(prepared, eval_kwargs, seen_logs: list | None = Non
     for nick in prepared["models"]:
         if not by_judge[nick]:
             continue
-        ctx, loaded = _isolated_context(prepared, nick)
-        portion = replace(plan, as_evaluee=by_judge[nick], as_judge=[])
-        task = _extension_task(
-            {**prepared, "plan": portion}, context=ctx, task_label=f"judge_{sanitize(nick)}",
-        )
-        task.metadata["eigenbench"]["extension_phased"] = True
-        log = _run_one(task, loaded, eval_kwargs, seen_logs)
+        with model_phase(context, nick) as ctx:
+            portion = replace(plan, as_evaluee=by_judge[nick], as_judge=[])
+            task = _extension_task(
+                {**prepared, "plan": portion}, context=ctx, task_label=f"judge_{sanitize(nick)}",
+            )
+            task.metadata["eigenbench"]["extension_phased"] = True
+            log = eval_phase(task, eval_kwargs, seen_logs)
         if plan.mode == DIRECT:
             records.extend(records_from_log(log))
         else:
-            records.extend(records_from_pairwise_log(log, ctx["criteria"]))
+            records.extend(records_from_pairwise_log(log, context["criteria"]))
         logs.append(log)
 
     # Return the same plan ordering as the single-task path.

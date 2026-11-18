@@ -268,7 +268,9 @@ def test_single_task_log_short_of_the_plan_is_refused(write_spec, tmp_path, monk
 
     estimate = collect_module.write_call_estimate
     monkeypatch.setattr(collect_module, "write_call_estimate",
-                        lambda *args: {**estimate(*args), "rating_tasks": PLANNED + 1})
+                        lambda *args, **kwargs: {
+                            **estimate(*args, **kwargs), "rating_tasks": PLANNED + 1,
+                        })
     with pytest.raises(RuntimeError, match=f"incomplete run: {PLANNED + 1} judgment"):
         collect(write_spec(policy=policy))
     assert not (tmp_path / "evaluations.jsonl").exists()
@@ -493,6 +495,7 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     monkeypatch.setenv("INSPECT_CACHE_DIR", str(tmp_path / "inspect_cache"))
     cache = tmp_path / "responses.jsonl"
     trace = tmp_path / "calls.txt"
+    spec_reads = tmp_path / "spec-reads.txt"
     fault = tmp_path / "fault"
     fault.touch()
     rows = [
@@ -511,6 +514,7 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     source += f'\nRUN_SPEC["collection"]["cached_responses_path"] = {str(cache)!r}\n'
     # Force the first attempt's invalid completion into Inspect's generation cache.
     source += 'RUN_SPEC["collection"]["inspect"]["cache"] = True\n'
+    source += f'with Path({str(spec_reads)!r}).open("a") as f:\n    f.write("loaded\\n")\n'
     spec.write_text(source)
 
     out = tmp_path / "evaluations.jsonl"
@@ -544,12 +548,16 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     assert not trace.exists()
     assert (out.read_bytes() if out.exists() else None) == previous_export
     cache.write_text(original)
+    spec_reads.unlink()
 
     result = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts/run.py"), str(spec), "--resume-log", log],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    # The CLI and collection runner load the spec once each. Inspect rebuilds
+    # the registered task for retry using the runner's prepared plan.
+    assert spec_reads.read_text().splitlines() == ["loaded", "loaded"]
     resumed = [json.loads(line) for line in out.read_text().splitlines()]
     assert len(resumed) == PLANNED
     assert all(row in resumed for row in old_records)

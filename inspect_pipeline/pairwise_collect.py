@@ -9,9 +9,9 @@ from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 
 from .collect import eval_kwargs, log_names, record_refusal
-from .eigenbench import has_local_models, sanitize
+from .eigenbench import _run_context_from_spec, has_local_models, sanitize
+from .execution import eval_phase, model_phase
 from .export import write_evaluations_atomic, write_inspect_run_info
-from .extension_phased import _isolated_context, _run_one
 from .pairwise import _group_responses
 from .phases import STORE_RESPONSE
 
@@ -49,10 +49,10 @@ def estimate_pairwise_calls(spec_ref: str, *, models=None) -> dict:
     return {"mode": "pairwise_btd", **pairwise_call_counts([s.metadata for s in samples], model_routes=routes)}
 
 
-def _collect_phased(spec_ref, models, task, eval_kw):
+def _collect_phased(spec_ref, context, task, eval_kw, seen_logs):
     from .pairwise import build_pairwise_task, records_from_pairwise_log
 
-    prepared = {"spec_ref": spec_ref, "models": models}
+    models = context["models"]
     response_logs = []
     cells = _response_cells(task.dataset)
     responses = {key: md["response"] for key, md in cells.items()
@@ -62,17 +62,17 @@ def _collect_phased(spec_ref, models, task, eval_kw):
                    if key[1] == nick and key not in responses]
         if not missing:
             continue
-        ctx, loaded = _isolated_context(prepared, nick)
-        response_task = Task(
-            name=f"pairwise_responses_{sanitize(nick)}",
-            dataset=MemoryDataset([
-                Sample(input=md["scenario"], id=f"{key[0]} {nick}", metadata=md)
-                for key, md in missing
-            ]),
-            solver=_group_responses(ctx),
-            metadata={"eigenbench_phase": "response", "evaluee": nick},
-        )
-        log = _run_one(response_task, loaded, eval_kw)
+        with model_phase(context, nick) as ctx:
+            response_task = Task(
+                name=f"pairwise_responses_{sanitize(nick)}",
+                dataset=MemoryDataset([
+                    Sample(input=md["scenario"], id=f"{key[0]} {nick}", metadata=md)
+                    for key, md in missing
+                ]),
+                solver=_group_responses(ctx),
+                metadata={"eigenbench_phase": "response", "evaluee": nick},
+            )
+            log = eval_phase(response_task, eval_kw, seen_logs)
         response_logs.append(log)
         for sample in log.samples:
             content = (sample.store or {}).get(STORE_RESPONSE)
@@ -92,13 +92,13 @@ def _collect_phased(spec_ref, models, task, eval_kw):
     for nick in models:
         if not by_judge[nick]:
             continue
-        ctx, loaded = _isolated_context(prepared, nick)
-        judge_task = build_pairwise_task(
-            spec_ref, models=models, context=ctx, samples=by_judge[nick],
-            name=f"pairwise_judge_{sanitize(nick)}",
-        )
-        judge_task.metadata["eigenbench"]["pairwise_phased"] = True
-        log = _run_one(judge_task, loaded, eval_kw)
+        with model_phase(context, nick) as ctx:
+            judge_task = build_pairwise_task(
+                spec_ref, models=models, context=ctx, samples=by_judge[nick],
+                name=f"pairwise_judge_{sanitize(nick)}",
+            )
+            judge_task.metadata["eigenbench"]["pairwise_phased"] = True
+            log = eval_phase(judge_task, eval_kw, seen_logs)
         ordered = sorted(log.samples, key=lambda sample: sample.metadata["edge_index"])
         records.extend(zip(
             [sample.metadata["edge_index"] for sample in ordered],
@@ -146,8 +146,9 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
 
     if analysis_status is not None:
         analysis_status.clear()
-    spec, _ = load_run_spec(spec_ref)
-    task = build_pairwise_task(spec_ref, models=models, panel_metrics=scoring,
+    spec, run_dir = load_run_spec(spec_ref)
+    context = _run_context_from_spec(spec, run_dir, models, build_assignments=False)
+    task = build_pairwise_task(spec_ref, models=models, context=context, panel_metrics=scoring,
                                write_artifacts=bool(spec.get("training", {}).get("enabled", True)))
     cfg = spec["collection"]
     output = Path(cfg["evaluations_path"])
@@ -166,7 +167,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
     before = log_names(log_dir)
     try:
         if phased:
-            records, logs = _collect_phased(spec_ref, panel, task, kwargs)
+            records, logs = _collect_phased(spec_ref, context, task, kwargs, logs)
         else:
             from .model_mapping import check_distinct_local_servers
             check_distinct_local_servers(panel)
@@ -188,10 +189,8 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
         raise
     from .coverage import record_collection
     if phased and scoring:
-        from .eigenbench import _run_context
         from .metrics import finalize_panel_metrics
-        ctx = _run_context(spec_ref, panel, build_assignments=False)
-        panel_log = finalize_panel_metrics(ctx, logs=logs, records=records,
+        panel_log = finalize_panel_metrics(context, logs=logs, records=records,
                                           planned=planned, eval_kwargs=kwargs)
         if panel_log is not None:
             logs = [panel_log] + logs

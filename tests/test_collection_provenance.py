@@ -37,7 +37,21 @@ def test_unchanged_rerun_reuses_and_records_a_fingerprint(run_dir):
 
 
 @pytest.mark.parametrize("phased", [False, True])
-def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased):
+def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased, monkeypatch):
+    from inspect_ai.log import read_eval_log
+    import inspect_pipeline.collect as collect
+    import inspect_pipeline.eigenbench as eigenbench
+
+    calls = []
+    build_assignments = eigenbench.build_direct_assignments
+
+    def tracked_assignments(*args, **kwargs):
+        result = build_assignments(*args, **kwargs)
+        calls.append((kwargs["sampler_seed"], result))
+        return result
+
+    monkeypatch.setattr(eigenbench, "build_direct_assignments", tracked_assignments)
+    monkeypatch.setattr(collect, "build_direct_assignments", tracked_assignments)
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
     with spec.open("a") as handle:
@@ -50,12 +64,30 @@ def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased):
     fingerprint = json.loads(fingerprint_path.read_text())
     seed = fingerprint.pop("resolved_sampler_seed")
     assert isinstance(seed, int)
+    [(plan_seed, assignments)] = calls
+    assert plan_seed == seed
+    assert {(row["scenario_index"], row["judge"]["name"], row["evaluee"]["name"])
+            for row in records} == {
+        (assignment["scenario_index"], assignment["judge_nick"], nick)
+        for assignment in assignments for nick in assignment["eval_nicks"]
+    }
     assert fingerprint["identity"]["sampling"]["sampler_seed"] is None
     estimate = json.loads((tmp_path / "direct_call_estimate.json").read_text())
     assert estimate["sampler_seed"] == seed
     logs = sorted((tmp_path / "inspect_logs").glob("*.eval"))
     assert logs
+    headers = [read_eval_log(log, header_only=True).eval for log in logs]
+    judgments = [log for log in headers if log.task.startswith("eigenbench_judge_") or not phased]
+    assert len(judgments) == (3 if phased else 1)
+    for log in judgments:
+        args = log.task_args_passed
+        assert args["spec"] == str(spec)
+        assert "context" not in args
+        assert log.metadata["eigenbench"]["sampling"]["sampler_seed"] is None
+        if not phased:
+            assert args["resolved_sampler_seed"] == seed
     assert _collect(spec) == records
+    assert [call_seed for call_seed, _ in calls] == [seed, seed]
     assert sorted((tmp_path / "inspect_logs").glob("*.eval")) == logs
 
     fingerprint_path.write_text(json.dumps(fingerprint))
