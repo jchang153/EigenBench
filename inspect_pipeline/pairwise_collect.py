@@ -170,9 +170,11 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
             raise RuntimeError("pairwise output changed during collection; export the logs manually")
         write_evaluations_atomic(output, records)
     except BaseException as exc:  # interrupts too, as in direct collection
-        record_refusal(output.parent, "collection", exc, planned=planned, logs=logs,
-                       log_dir=log_dir, before=before, failure_policy=failure_policy,
-                       evaluations_path=output)
+        # A different collector may have published here while Inspect was running.
+        if not output.is_file() or not output.stat().st_size:
+            record_refusal(output.parent, "collection", exc, planned=planned, logs=logs,
+                           log_dir=log_dir, before=before, failure_policy=failure_policy,
+                           evaluations_path=output)
         raise
     from .coverage import record_collection
     if phased and scoring:

@@ -151,3 +151,24 @@ def test_incomplete_pairwise_never_exports(tmp_path, phased):
     assert part["status"] == "refused"
     assert part["failed"] > 0
     assert part["logs"]
+
+
+def test_pairwise_refusal_keeps_a_concurrent_export_report(tmp_path, monkeypatch):
+    import inspect_ai
+
+    spec = write_spec(tmp_path, groups=1)
+    output = tmp_path / "evaluations.jsonl"
+    report_path = tmp_path / "collection_report.json"
+    inspect_eval = inspect_ai.eval
+    concurrent_report = '{"collections": [{"status": "exported"}]}'
+
+    def collect_concurrently(*args, **kwargs):
+        output.write_text('{"concurrent": true}\n')
+        report_path.write_text(concurrent_report)
+        return inspect_eval(*args, **kwargs)
+
+    monkeypatch.setattr(inspect_ai, "eval", collect_concurrently)
+    with pytest.raises(RuntimeError, match="output changed during collection"):
+        collect_pairwise_inspect(spec, models=panel([]))
+    assert output.read_text() == '{"concurrent": true}\n'
+    assert report_path.read_text() == concurrent_report
