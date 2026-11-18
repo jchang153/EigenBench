@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TextIO
 
 
 def _ensure_parent(path: Path) -> None:
@@ -38,19 +38,21 @@ def load_records(path: str | Path) -> list[dict]:
     raise ValueError(f"Expected list payload in {p}, got {type(payload).__name__}")
 
 
+def write_records(handle: TextIO, records: list[dict], *, jsonl: bool) -> None:
+    if jsonl:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+    else:
+        json.dump(records, handle, indent=4)
+
+
 def save_records(path: str | Path, records: Iterable[dict]) -> None:
     p = Path(path)
     _ensure_parent(p)
     items = list(records)
 
-    if p.suffix.lower() == ".jsonl":
-        with p.open("w", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item, ensure_ascii=True) + "\n")
-        return
-
     with p.open("w", encoding="utf-8") as f:
-        json.dump(items, f, indent=4)
+        write_records(f, items, jsonl=p.suffix.lower() == ".jsonl")
 
 
 def append_records(path: str | Path, new_records: Iterable[dict]) -> None:
@@ -62,8 +64,7 @@ def append_records(path: str | Path, new_records: Iterable[dict]) -> None:
 
     if p.suffix.lower() == ".jsonl":
         with p.open("a", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item, ensure_ascii=True) + "\n")
+            write_records(f, items, jsonl=True)
         return
 
     existing = load_records(p)

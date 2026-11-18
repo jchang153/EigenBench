@@ -16,6 +16,7 @@ from pathlib import Path
 from inspect_ai.log import EvalLog, read_eval_log
 
 from pipeline.protocol.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
+from pipeline.utils.transcripts import write_records
 
 from .phases import (
     FAILURE_POLICIES,
@@ -385,11 +386,7 @@ def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            if target.suffix.lower() == ".jsonl":
-                for record in records:
-                    handle.write(json.dumps(record, ensure_ascii=True) + "\n")
-            else:
-                json.dump(records, handle, indent=4)
+            write_records(handle, records, jsonl=target.suffix.lower() == ".jsonl")
         os.replace(tmp_path, target)
     finally:
         if os.path.exists(tmp_path):
@@ -436,12 +433,16 @@ def export_log(
 
     log = load_log(log)
     meta = eigenbench_metadata(log)
-    target = Path(evaluations_path or meta.get("evaluations_path") or "")
-    if not str(target):
+    destination = evaluations_path or meta.get("evaluations_path")
+    if not destination:
         raise ValueError(
             "no evaluations path: pass evaluations_path or set "
             "collection.evaluations_path in the run spec"
         )
+
+    target = Path(destination)
+    if target.is_dir():
+        raise IsADirectoryError(f"evaluations path is a directory: {target}")
 
     if (log.eval.metadata or {}).get("eigenbench_phase") == "panel_metrics":
         raise ValueError("This scoring-only full-panel log references the collection's source_logs; "
