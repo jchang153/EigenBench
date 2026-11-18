@@ -39,7 +39,9 @@ coverage. Use the judge logs for per-judgment diagnostics. Extension analysis
 scores the merged export.
 
 Pairwise metrics count `comparisons_parsed`, `comparisons_retained` and
-`comparisons_dropped`. The cleaner can discard repeated observations (issue #41).
+`comparisons_dropped`. Repeated observations are retained.
+`comparisons_ambiguous` counts rows whose reverse presentation could not be
+uniquely matched within a draw.
 An empty retained set reports `ranking_unavailable_cleaning=1`. A panel member
 absent from all retained comparisons reports `ranking_unavailable_model_coverage=1`.
 Native fitting supports `btd_ties` with a single trust matrix. Multi-criterion

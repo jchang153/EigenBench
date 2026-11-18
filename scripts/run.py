@@ -1,8 +1,8 @@
 """Run collection on Inspect, then shared analysis and upload from a Python run spec.
 
 Usage:
-    python scripts/run.py runs.example.spec
-    python scripts/run.py runs/example/spec.py
+    python scripts/run.py runs.example_pairwise.spec
+    python scripts/run.py runs/example_pairwise/spec.py
 """
 
 from __future__ import annotations

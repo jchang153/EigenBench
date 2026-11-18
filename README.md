@@ -96,7 +96,7 @@ the spec sets different output paths. See [Outputs](#outputs) for the files.
 
 A spec is a Python file defining `RUN_SPEC`. Start from the
 [direct-rating example](runs/example_inspect/spec.py) or the
-[pairwise example](runs/example/spec.py).
+[pairwise example](runs/example_pairwise/spec.py).
 
 | Setting | Purpose |
 | --- | --- |
@@ -252,6 +252,8 @@ An analysis-only run never generates responses. See the [migration guide](docs/i
   the stationary vector is solved directly. A matrix without a unique answer
   raises an error. Damping applies only to direct ratings, and only when
   `evaluation.direct_rating.eigentrust_alpha` is set.
+- **Pairwise Elo.** For a panel of `N` models, a model with trust `t` scores
+  `1500 + 400 log10(N × t)` (paper §3.6). Zero trust has no finite Elo score.
 - **Model identity.** Analysis refuses records whose model names don't match the
   spec's model at the same index, and pairwise records with gaps in model
   indices. Analyse records with the spec they were collected with.

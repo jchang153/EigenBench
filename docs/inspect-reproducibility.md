@@ -108,7 +108,7 @@ compatibility with analysis at `a903a21`: direct bootstrap summaries within
 `1e-10`, BTD trust within `1e-7` and BTD Elo within `1e-4`. They do not reproduce
 the paper's experimental results. Direct intervals resample scenarios; pairwise
 intervals resample cleaned comparison rows. The pairwise bootstrap seed does not
-seed initialization or loader shuffling. Issue #41 remains deferred.
+seed model initialization or data-loader shuffling.
 
 ## Completed validation — 3 November 2026
 
@@ -153,8 +153,8 @@ Download [nano.eval](https://github.com/jchang153/EigenBench/releases/download/v
 [summary.json](https://github.com/jchang153/EigenBench/releases/download/validation-pr46-2026-11-03/summary.json), [historical-parity.json](https://github.com/jchang153/EigenBench/releases/download/validation-pr46-2026-11-03/historical-parity.json)
 and [SHA256SUMS](https://github.com/jchang153/EigenBench/releases/download/validation-pr46-2026-11-03/SHA256SUMS).
 
-The historical comparison uses 1,600 real records from
-`runs/direct_rating_frontier_200/kindness`. Current analysis reproduces all eight
+The historical comparison uses 1,600 archived judgments on the kindness constitution.
+The pinned analysis reproduced all eight
 stored ranking rows with maximum EigenTrust difference `5.55e-17` and Elo
 difference `2.27e-13`. It uses the original sparse, nonself, eight-model settings
 only to check historical analysis parity. The new collections include self.
