@@ -1,7 +1,6 @@
-# Keep this usable from other working directories (including ValueArena builds).
-# Runtime dependencies mirror pyproject.toml, plus the local vLLM extra.
+# Generated from pyproject.toml by python scripts/generate_requirements.py.
+# Contains the runtime dependencies and the local extra for hosted workers.
 inspect-ai>=0.3.268
-vllm
 torch
 numpy
 scikit-learn
@@ -16,3 +15,4 @@ transformers
 datasets
 huggingface_hub
 gradio_client
+vllm; sys_platform == 'linux'

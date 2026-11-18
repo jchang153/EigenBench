@@ -2,11 +2,9 @@
 __pycache__/
 *.pyc
 .DS_Store
-**/.DS_Store
 deprecated/
 .venv
 *.egg-info/
-tests/
 
 # Run artifacts
 runs/*
@@ -32,11 +30,13 @@ logs/
 public-logs/
 
 # Data policy:
-# - Keep constitution files in version control
+# - Keep top-level constitution JSON files in version control
 # - Ignore all other data payloads
 data/*
 !data/constitutions/
-!data/constitutions/**
+data/constitutions/*
+!data/constitutions/*.json
+data/constitutions/*/
 
 notebooks/character_train_matrix.ipynb
 notebooks/misc.ipynb
