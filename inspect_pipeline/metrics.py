@@ -182,7 +182,9 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
                                        output_root=output_root, model_order=labels)
         values.update(result["diagnostics"])
         if result["unavailable_reason"]:
-            values["ranking_unavailable_cleaning"] = 1.0
+            unavailable = ("model_coverage" if result["diagnostics"].get("panel_models_unobserved")
+                           else "cleaning")
+            values[f"ranking_unavailable_{unavailable}"] = 1.0
             warnings.warn(result["unavailable_reason"], RuntimeWarning, stacklevel=2)
             return values
         if result["diagnostics"]["comparisons_dropped"]:
@@ -228,11 +230,16 @@ def eigenbench_rankings():
         # Inspect invokes metrics during progress and again at completion. Keep
         # one completed-panel fit and bootstrap draw stream for this task only.
         from .export import records_fingerprint
+        from pipeline.trust.eigentrust import NonUniqueStationaryError
+
         fingerprint = records_fingerprint([{"analysis": config}, *records])
         if panel is not None and panel["fingerprint"] == fingerprint:
             return dict(panel["metrics"])
         try:
             values = compute_panel_metrics(records, config)
+        except NonUniqueStationaryError as exc:
+            warnings.warn(str(exc), RuntimeWarning, stacklevel=2)
+            values = {**_coverage_metrics(len(records), config), "ranking_unavailable_nonunique_eigentrust": 1.0}
         except Exception as exc:  # analysis must never fail the collection it scores
             warnings.warn(f"Panel analysis failed; collection is unaffected: {exc}",
                           RuntimeWarning, stacklevel=2)
