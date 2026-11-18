@@ -416,11 +416,6 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     log_dir = collection_dir / (inspect_cfg.get("log_dir") or "inspect_logs")
     present = [log_dir / name for name in names if (log_dir / name).is_file()]
     if present:
-        for source in present:
-            shutil.copy2(source, dest / source.name)
-        published = [source.name for source in present]
-        primary = loaded.get("log_file") if loaded.get("log_file") in published else published[0]
-        inspect_info = {"log_file": primary, "log_files": published}
         report_name = "collection_report.json"
         report_path = collection_dir / report_name
         try:
@@ -428,6 +423,8 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
 
             report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
             staged_hash = evaluations_sha256(staged_eval_path)
+            if staged_hash is None:
+                raise ValueError("no staged evaluations to link to Inspect logs")
             source_hash = staged_hash if is_jsonl_export else evaluations_sha256(eval_path)
             reported_logs = {entry["file"] for part in (report or {}).get("collections", [])
                              for entry in part.get("logs", [])}
@@ -436,12 +433,19 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
                     or reported_logs != set(names)):
                 # Missing or stale report. Rebuild from the current logs and export,
                 # with the original plan unknown.
-                report = report_from_run_dir(collection_dir, staged_eval_path, log_dir=log_dir)
+                report = report_from_run_dir(collection_dir, staged_eval_path, log_dir=log_dir,
+                                             verify_records=True)
             report["evaluations_sha256"] = staged_hash
             (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-            inspect_info["collection_report_file"] = report_name
         except Exception as exc:
-            print(f"Warning: collection report unavailable: {exc}", file=sys.stderr)
+            print(f"Warning: Inspect evidence unavailable: {exc}", file=sys.stderr)
+        else:
+            for source in present:
+                shutil.copy2(source, dest / source.name)
+            published = [source.name for source in present]
+            primary = loaded.get("log_file") if loaded.get("log_file") in published else published[0]
+            inspect_info = {"log_file": primary, "log_files": published,
+                            "collection_report_file": report_name}
     meta = build_meta(
         name,
         spec,

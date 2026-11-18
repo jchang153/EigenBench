@@ -188,11 +188,21 @@ def test_upload_publishes_the_run_report_and_every_log(tmp_path):
     assert json.loads((staged / "collection_report.json").read_text()) == report
 
 
+def _mock_direct_export(monkeypatch):
+    # These fixture logs carry only the fields needed for coverage accounting.
+    # Supply the exporter for their abbreviated record format.
+    def records(log, **kwargs):
+        return [direct(s.metadata["scenario_index"], s.metadata["judge_nick"], s.metadata["eval_nick"])
+                for s in log.samples if s.error is None]
+    monkeypatch.setattr("inspect_pipeline.export.records_from_log", records)
+
+
 def test_old_run_gets_a_version_2_report_with_unknown_plan(tmp_path, monkeypatch):
     import inspect_ai.log
     from inspect_pipeline.coverage import report_from_run_dir
     from scripts.upload_results import stage_run
 
+    _mock_direct_export(monkeypatch)
     run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=["judge_a.eval", "judge_b.eval"])
     fakes = {
         "judge_a.eval": log("judge_a.eval", [sample(0, judge_nick="a")], eigenbench={"judge": "a"}),
@@ -219,6 +229,7 @@ def test_upload_rebuilds_report_when_manifest_gains_a_failed_log(tmp_path, monke
     from inspect_pipeline.coverage import collection_part, write_collection_report
     from scripts.upload_results import stage_run
 
+    _mock_direct_export(monkeypatch)
     run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=["judge_a.eval"])
     records = [direct(0, "a")]
     evaluations = run / "evaluations.jsonl"

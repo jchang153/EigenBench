@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -142,31 +141,39 @@ def test_stage_does_not_replace_a_missing_configured_evaluations_file_with_defau
     assert not (tmp_path / "staged/runs/demo").exists()
 
 
-def test_stage_rebuilds_report_from_configured_logs_and_published_records(tmp_path, monkeypatch):
-    import inspect_ai.log
+def test_stage_rebuilds_report_only_for_matching_judgment_content(tmp_path):
     from inspect_pipeline.coverage import evaluations_sha256
+    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from test_inspect_pairwise import _panel, _write_spec as write_pairwise_spec
 
     run = tmp_path / "run"
-    (run / "direct_rating").mkdir(parents=True)
-    log_dir = tmp_path / "logs"
-    log_dir.mkdir()
-    _write_spec(run, collection={"evaluations_path": "judgments.json", "inspect": {"log_dir": str(log_dir)}})
-    record = {"record_type": "direct_rating", "scenario_index": 3,
-              "judge": {"name": "a"}, "evaluee": {"name": "b"}}
-    (run / "judgments.json").write_text(json.dumps([record]), encoding="utf-8")
-    (run / "inspect_run.json").write_text('{"log_file": "judgments.eval"}', encoding="utf-8")
-    (log_dir / "judgments.eval").touch()
+    logs = tmp_path / "logs"
+    spec = Path(write_pairwise_spec(run, groups=1, inspect={
+        "cache": False, "display": "none", "log_dir": str(logs),
+    }))
+    rows = collect_pairwise_inspect(str(spec), models=_panel([]), scoring=False)
+    log_file = json.loads((run / "inspect_run.json").read_text())["log_file"]
+    (run / "btd_d2").mkdir()
+    (run / "collection_report.json").unlink()
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["collection"]["evaluations_path"] = "judgments.json"\n')
 
-    log_sample = SimpleNamespace(error=None, metadata={"scenario_index": 3, "judge_nick": "a", "eval_nick": "b"})
-
-    def read_log(path):
-        assert Path(path) == log_dir / "judgments.eval"
-        return SimpleNamespace(location=path, samples=[log_sample], status="success", eval=SimpleNamespace())
-
-    monkeypatch.setattr(inspect_ai.log, "read_eval_log", read_log)
-    stage_run("demo", run, tmp_path / "staged")
-
-    dest = tmp_path / "staged/runs/demo"
+    # A legacy manifest has log names but no digest linking them to an export.
+    (run / "inspect_run.json").write_text(json.dumps({"log_file": log_file}))
+    (run / "judgments.json").write_text(json.dumps(rows))
+    stage_run("matching", run, tmp_path / "staged")
+    dest = tmp_path / "staged/runs/matching"
     report = json.loads((dest / "collection_report.json").read_text())
-    assert (report["logged"], report["exported"], report["omitted"]) == (1, 1, 0)
+    assert (report["logged"], report["exported"], report["omitted"]) == (len(rows), len(rows), 0)
     assert report["evaluations_sha256"] == evaluations_sha256(dest / "evaluations.jsonl")
+    assert (dest / log_file).is_file()
+
+    # Same keys, count, and sibling directory, but a different benchmark judgment.
+    rows[0]["judge response"] = "different verdict"
+    (run / "judgments.json").write_text(json.dumps(rows))
+    meta, _ = stage_run("different", run, tmp_path / "staged")
+    dest = tmp_path / "staged/runs/different"
+    assert "inspect" not in meta
+    assert not (dest / log_file).exists()
+    assert not (dest / "collection_report.json").exists()
+    assert json.loads((dest / "evaluations.jsonl").read_text().splitlines()[0]) == rows[0]
