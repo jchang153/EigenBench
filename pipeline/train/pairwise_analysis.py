@@ -27,7 +27,7 @@ from pipeline.train import (
     save_uv_embedding_plot,
     save_eigenbench_plot,
 )
-from pipeline.trust import compute_trust_matrix_ties, eigentrust
+from eigenbench.analysis.eigentrust import compute_trust_matrix_ties, eigentrust
 
 
 def validate_pairwise_ranking(training_cfg: dict, num_criteria: int) -> None:

@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset
 
-from pipeline.elo import elo_scores
+from eigenbench.analysis.elo import elo_scores
 
 
 class Comparisons(Dataset):

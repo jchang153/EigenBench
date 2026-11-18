@@ -9,8 +9,8 @@ import warnings
 
 import numpy as np
 
-from pipeline.trust.direct_rating import build_direct_trust
-from pipeline.trust.eigentrust import NonUniqueStationaryError
+from eigenbench.analysis.direct_trust import build_direct_trust
+from eigenbench.analysis.eigentrust import NonUniqueStationaryError
 from .plots import save_bootstrap_plot, save_eigenbench_plot
 from .train import check_model_order, eigentrust_to_elo
 
