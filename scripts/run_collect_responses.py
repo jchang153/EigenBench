@@ -1,12 +1,13 @@
-"""Retired collection command. Use the Inspect-backed runner."""
+"""Compatibility alias for the retired collection command."""
 
+from pathlib import Path
+import sys
 
-def main(*_args, **_kwargs):
-    raise SystemExit(
-        "This legacy collector has been retired. "
-        "Use: python scripts/run.py <spec_module_or_path> (Inspect engine). "
-        "collection.cached_responses_path is read and completed by Inspect."
-    )
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.run_collect import main
 
 
 if __name__ == "__main__":

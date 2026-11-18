@@ -6,7 +6,6 @@ from pathlib import Path
 import random
 import subprocess
 import sys
-import tomllib
 
 import numpy as np
 import pytest
@@ -19,17 +18,18 @@ FIXTURES = Path(__file__).parent / "fixtures" / "inspect_migration"
 def test_hosted_requirements_remain_independent_of_working_directory():
     """ValueArena installs an absolute requirements path before changing cwd."""
     from packaging.requirements import Requirement
+    from scripts.generate_requirements import render_requirements
 
-    entries = [line for line in (ROOT / "requirements.txt").read_text().splitlines()
-               if line.strip() and not line.startswith("#")]
+    rendered = render_requirements()
+    assert (ROOT / "requirements.txt").read_bytes() == rendered.encode("utf-8")
+    entries = [line for line in rendered.splitlines() if line.strip() and not line.startswith("#")]
     assert all(not line.startswith(("-", ".", "/")) for line in entries)
-    dependencies = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
-    assert {Requirement(line).name for line in entries} == {
-        Requirement(line).name for line in dependencies
-    } | {"vllm"}
-    assert {"openai", "anthropic", "google-genai"} <= {
-        Requirement(line).name for line in dependencies
-    }
+    requirements = {requirement.name: requirement for requirement in map(Requirement, entries)}
+    assert {"openai", "anthropic", "google-genai", "torch", "transformers"} <= requirements.keys()
+    vllm_marker = requirements["vllm"].marker
+    assert vllm_marker is not None
+    assert vllm_marker.evaluate({"sys_platform": "linux"})
+    assert not vllm_marker.evaluate({"sys_platform": "darwin"})
 
 
 def test_shared_prompts_and_direct_plans_match_pre_migration_fixture():
@@ -150,12 +150,18 @@ def test_public_commands_use_inspect_and_never_precollect(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize("script", ["run_collect.py", "run_collect_responses.py"])
-def test_retired_commands_fail_before_loading_a_spec(script):
+def test_retired_commands_fail_before_loading_a_spec(tmp_path, script):
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / script), "missing.py"],
-                            cwd=ROOT, text=True, capture_output=True)
+                            cwd=tmp_path, text=True, capture_output=True)
     assert result.returncode != 0
     assert "retired" in result.stderr and "scripts/run.py" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_retired_commands_share_the_migration_message():
+    from scripts import run_collect, run_collect_responses
+
+    assert run_collect_responses.main is run_collect.main
 
 
 def _assert_equal(actual, expected):

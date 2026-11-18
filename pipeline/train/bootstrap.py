@@ -11,17 +11,13 @@ import torch
 from torch.utils.data import DataLoader
 
 from .bt_models import CriteriaVectorBTD
+from .plots import save_bootstrap_plot
 from .train import (
     CriteriaComparisons,
     eigentrust_to_elo,
     train_vector_bt,
 )
-from ..trust import (
-    compute_trust_matrix,
-    compute_trust_matrix_ties,
-    eigentrust,
-    row_normalize,
-)
+from ..trust import compute_trust_matrix_ties, eigentrust
 
 
 def _build_model_and_loader(
@@ -32,16 +28,16 @@ def _build_model_and_loader(
     dim: int,
     batch_size: int,
 ):
-    if model_kind == "btd_ties":
-        model = CriteriaVectorBTD(num_criteria, num_models, dim)
-        loader = DataLoader(
-            CriteriaComparisons(sampled_comparisons),
-            batch_size=batch_size,
-            shuffle=True,
-        )
-        return model, loader, True, True
+    if model_kind != "btd_ties":
+        raise ValueError(f"Unsupported model kind: {model_kind!r}; EigenBench rankings use 'btd_ties'")
 
-    raise ValueError(f"Unsupported model kind: {model_kind!r}; EigenBench rankings use 'btd_ties'")
+    model = CriteriaVectorBTD(num_criteria, num_models, dim)
+    loader = DataLoader(
+        CriteriaComparisons(sampled_comparisons),
+        batch_size=batch_size,
+        shuffle=True,
+    )
+    return model, loader
 
 
 def _train_one_sample(
@@ -56,7 +52,7 @@ def _train_one_sample(
     max_epochs: int,
     device: str,
 ):
-    model, loader, use_btd, criterion_mode = _build_model_and_loader(
+    model, loader = _build_model_and_loader(
         sampled_comparisons, model_kind, num_criteria, num_models, dim, batch_size,
     )
     train_vector_bt(
@@ -68,18 +64,13 @@ def _train_one_sample(
         device=device,
         save_path=None,
         normalize=False,
-        use_btd=use_btd,
-        criterion_mode=criterion_mode,
+        use_btd=True,
+        criterion_mode=True,
         verbose=False,
         plot=False,
     )
 
-    if use_btd:
-        trust_matrix = compute_trust_matrix_ties(model, device=device)
-    else:
-        score_matrix = compute_trust_matrix(model, device=device)
-        trust_matrix = row_normalize(score_matrix)
-
+    trust_matrix = compute_trust_matrix_ties(model, device=device)
     trust_vector = eigentrust(trust_matrix, alpha=0, verbose=False)
     return (
         trust_matrix.detach().cpu().numpy(),
@@ -121,7 +112,6 @@ def run_bootstrap(
 
     rng = random.Random(random_seed)
     bootstrap_records: list[dict] = []
-    trust_vectors: list[np.ndarray] = []
     elo_vectors: list[np.ndarray] = []
 
     n = len(comparisons)
@@ -150,7 +140,6 @@ def run_bootstrap(
             record["trust_matrix"] = trust_matrix.tolist()
 
         bootstrap_records.append(record)
-        trust_vectors.append(trust_vector)
         elo_vectors.append(elo_vector)
 
         if save_models and models_dir is not None:
@@ -203,27 +192,4 @@ def run_bootstrap(
 
 
 def _save_bootstrap_plot(summary_rows: list[dict], save_path: Path) -> None:
-    """Save Elo means with 95% CI error bars."""
-    from matplotlib import pyplot as plt
-
-    labels = [r["model_name"] for r in summary_rows]
-    means = np.array([r["elo_mean"] for r in summary_rows])
-    lower = np.array([r["elo_ci_lower"] for r in summary_rows])
-    upper = np.array([r["elo_ci_upper"] for r in summary_rows])
-
-    x = np.arange(len(summary_rows))
-
-    fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
-    # The mean can fall outside its percentile interval, so draw the interval directly.
-    ax.vlines(x, lower, upper, color="C0")
-    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
-              np.concatenate([x, x]) + 0.1, color="C0")
-    ax.plot(x, means, "o", color="C0")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_ylabel("EigenBench Elo")
-    ax.set_title("Bootstrap Elo Means with 95% Confidence Intervals")
-    ax.grid(True, axis="y", alpha=0.3)
-    plt.tight_layout()
-    fig.savefig(str(save_path), dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    save_bootstrap_plot(summary_rows, save_path, title="Bootstrap Elo Means with 95% Confidence Intervals")

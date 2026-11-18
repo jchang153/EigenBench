@@ -5,6 +5,12 @@ phased local collection, and extension specs. `scripts/run_inspect.py` is an
 alias for the same runner. Native `inspect eval`, Inspect caches and retry logs,
 `scripts/extend_run.py`, and `scripts/add_model.py` remain supported.
 
+The [extension example](../runs/example_extension/spec.py) uses
+`scripts/extend_run.py`, which accepts `--additional-scenarios`. Use
+`scripts/add_model.py` with repeatable `--model` and `--id` arguments to add
+models by name and `--no-self` to disable their self-judgments. Both commands
+accept `--seed` and `--dry-run`.
+
 `scripts/run_collect.py` and `scripts/run_collect_responses.py` now stop with a
 migration message. Their provider clients, checkpoint implementation, and mixed
 collection notebook have been removed. Inspect owns generation, concurrency,
@@ -30,9 +36,19 @@ Choosing `random_judge_group` or `uniform` is an explicit protocol change, not a
 automatic conversion. Direct-rating `all_to_all` remains supported.
 
 Install with `pip install -e .`, or `pip install -e ".[local]"` for local vLLM
-models on Linux. The flat `requirements.txt` remains usable by hosted builds
-that install it from another working directory. Provider SDKs used by Inspect
-remain dependencies.
+models on Linux. ValueArena installs from the flat `requirements.txt` by
+absolute path. Run `python scripts/generate_requirements.py` after changing
+the runtime dependencies or the `local` extra in `pyproject.toml`.
+
+### Inspect log viewer
+
+The `scripts/publish_inspect_bundle.py` wrapper has been retired. ValueArena's
+site-hosted viewer reads logs published with `scripts/upload_results.py`. For a
+standalone bundle, run
+
+```bash
+inspect view bundle --log-dir runs/my_run/inspect_logs --output-dir runs/my_run/inspect_bundle
+```
 
 ### vLLM on a GPU VM
 

@@ -11,8 +11,20 @@ import numpy as np
 
 from pipeline.trust.direct_rating import build_direct_trust
 from pipeline.trust.eigentrust import NonUniqueStationaryError
-from .plots import save_eigenbench_plot
+from .plots import save_bootstrap_plot, save_eigenbench_plot
 from .train import check_model_order, eigentrust_to_elo
+
+
+def direct_trust_options(direct_cfg: dict) -> dict:
+    """Resolve run-spec options shared by direct point estimates and bootstrap draws."""
+    return {
+        "include_self": bool(direct_cfg.get("include_self", True)),
+        "normalization": direct_cfg.get("normalization", "zscore_softmax"),
+        "softmax_temperature": float(direct_cfg.get("softmax_temperature", 1.0)),
+        "scale_min": float(direct_cfg.get("scale_min", 1)),
+        "scale_max": float(direct_cfg.get("scale_max", 10)),
+        "eigentrust_alpha": float(direct_cfg.get("eigentrust_alpha", 0.0)),
+    }
 
 
 def _save_matrix(path: Path, matrix: np.ndarray) -> None:
@@ -35,27 +47,8 @@ def _resample_scenarios(records: list[dict], rng: random.Random) -> list[dict]:
 
 
 def _save_bootstrap_plot(summary_rows: list[dict], path: Path) -> None:
-    from matplotlib import pyplot as plt
-
-    labels = [row["model_name"] for row in summary_rows]
-    means = np.array([row["elo_mean"] for row in summary_rows])
-    lower = np.array([row["elo_ci_lower"] for row in summary_rows])
-    upper = np.array([row["elo_ci_upper"] for row in summary_rows])
-    x = np.arange(len(summary_rows))
-    fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
-    # The mean can fall outside its percentile interval, so draw the interval directly.
-    ax.vlines(x, lower, upper, color="C0")
-    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
-              np.concatenate([x, x]) + 0.1, color="C0")
-    ax.plot(x, means, "o", color="C0")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_ylabel("EigenBench Elo")
-    ax.set_title("Direct-Rating Bootstrap Elo with 95% Confidence Intervals")
-    ax.grid(True, axis="y", alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(path, dpi=220, bbox_inches="tight")
-    plt.close(fig)
+    # ValueArena's analysis worker patches this function.
+    save_bootstrap_plot(summary_rows, path, title="Direct-Rating Bootstrap Elo with 95% Confidence Intervals")
 
 
 def _save_trust_matrix_plot(matrix: np.ndarray, labels: list[str], path: Path) -> None:
@@ -94,6 +87,7 @@ def compute_direct_bootstrap(
     rng = random.Random(int(bootstrap_cfg.get("random_seed", 42)))
     samples = []
     elo_vectors = []
+    trust_options = direct_trust_options(direct_cfg)
     for sample_idx in range(n_bootstraps):
         sampled = _resample_scenarios(records, rng)
         try:
@@ -101,14 +95,9 @@ def compute_direct_bootstrap(
                 sampled,
                 num_models=len(model_labels),
                 num_criteria=num_criteria,
-                include_self=bool(direct_cfg.get("include_self", True)),
                 allow_sparse=allow_sparse,
-                normalization=direct_cfg.get("normalization", "zscore_softmax"),
-                softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
-                scale_min=float(direct_cfg.get("scale_min", 1)),
-                scale_max=float(direct_cfg.get("scale_max", 10)),
-                eigentrust_alpha=float(direct_cfg.get("eigentrust_alpha", 0.0)),
                 verbose=False,
+                **trust_options,
             )
         except NonUniqueStationaryError:
             warnings.warn(
@@ -183,18 +172,14 @@ def run_direct_analysis(
          for role in ("judge", "evaluee") if isinstance(record.get(role), dict)),
         labels,
     )
+    trust_options = direct_trust_options(direct_cfg)
     result = build_direct_trust(
         records,
         num_models=len(labels),
         num_criteria=num_criteria,
-        include_self=bool(direct_cfg.get("include_self", True)),
         allow_sparse=allow_sparse,
-        normalization=direct_cfg.get("normalization", "zscore_softmax"),
-        softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
-        scale_min=float(direct_cfg.get("scale_min", 1)),
-        scale_max=float(direct_cfg.get("scale_max", 10)),
-        eigentrust_alpha=float(direct_cfg.get("eigentrust_alpha", 0.0)),
         verbose=verbose,
+        **trust_options,
     )
     output_dir = Path(output_root) / "direct_rating"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -244,17 +229,17 @@ def run_direct_analysis(
         "eligible_directed_edges": int(
             len(labels) * (
                 len(labels)
-                if bool(direct_cfg.get("include_self", True))
+                if trust_options["include_self"]
                 else max(0, len(labels) - 1)
             )
         ),
         "observed_directed_edges": int(np.sum(result.observation_counts > 0)),
-        "include_self": bool(direct_cfg.get("include_self", True)),
+        "include_self": trust_options["include_self"],
         "criterion_aggregation": direct_cfg.get("criterion_aggregation", "mean"),
         "scenario_aggregation": direct_cfg.get("scenario_aggregation", "mean"),
-        "normalization": direct_cfg.get("normalization", "zscore_softmax"),
-        "softmax_temperature": float(direct_cfg.get("softmax_temperature", 1.0)),
-        "eigentrust_alpha": float(direct_cfg.get("eigentrust_alpha", 0.0)),
+        "normalization": trust_options["normalization"],
+        "softmax_temperature": trust_options["softmax_temperature"],
+        "eigentrust_alpha": trust_options["eigentrust_alpha"],
         "scale_min": int(direct_cfg.get("scale_min", 1)),
         "scale_max": int(direct_cfg.get("scale_max", 10)),
     }

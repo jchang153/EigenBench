@@ -35,9 +35,9 @@ def test_catalogue_update_never_writes_a_stale_cached_index(tmp_path, monkeypatc
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     written = []
-    api = SimpleNamespace(upload_file=lambda path_or_fileobj, **kwargs: written.append(path_or_fileobj))
+    api = SimpleNamespace(token=None, upload_file=lambda path_or_fileobj, **kwargs: written.append(path_or_fileobj))
     with pytest.raises(TimeoutError):
-        upload_results.update_index("new", "new", {}, [], "org/dataset", api)
+        upload_results.update_index("new", "new", {}, [], "org/dataset", api, revision="snapshot")
     assert written == []
 
 
@@ -50,7 +50,7 @@ def test_catalogue_starts_only_when_the_index_is_missing(tmp_path, monkeypatch):
         raise EntryNotFoundError("index.json not found")
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", missing)
-    assert upload_results._load_index("org/dataset") == {"last_updated": None, "runs": []}
+    assert upload_results._load_index("org/dataset", revision="snapshot", token=None) == {"last_updated": None, "runs": []}
 
 
 def test_staging_reads_only_the_configured_output_dir(tmp_path):

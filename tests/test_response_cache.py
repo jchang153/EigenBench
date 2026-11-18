@@ -129,9 +129,21 @@ PARTIAL = [
 
 
 @pytest.mark.parametrize("phased", [False, True])
-def test_a_partial_cache_generates_only_the_missing_responses(run, phased):
+def test_a_partial_cache_generates_only_the_missing_responses(run, phased, monkeypatch):
+    from pipeline.protocol import response_cache
+
     tmp_path, write = run
+    cache_path = tmp_path / "responses.jsonl"
+    load_records = response_cache.load_records
+    reads = []
+
+    def tracked_read(path):
+        reads.append(Path(path))
+        return load_records(path)
+
+    monkeypatch.setattr(response_cache, "load_records", tracked_read)
     records = collect(write(phased=phased, cache=PARTIAL))
+    assert reads == [cache_path]
 
     assert lines(tmp_path / "calls.txt") == ["b 1"]
     estimate = json.loads((tmp_path / "direct_call_estimate.json").read_text())
@@ -142,7 +154,7 @@ def test_a_partial_cache_generates_only_the_missing_responses(run, phased):
                          (1, "a"): "CACHED a 1", (1, "b"): "[b] answer 1"}
 
     # The cache keeps its rows and gains scenario 1, now complete.
-    rows = [json.loads(line) for line in (tmp_path / "responses.jsonl").read_text().splitlines()]
+    rows = [json.loads(line) for line in cache_path.read_text().splitlines()]
     assert rows[:2] == PARTIAL
     assert [row["scenario_index"] for row in rows[2:]] == [1]
     assert rows[-1]["responses"] == {"a": "CACHED a 1", "b": "[b] answer 1"}
@@ -181,10 +193,10 @@ def test_changed_cached_answers_refuse_completed_export(run, phased, change_path
 
 @pytest.mark.parametrize("local", [(), ("a",)], ids=["api", "mixed"])
 def test_phased_run_closes_only_local_models(run, local, monkeypatch):
-    import inspect_pipeline.collect as collect_module
+    from inspect_pipeline import execution
 
     # Mark the mock vLLM clients whose close calls this fixture tracks.
-    monkeypatch.setattr(collect_module, "_uses_vllm", lambda value: getattr(value, "_eb_local", False))
+    monkeypatch.setattr(execution, "_uses_vllm", lambda value: getattr(value, "_eb_local", False))
     tmp_path, write = run
     records = collect(write(phased=True, local=local))
 
@@ -198,13 +210,13 @@ def test_direct_phase_releases_gpu_and_stops_on_failure(run, monkeypatch, failur
     from runpy import run_path
 
     import inspect_ai
-    from inspect_pipeline import collect as runner
+    from inspect_pipeline import collect as runner, execution
 
     folder, write = run
     spec = write(phased=True, local=("a",))
     models = run_path(spec)["RUN_SPEC"]["models"]
     active_model = models["a"]
-    monkeypatch.setattr(runner, "_uses_vllm", lambda model: model is active_model)
+    monkeypatch.setattr(execution, "_uses_vllm", lambda model: model is active_model)
 
     if failure == "eval":
         def fail_eval(**kwargs):

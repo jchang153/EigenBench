@@ -466,7 +466,7 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     return meta, summary_data
 
 
-def _load_index(repo_id: str) -> dict:
+def _load_index(repo_id: str, *, revision: str, token: str | None) -> dict:
     """The dataset's catalogue. Only a missing index.json starts a new one.
 
     Any other failure (offline, authentication, timeout, unreadable JSON) aborts, so a
@@ -480,7 +480,7 @@ def _load_index(repo_id: str) -> dict:
 
     try:
         index_path = hf_hub_download(repo_id=repo_id, filename="index.json", repo_type="dataset",
-                                     force_download=True)
+                                     revision=revision, token=token, force_download=True)
     except LocalEntryNotFoundError:
         raise  # the Hub was unreachable, not the file absent
     except EntryNotFoundError:
@@ -512,7 +512,7 @@ def upload_run(
         meta, summary = stage_run(name, run_dir, staging)
 
         print(f"Uploading {name}...")
-        api.upload_folder(
+        uploaded = api.upload_folder(
             folder_path=str(staging),
             repo_id=repo_id,
             repo_type="dataset",
@@ -520,7 +520,7 @@ def upload_run(
         )
 
     # Update index
-    update_index(name, name, meta, summary, repo_id, api, group=group, note=note)
+    update_index(name, name, meta, summary, repo_id, api, group=group, note=note, revision=uploaded.oid)
     print(f"Done! https://huggingface.co/datasets/{repo_id}/tree/main/runs/{name}")
 
 
@@ -569,6 +569,13 @@ def build_index_entry(name: str, meta: dict, summary: list[dict], group: str | N
     return entry
 
 
+def _merge_index_entries(index: dict, replacements: dict[str, dict]) -> dict:
+    runs = [run for run in index["runs"] if run["slug"] not in replacements]
+    runs.extend(replacements.values())
+    runs.sort(key=lambda run: run.get("timestamp", ""), reverse=True)
+    return {**index, "runs": runs, "last_updated": datetime.now(timezone.utc).isoformat()}
+
+
 def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None = None, note: str | None = None):
     """Upload all sub-runs in a directory as a single HF commit.
 
@@ -603,16 +610,12 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
             print("No valid runs to upload")
             sys.exit(1)
 
-        # Build index.json in staging
-        index = _load_index(repo_id)
-
-        for name, meta, summary in all_metas:
-            entry = build_index_entry(name, meta, summary, group=prefix, note=note)
-            index["runs"] = [r for r in index["runs"] if r["slug"] != name]
-            index["runs"].append(entry)
-
-        index["runs"].sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-        index["last_updated"] = datetime.now(timezone.utc).isoformat()
+        revision = api.dataset_info(repo_id).sha
+        index = _load_index(repo_id, revision=revision, token=api.token)
+        index = _merge_index_entries(index, {
+            name: build_index_entry(name, meta, summary, group=prefix, note=note)
+            for name, meta, summary in all_metas
+        })
 
         with open(staging / "index.json", "w") as f:
             json.dump(index, f, indent=2)
@@ -634,6 +637,7 @@ def upload_batch(batch_dir: Path, prefix: str, repo_id: str, token: str | None =
             repo_id=repo_id,
             repo_type="dataset",
             operations=operations,
+            parent_commit=revision,
             commit_message=f"Add {len(all_metas)} runs from {batch_dir.name}",
         )
 
@@ -649,24 +653,20 @@ def update_index(
     api: Any,
     group: str | None = None,
     note: str | None = None,
+    *,
+    revision: str | None = None,
 ):
     """Update the global index.json with this run's entry."""
-    # Try to fetch existing index
-    index = _load_index(repo_id)
-
+    revision = revision or api.dataset_info(repo_id).sha
+    index = _load_index(repo_id, revision=revision, token=api.token)
     entry = build_index_entry(name, meta, summary, group=group, note=note)
-    runs = [r for r in index["runs"] if r["slug"] != slug]
-    runs.append(entry)
-    # Sort by timestamp descending
-    runs.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-
-    index["runs"] = runs
-    index["last_updated"] = datetime.now(timezone.utc).isoformat()
+    index = _merge_index_entries(index, {slug: entry})
 
     print("Updating index.json")
     api.upload_file(
         path_or_fileobj=json.dumps(index, indent=2).encode(),
         path_in_repo="index.json",
+        parent_commit=revision,
         repo_id=repo_id,
         repo_type="dataset",
     )

@@ -5,10 +5,10 @@ See docs/inspect-pairwise-protocol.md for the pinned compatibility reference.
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 
+from pipeline.protocol.direct_rating import resolve_direct_generation_settings
 from pipeline.protocol.samplers import select_sampler
 
 PAIRWISE_PLAN_VERSION = 1
@@ -32,55 +32,11 @@ PREPLANNED_SAMPLERS = ("random_judge_group", "uniform")
 def resolve_pairwise_generation_settings(collection_cfg: dict | None) -> dict[str, dict]:
     """Per-phase ``{max_tokens, temperature, per_model}`` for the pairwise protocol."""
 
-    collection_cfg = collection_cfg or {}
-    configured_all = collection_cfg.get(PAIRWISE_GENERATION_KEY) or {}
-    if not isinstance(configured_all, dict):
-        raise ValueError(f"collection.{PAIRWISE_GENERATION_KEY} must be a mapping")
-    unknown = set(configured_all) - set(PAIRWISE_PHASES)
-    if unknown:
-        raise ValueError(
-            f"collection.{PAIRWISE_GENERATION_KEY} has unknown phases {sorted(unknown)}; "
-            f"expected {list(PAIRWISE_PHASES)}"
-        )
-
-    resolved: dict[str, dict] = {}
-    for phase, defaults in PAIRWISE_GENERATION_DEFAULTS.items():
-        configured = configured_all.get(phase) or {}
-        if not isinstance(configured, dict):
-            raise ValueError(f"collection.{PAIRWISE_GENERATION_KEY}.{phase} must be a mapping")
-        values = _checked(
-            {
-                "max_tokens": configured.get("max_tokens", defaults["max_tokens"]),
-                "temperature": configured.get("temperature", defaults["temperature"]),
-            },
-            phase,
-        )
-        overrides = configured.get("per_model")
-        overrides = {} if overrides is None else overrides
-        if not isinstance(overrides, dict):
-            raise ValueError(
-                f"collection.{PAIRWISE_GENERATION_KEY}.{phase}.per_model must be a mapping"
-            )
-        values["per_model"] = {}
-        for nick, override in overrides.items():
-            if not isinstance(override, dict):
-                raise ValueError(f"per_model override for {nick} must be a mapping")
-            values["per_model"][nick] = _checked(
-                {**{k: values[k] for k in ("max_tokens", "temperature")}, **override},
-                f"{phase}/{nick}",
-            )
-        resolved[phase] = values
-    return resolved
-
-
-def _checked(values: dict, label: str) -> dict:
-    tokens, temperature = values["max_tokens"], values["temperature"]
-    if isinstance(tokens, bool) or int(tokens) != tokens or int(tokens) <= 0:
-        raise ValueError(f"invalid pairwise max_tokens for {label}: {tokens!r}")
-    temperature = float(temperature)
-    if not math.isfinite(temperature) or temperature < 0:
-        raise ValueError(f"invalid pairwise temperature for {label}: {temperature!r}")
-    return {"max_tokens": int(tokens), "temperature": temperature}
+    return resolve_direct_generation_settings(
+        collection_cfg,
+        generation_key=PAIRWISE_GENERATION_KEY,
+        defaults=PAIRWISE_GENERATION_DEFAULTS,
+    )
 
 
 def resolve_pairwise_sampling_settings(collection_cfg: dict | None, *, num_models: int) -> dict:

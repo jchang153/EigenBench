@@ -19,9 +19,7 @@ from pipeline.utils import (
 )
 from pipeline.train import (
     CriteriaComparisons,
-    Comparisons,
     CriteriaVectorBTD,
-    VectorBT,
     build_model_labels,
     eigentrust_to_elo,
     train_vector_bt,
@@ -29,7 +27,7 @@ from pipeline.train import (
     save_uv_embedding_plot,
     save_eigenbench_plot,
 )
-from pipeline.trust import compute_trust_matrix_ties, compute_trust_matrix, row_normalize, eigentrust
+from pipeline.trust import compute_trust_matrix_ties, eigentrust
 
 
 def validate_pairwise_ranking(training_cfg: dict, num_criteria: int) -> None:
@@ -106,8 +104,6 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
             ),
         }
 
-    model_kind = train_cfg.get("model", "btd_ties")
-
     batch_size = int(train_cfg.get("batch_size", 32))
     lr = float(train_cfg.get("lr", 1e-3))
     weight_decay = float(train_cfg.get("weight_decay", 0.0))
@@ -141,18 +137,9 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
         if out_dir is not None:
             os.makedirs(out_dir, exist_ok=True)
 
-        if model_kind == "btd_ties":
-            model = CriteriaVectorBTD(num_criteria_eff, num_models, d)
-            train_loader = DataLoader(CriteriaComparisons(train_comps), batch_size=batch_size, shuffle=True)
-            test_loader = DataLoader(CriteriaComparisons(test_comps), batch_size=batch_size, shuffle=False)
-            criterion_mode = True
-            use_btd = True
-        else:
-            model = VectorBT(num_models, d)
-            train_loader = DataLoader(Comparisons([[0] + c[1:] for c in train_comps]), batch_size=batch_size, shuffle=True)
-            test_loader = DataLoader(Comparisons([[0] + c[1:] for c in test_comps]), batch_size=batch_size, shuffle=False)
-            criterion_mode = False
-            use_btd = False
+        model = CriteriaVectorBTD(num_criteria_eff, num_models, d)
+        train_loader = DataLoader(CriteriaComparisons(train_comps), batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(CriteriaComparisons(test_comps), batch_size=batch_size, shuffle=False)
 
         loss_history = train_vector_bt(
             model=model,
@@ -163,44 +150,27 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
             device=device,
             save_path=out_dir,
             normalize=False,
-            use_btd=use_btd,
-            criterion_mode=criterion_mode,
+            use_btd=True,
+            criterion_mode=True,
             verbose=verbose,
             plot=out_dir is not None,
         )
 
         model.eval()
-        loss_fn = nn.CrossEntropyLoss() if use_btd else nn.BCELoss()
+        loss_fn = nn.CrossEntropyLoss()
         total_test_loss = 0.0
         with torch.no_grad():
-            for batch in test_loader:
-                if criterion_mode:
-                    c, i, j, k, r = batch
-                    c, i, j, k = c.to(device), i.to(device), j.to(device), k.to(device)
-                else:
-                    i, j, k, r = batch
-                    i, j, k = i.to(device), j.to(device), k.to(device)
-                r = r.to(device)
-
-                if use_btd:
-                    r = r.long()
-                    logits = model(c, i, j, k)
-                    loss = loss_fn(logits, r)
-                else:
-                    p = model(i, j, k)
-                    loss = loss_fn(p, r)
+            for c, i, j, k, r in test_loader:
+                c, i, j, k = c.to(device), i.to(device), j.to(device), k.to(device)
+                r = r.to(device).long()
+                logits = model(c, i, j, k)
+                loss = loss_fn(logits, r)
                 total_test_loss += loss.item() * r.size(0)
 
         avg_test_loss = total_test_loss / len(test_loader.dataset) if len(test_loader.dataset) else None
 
-        # Always compute EigenTrust at the end of every training run.
-        if use_btd:
-            T = compute_trust_matrix_ties(model, device)
-            t = eigentrust(T, alpha=0, verbose=verbose)
-        else:
-            S = compute_trust_matrix(model, device)
-            C = row_normalize(S)
-            t = eigentrust(C, alpha=0, verbose=verbose)
+        T = compute_trust_matrix_ties(model, device)
+        t = eigentrust(T, alpha=0, verbose=verbose)
 
         # Convert trust scores to Elo for display in embedding plot legend.
         elo_np = eigentrust_to_elo(t.detach().cpu().numpy(), num_models)
@@ -267,7 +237,7 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
                 comparisons=comparisons,
                 num_models=num_models,
                 num_criteria=num_criteria_eff,
-                model_kind=model_kind,
+                model_kind="btd_ties",
                 dim=d,
                 model_labels=model_labels,
                 output_dir=bootstrap_dir,

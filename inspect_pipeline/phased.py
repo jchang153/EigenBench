@@ -23,6 +23,7 @@ from inspect_pipeline.eigenbench import (
     _samples_view,
     sanitize,
 )
+from inspect_pipeline.execution import prepared_run_context
 from inspect_pipeline.phases import (
     ResponsePool,
     direct_rating_scorer,
@@ -45,7 +46,9 @@ def eigenbench_responses(
     to be resident.
     """
 
-    ctx = _run_context(spec, models)
+    ctx = prepared_run_context(spec, models)
+    if ctx is None:
+        ctx = _run_context(spec, models, build_assignments=False)
     wanted = None if scenario_indices is None else {int(s) for s in scenario_indices}
     samples = [
         Sample(
@@ -85,7 +88,9 @@ def eigenbench_judge(
 ) -> Task:
     """One judge's reflections and ratings, over responses already generated."""
 
-    ctx = _run_context(spec, models)
+    ctx = prepared_run_context(spec, models)
+    if ctx is None:
+        ctx = _run_context(spec, models, build_assignments=False)
     criteria = ctx["criteria"]
     samples = [
         Sample(input=e["scenario"], id=_edge_sample_id(e), metadata=dict(e))

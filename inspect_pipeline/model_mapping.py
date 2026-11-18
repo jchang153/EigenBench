@@ -306,11 +306,3 @@ def model_identity(value: object) -> dict:
         identity["args"] = {k: v for k, v in identity["args"].items() if k != "base_url"}
         identity["vllm_endpoint_sha256"] = hashlib.sha256(endpoint.rstrip("/").encode()).hexdigest()
     return identity
-
-
-def resolve_spec_models(models: Mapping[str, object]) -> dict[str, InspectModelRef]:
-    """Resolve the spec ``models`` dict, preserving insertion order (= model index)."""
-
-    if not models:
-        raise ValueError("spec models must not be empty")
-    return {nick: to_inspect_model(value) for nick, value in models.items()}
