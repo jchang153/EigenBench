@@ -267,7 +267,8 @@ def record_collection(run_dir: str | Path, kind: str, *, planned, logs, records,
     return path
 
 
-def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None = None) -> dict:
+def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None = None, *,
+                        log_dir: str | Path | None = None) -> dict:
     """A version 2 report for a run that has no collection_report.json.
 
     Reads every log in inspect_run.json (``log_files``, else ``log_file``) and the exported
@@ -281,7 +282,8 @@ def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None
     names = info.get("log_files") or ([info["log_file"]] if info.get("log_file") else [])
     if not names:
         raise ValueError("inspect_run.json names no logs")
-    logs = [read_eval_log(str(run_dir / "inspect_logs" / name)) for name in names]
+    logs_dir = Path(log_dir) if log_dir is not None else run_dir / "inspect_logs"
+    logs = [read_eval_log(str(logs_dir / name)) for name in names]
     evaluations = Path(evaluations_path or run_dir / "evaluations.jsonl")
     with evaluations.open(encoding="utf-8") as handle:
         records = [json.loads(line) for line in handle if line.strip()]
