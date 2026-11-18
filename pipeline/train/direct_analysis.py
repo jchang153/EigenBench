@@ -116,7 +116,7 @@ def compute_direct_bootstrap(
                 "Bootstrap intervals are unavailable.", RuntimeWarning, stacklevel=2,
             )
             return None
-        elo = eigentrust_to_elo(result.eigentrust_scores, len(model_labels))
+        elo = eigentrust_to_elo(result.eigentrust_scores, len(model_labels), direct_rating=True)
         record = {
             "sample_idx": sample_idx,
             "trust_vector": result.eigentrust_scores.tolist(),
@@ -207,7 +207,7 @@ def run_direct_analysis(
     for criterion_idx, matrix in enumerate(result.criterion_means, start=1):
         _save_matrix(criteria_dir / f"criterion_{criterion_idx}_mean_scores.csv", matrix)
 
-    elo = eigentrust_to_elo(result.eigentrust_scores, len(labels))
+    elo = eigentrust_to_elo(result.eigentrust_scores, len(labels), direct_rating=True)
     summary = [
         {
             "model_index": idx,
