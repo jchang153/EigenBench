@@ -144,6 +144,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
         allow_sparse = (str(collection.get("sampler_mode", "all_to_all")).strip().lower() != "all_to_all"
                         or collection.get("failure_policy") == "omit_invalid_judgments")
         write_artifacts = config.get("write_artifacts", False) and bool(training.get("enabled", True))
+        bootstrap_cfg = training.get("bootstrap") or {}
         if write_artifacts:
             output_root = training.get("output_dir") or Path(collection["evaluations_path"]).parent / "train"
             from pipeline.train.direct_analysis import run_direct_analysis
@@ -163,11 +164,12 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
                 scale_min=float(cfg.get("scale_min", 1)), scale_max=float(cfg.get("scale_max", 10)),
                 eigentrust_alpha=float(cfg.get("eigentrust_alpha", 0.0)),
             )
-            bootstrap_cfg = training.get("bootstrap") or {}
             bootstrap = compute_direct_bootstrap(
                 records=records, model_labels=labels, num_criteria=len(config["criteria"]),
                 direct_cfg=cfg, bootstrap_cfg=bootstrap_cfg, allow_sparse=allow_sparse,
             ) if bootstrap_cfg.get("enabled", False) else None
+        if bootstrap_cfg.get("enabled", False) and bootstrap is None:
+            values["bootstrap_unavailable_nonunique_eigentrust"] = 1.0
         values.update(_ranking_metrics(
             result.eigentrust_scores, eigentrust_to_elo(result.eigentrust_scores, len(labels)),
             labels, bootstrap=bootstrap,

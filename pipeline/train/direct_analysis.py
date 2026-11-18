@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import random
+import warnings
 
 import numpy as np
 
 from pipeline.trust.direct_rating import build_direct_trust
+from pipeline.trust.eigentrust import NonUniqueStationaryError
 from .plots import save_eigenbench_plot
 from .train import check_model_order, eigentrust_to_elo
 
@@ -85,7 +87,7 @@ def compute_direct_bootstrap(
     bootstrap_cfg: dict,
     allow_sparse: bool = False,
     verbose: bool = False,
-) -> dict:
+) -> dict | None:
     n_bootstraps = int(bootstrap_cfg.get("n_bootstraps", 100))
     if n_bootstraps <= 0:
         raise ValueError("bootstrap.n_bootstraps must be positive")
@@ -94,19 +96,26 @@ def compute_direct_bootstrap(
     elo_vectors = []
     for sample_idx in range(n_bootstraps):
         sampled = _resample_scenarios(records, rng)
-        result = build_direct_trust(
-            sampled,
-            num_models=len(model_labels),
-            num_criteria=num_criteria,
-            include_self=bool(direct_cfg.get("include_self", True)),
-            allow_sparse=allow_sparse,
-            normalization=direct_cfg.get("normalization", "zscore_softmax"),
-            softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
-            scale_min=float(direct_cfg.get("scale_min", 1)),
-            scale_max=float(direct_cfg.get("scale_max", 10)),
-            eigentrust_alpha=float(direct_cfg.get("eigentrust_alpha", 0.0)),
-            verbose=False,
-        )
+        try:
+            result = build_direct_trust(
+                sampled,
+                num_models=len(model_labels),
+                num_criteria=num_criteria,
+                include_self=bool(direct_cfg.get("include_self", True)),
+                allow_sparse=allow_sparse,
+                normalization=direct_cfg.get("normalization", "zscore_softmax"),
+                softmax_temperature=float(direct_cfg.get("softmax_temperature", 1.0)),
+                scale_min=float(direct_cfg.get("scale_min", 1)),
+                scale_max=float(direct_cfg.get("scale_max", 10)),
+                eigentrust_alpha=float(direct_cfg.get("eigentrust_alpha", 0.0)),
+                verbose=False,
+            )
+        except NonUniqueStationaryError:
+            warnings.warn(
+                f"Scenario bootstrap draw {sample_idx + 1} has no unique EigenTrust vector. "
+                "Bootstrap intervals are unavailable.", RuntimeWarning, stacklevel=2,
+            )
+            return None
         elo = eigentrust_to_elo(result.eigentrust_scores, len(model_labels))
         record = {
             "sample_idx": sample_idx,
@@ -138,9 +147,11 @@ def compute_direct_bootstrap(
     return {"summary": summary, "samples": samples}
 
 
-def run_direct_bootstrap(*, output_dir: Path, **kwargs) -> dict:
+def run_direct_bootstrap(*, output_dir: Path, **kwargs) -> dict | None:
     """Save the shared scenario-bootstrap calculation and its existing plot."""
     result = compute_direct_bootstrap(**kwargs)
+    if result is None:
+        return None
     output_dir.mkdir(parents=True, exist_ok=True)
     for name in ("samples", "summary"):
         (output_dir / f"{name}.json").write_text(
@@ -252,7 +263,10 @@ def run_direct_analysis(
         if log["eligible_directed_edges"]
         else 0.0
     )
-    (output_dir / "analysis_config.json").write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
+    # Invalidate any earlier draws before running the requested bootstrap.
+    log["bootstrap_available"] = False
+    config_path = output_dir / "analysis_config.json"
+    config_path.write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
     save_eigenbench_plot(model_names=labels, eigentrust_elo=elo, save_path=str(output_dir / "eigenbench.png"))
     _save_trust_matrix_plot(result.trust_matrix, labels, output_dir / "trust_matrix.png")
 
@@ -269,6 +283,9 @@ def run_direct_analysis(
             allow_sparse=allow_sparse,
             verbose=verbose,
         )
+        if bootstrap is not None:
+            log["bootstrap_available"] = True
+            config_path.write_text(json.dumps(log, indent=2) + "\n", encoding="utf-8")
     print(f"Direct-rating analysis complete. Outputs in {output_dir}")
     return {"summary": summary, "output_dir": str(output_dir), "result": result, "bootstrap": bootstrap}
 

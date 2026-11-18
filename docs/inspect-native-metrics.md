@@ -21,6 +21,11 @@ counts and `random_seed` are unchanged. That seed controls bootstrap resampling;
 it does **not** seed PyTorch initialization or training-loader shuffling. The
 existing training split, ties, EigenTrust damping and Elo conversion are unchanged.
 
+If a direct-rating scenario bootstrap draw has multiple stationary distributions,
+the point ranking is still reported when it is unique on the full panel.
+`bootstrap_unavailable_nonunique_eigentrust=1` identifies this case. The run
+omits bootstrap intervals, samples and plots from the published results.
+
 Native `inspect eval` and public log re-scoring compute metrics without writing
 analysis artifacts. Inspect's normal `--no-score` option skips scoring entirely.
 The canonical runner preserves `training.enabled=False` as collection-only,

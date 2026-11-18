@@ -247,6 +247,8 @@ def build_meta(
     evaluation["mode"] = mode
     bootstrap = dict(spec.get("training", {}).get("bootstrap") or {})
     bootstrap["enabled"] = bool(bootstrap.get("enabled", False))
+    if analysis and "bootstrap_available" in analysis:
+        bootstrap["available"] = bootstrap["enabled"] and analysis["bootstrap_available"]
     bootstrap.setdefault("unit", "scenario" if mode == "direct_rating" else "judgment")
 
     meta = {
@@ -331,18 +333,24 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     images_dest.mkdir(exist_ok=True)
     data_dest = dest / "data"
 
+    bootstrap_unavailable = bootstrap_enabled and analysis_config.get("bootstrap_available") is False
+    stage_bootstrap = bootstrap_enabled and not bootstrap_unavailable
     bootstrap_dir = analysis_dir / "bootstrap"
     bootstrap_summary_path = bootstrap_dir / "summary.json"
-    if bootstrap_enabled and bootstrap_summary_path.exists():
+    if stage_bootstrap and bootstrap_summary_path.exists():
         summary_data = _load_json(bootstrap_summary_path, [])
     else:
         model_names = list(spec.get("models", {}).keys())
         point_rows = _load_json(analysis_dir / "summary.json", []) if mode == "direct_rating" else []
         summary_data = _point_summary(point_rows, eigentrust, model_names)
+        if bootstrap_unavailable:
+            for row in summary_data:
+                for field in ("elo_std", "elo_ci_lower", "elo_ci_upper"):
+                    row.pop(field, None)
     (dest / "summary.json").write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
 
     image_files = {"eigenbench.png": analysis_dir / "eigenbench.png"}
-    if bootstrap_enabled:
+    if stage_bootstrap:
         image_files["bootstrap_elo.png"] = bootstrap_dir / "bootstrap_elo.png"
     if mode == "direct_rating":
         image_files["trust_matrix.png"] = analysis_dir / "trust_matrix.png"
@@ -382,7 +390,7 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
                 f"data/criteria/{path.name}" for path in sorted(criteria_dest.glob("*.csv"))
             )
         samples_source = bootstrap_dir / "samples.json"
-        if bootstrap_enabled and samples_source.exists():
+        if stage_bootstrap and samples_source.exists():
             data_dest.mkdir(exist_ok=True)
             shutil.copy2(samples_source, data_dest / "bootstrap_samples.json")
             staged_data.append("data/bootstrap_samples.json")

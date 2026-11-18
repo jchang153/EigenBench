@@ -81,6 +81,48 @@ def test_native_metrics_match_frozen_baseline(name, artifacts, tmp_path):
             np.testing.assert_allclose(a["trust_matrix"], e["trust_matrix"], atol=1e-7, rtol=0)
 
 
+@pytest.mark.parametrize("artifacts", [False, True])
+def test_nonunique_bootstrap_draw_preserves_unique_point_ranking(tmp_path, artifacts):
+    from scripts.upload_results import stage_run
+
+    labels = ["a", "b"]
+    rows = [
+        {"record_type": "direct_rating", "scenario_index": scenario,
+         "judge": {"name": judge, "index": j}, "evaluee": {"name": evaluee, "index": e},
+         "ratings": [{"criterion_index": 0, "rating": 10 if (j == e) == (scenario == 0) else 1}]}
+        for scenario in range(2)
+        for j, judge in enumerate(labels) for e, evaluee in enumerate(labels)
+    ]
+    # The full matrix has two uniform rows. Seed 42 selects scenario zero twice,
+    # whose identity matrix has two closed classes.
+    evaluation = {"mode": "direct_rating", "direct_rating": {"normalization": "minmax_l1"}}
+    training = {"enabled": artifacts, "output_dir": str(tmp_path / "analysis"),
+                "bootstrap": {"enabled": True, "n_bootstraps": 1, "random_seed": 42}}
+    cfg = {"model_order": labels, "criteria": ["c"], "evaluation": evaluation, "collection": {},
+           "planned": len(rows), "write_artifacts": artifacts, "training": training}
+    with pytest.warns(RuntimeWarning, match="bootstrap draw 1 has no unique"):
+        metrics = compute_panel_metrics(rows, cfg)
+    assert metrics["ranking_available"] == metrics["bootstrap_unavailable_nonunique_eigentrust"] == 1
+    assert metrics["a/eigentrust"] == metrics["b/eigentrust"] == 0.5
+    assert all("elo_ci" not in name for name in metrics)
+
+    if artifacts:
+        spec = {"models": dict.fromkeys(labels, "provider/model"),
+                "evaluation": evaluation, "training": training}
+        (tmp_path / "spec.py").write_text(f"RUN_SPEC = {spec!r}\n")
+        old = tmp_path / "analysis/direct_rating/bootstrap"
+        old.mkdir()
+        (old / "summary.json").write_text('[{"elo_mean": 999}]')
+        (old / "samples.json").write_text("[]")
+        (old / "bootstrap_elo.png").touch()
+        meta, summary = stage_run("demo", tmp_path, tmp_path / "staged")
+        assert meta["analysis"]["bootstrap_available"] is False
+        assert meta["bootstrap"]["enabled"] is True and meta["bootstrap"]["available"] is False
+        assert [row["elo_mean"] for row in summary] == [1500.0, 1500.0]
+        assert all("elo_ci_lower" not in row and "elo_ci_upper" not in row for row in summary)
+        assert not list((tmp_path / "staged").rglob("*bootstrap*"))
+
+
 def test_effective_model_order_and_self_setting(tmp_path):
     rows, config = _fixture("direct", tmp_path)
     config["training"]["bootstrap"]["enabled"] = False
