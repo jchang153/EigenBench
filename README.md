@@ -376,7 +376,10 @@ RUN_SPEC["collection"]["inspect"] = {
 
 Phased collection generates responses one model at a time, then loads each
 judge in turn. It limits GPU memory use for panels with multiple base models.
-The upstream wrapper enables phasing by default when local models are present.
+On a rented Linux GPU, run `scripts/run.py` on the VM and let Inspect start vLLM.
+The runner enables phasing when Inspect manages a vLLM server. To reuse a server
+you started yourself, set `VLLM_BASE_URL` to its API URL. See the
+[GPU VM setup](docs/inspect-migration.md#vllm-on-a-gpu-vm).
 
 Adapters sharing one base can share a vLLM server. Setting `phased=False` allows
 concurrent requests when the server and GPU can support them. Multi-adapter
