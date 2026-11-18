@@ -140,6 +140,14 @@ def test_pairwise_cache_uses_last_scenario_row(tmp_path):
 @pytest.mark.parametrize("phased", [False, True])
 def test_incomplete_pairwise_never_exports(tmp_path, phased):
     spec = write_spec(tmp_path, phased=phased, groups=1)
+    report_path = tmp_path / "collection_report.json"
+    report_path.write_text(json.dumps({"collections": [{"status": "exported"}]}))
     with pytest.raises(RuntimeError):
         collect_pairwise_inspect(spec, models=panel([], invalid=True))
     assert not (tmp_path / "evaluations.jsonl").exists()
+    report = json.loads(report_path.read_text())
+    assert (report["planned"], report["exported"]) == (12, 0)
+    part, = report["collections"]
+    assert part["status"] == "refused"
+    assert part["failed"] > 0
+    assert part["logs"]

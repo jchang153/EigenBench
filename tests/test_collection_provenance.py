@@ -36,6 +36,33 @@ def test_unchanged_rerun_reuses_and_records_a_fingerprint(run_dir):
     assert _collect(spec) == first
 
 
+@pytest.mark.parametrize("phased", [False, True])
+def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased):
+    tmp_path, write_spec = run_dir
+    spec = write_spec(sampler_mode="balanced_unique_judge")
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["collection"]["sampler_seed"] = None\n')
+        handle.write(f'RUN_SPEC["collection"]["inspect"]["phased"] = {phased!r}\n')
+
+    records = _collect(spec)
+    assert len(records) == 9
+    fingerprint_path = tmp_path / FINGERPRINT_FILE
+    fingerprint = json.loads(fingerprint_path.read_text())
+    seed = fingerprint.pop("resolved_sampler_seed")
+    assert isinstance(seed, int)
+    assert fingerprint["identity"]["sampling"]["sampler_seed"] is None
+    estimate = json.loads((tmp_path / "direct_call_estimate.json").read_text())
+    assert estimate["sampler_seed"] == seed
+    logs = sorted((tmp_path / "inspect_logs").glob("*.eval"))
+    assert logs
+    assert _collect(spec) == records
+    assert sorted((tmp_path / "inspect_logs").glob("*.eval")) == logs
+
+    fingerprint_path.write_text(json.dumps(fingerprint))
+    with pytest.raises(RuntimeError, match="resolved sampler seed was not recorded"):
+        _collect(spec)
+
+
 def test_same_count_constitution_change_is_refused(run_dir):
     tmp_path, write_spec = run_dir
     spec = write_spec()

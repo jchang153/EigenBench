@@ -8,7 +8,7 @@ from pathlib import Path
 from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 
-from .collect import eval_kwargs
+from .collect import eval_kwargs, log_names, record_refusal
 from .eigenbench import has_local_models, sanitize
 from .export import write_evaluations_atomic, write_inspect_run_info
 from .extension_phased import _isolated_context, _run_one
@@ -150,22 +150,31 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
     panel = models if models is not None else spec["models"]
     kwargs = eval_kwargs(settings, log_dir)
     phased = bool(settings.get("phased", has_local_models(panel)))
-    if phased:
-        records, logs = _collect_phased(spec_ref, panel, task, kwargs)
-    else:
-        from .model_mapping import check_distinct_local_servers
-        check_distinct_local_servers(panel)
-        logs = inspect_eval(tasks=task, model=None, **kwargs)
-        if len(logs) != 1:
-            raise RuntimeError("pairwise collection did not return one complete log")
-        records = records_from_pairwise_log(logs[0], task.metadata["eigenbench"]["criteria"])
-    if len(records) != len(task.dataset):
-        raise RuntimeError("pairwise collection did not complete the plan; nothing exported")
-    if output.exists() and output.stat().st_size:
-        raise RuntimeError("pairwise output changed during collection; export the logs manually")
-    write_evaluations_atomic(output, records)
-    from .coverage import record_collection
     planned = [sample.metadata for sample in task.dataset]
+    failure_policy = cfg.get("failure_policy", "strict")
+    logs = []
+    before = log_names(log_dir)
+    try:
+        if phased:
+            records, logs = _collect_phased(spec_ref, panel, task, kwargs)
+        else:
+            from .model_mapping import check_distinct_local_servers
+            check_distinct_local_servers(panel)
+            logs = inspect_eval(tasks=task, model=None, **kwargs)
+            if len(logs) != 1:
+                raise RuntimeError("pairwise collection did not return one complete log")
+            records = records_from_pairwise_log(logs[0], task.metadata["eigenbench"]["criteria"])
+        if len(records) != len(planned):
+            raise RuntimeError("pairwise collection did not complete the plan; nothing exported")
+        if output.exists() and output.stat().st_size:
+            raise RuntimeError("pairwise output changed during collection; export the logs manually")
+        write_evaluations_atomic(output, records)
+    except BaseException as exc:  # interrupts too, as in direct collection
+        record_refusal(output.parent, "collection", exc, planned=planned, logs=logs,
+                       log_dir=log_dir, before=before, failure_policy=failure_policy,
+                       evaluations_path=output)
+        raise
+    from .coverage import record_collection
     if phased and scoring:
         from .eigenbench import _run_context
         from .metrics import finalize_panel_metrics
@@ -175,7 +184,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
         if panel_log is not None:
             logs = [panel_log] + logs
     record_collection(output.parent, "collection", planned=planned, logs=logs,
-                      records=records, failure_policy=cfg.get("failure_policy", "strict"),
+                      records=records, failure_policy=failure_policy,
                       evaluations_path=output)
     write_inspect_run_info(output.parent, logs)
     _persist_responses(cfg.get("cached_responses_path"), records)

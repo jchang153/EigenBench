@@ -83,13 +83,29 @@ def _normalized(identity: dict) -> dict:
     return json.loads(json.dumps(identity, sort_keys=True, default=str))
 
 
-def write_fingerprint(evaluations_path: str | Path, ctx: dict) -> Path:
+def write_fingerprint(evaluations_path: str | Path, ctx: dict,
+                      *, resolved_sampler_seed: int | None = None) -> Path:
     identity = _normalized(collection_identity(ctx))
     path = Path(evaluations_path).with_name(FINGERPRINT_FILE)
     payload = {"version": FINGERPRINT_VERSION, "sha256": records_fingerprint([identity]),
                "identity": identity}
+    if resolved_sampler_seed is not None:
+        payload["resolved_sampler_seed"] = resolved_sampler_seed
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def read_resolved_sampler_seed(evaluations_path: Path) -> int:
+    fingerprint = evaluations_path.with_name(FINGERPRINT_FILE)
+    if fingerprint.is_file():
+        payload = json.loads(fingerprint.read_text(encoding="utf-8"))
+        seed = payload.get("resolved_sampler_seed")
+        if type(seed) is int:
+            return seed
+    raise RuntimeError(
+        f"Cannot verify the unseeded sampling plan for {evaluations_path}: "
+        "its resolved sampler seed was not recorded. Use a new output to collect again."
+    )
 
 
 def _describe(key) -> str:

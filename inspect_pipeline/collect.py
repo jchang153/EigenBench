@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from pathlib import Path
+from secrets import randbits
 
 from inspect_ai import eval as inspect_eval
 
 from pipeline.config import load_run_spec
 from pipeline.protocol.response_cache import count_cached_responses
 from pipeline.protocol.direct_rating import (
+    DIRECT_SAMPLER_ALL_TO_ALL,
     build_direct_assignments,
     estimate_direct_calls,
     resolve_direct_sampling_settings,
@@ -33,7 +35,7 @@ from .export import (
     write_omissions,
 )
 from .coverage import planned_from_assignments, record_collection
-from .provenance import check_reusable, write_fingerprint
+from .provenance import check_reusable, read_resolved_sampler_seed, write_fingerprint
 from .phases import STORE_RESPONSE
 
 
@@ -307,12 +309,20 @@ def collect_direct_ratings_inspect(
     if not log_dir.is_absolute():
         log_dir = evaluations_path.parent / log_dir
 
-    estimate = write_call_estimate(spec, run_dir)
+    has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
+    resolved_seed = None
+    estimate_spec = spec
+    if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
+            and collection_cfg.get("sampler_seed") is None):
+        resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
+                         else randbits(64))
+        estimate_spec = {**spec, "collection": {**collection_cfg, "sampler_seed": resolved_seed}}
+    estimate = write_call_estimate(estimate_spec, run_dir)
     expected = estimate["rating_tasks"]
-    ctx = _run_context(spec_ref, models)
+    ctx = _run_context(spec_ref, models, resolved_sampler_seed=resolved_seed)
     # A completed run short-circuits only if it is this plan's collection; anything else
     # is refused with what differs.
-    if evaluations_path.exists() and evaluations_path.stat().st_size > 0:
+    if has_output:
         existing = load_records(str(evaluations_path))
         omitted_path = evaluations_path.with_name("omitted_samples.json")
         omitted = []
@@ -362,7 +372,8 @@ def collect_direct_ratings_inspect(
             target = evaluations_path
         else:
             task = eigenbench(spec_ref, models=models, panel_metrics=scoring,
-                              write_artifacts=bool(spec.get("training", {}).get("enabled", True)))
+                              write_artifacts=bool(spec.get("training", {}).get("enabled", True)),
+                              resolved_sampler_seed=resolved_seed)
             planned_judgments = [sample.metadata for sample in task.dataset]
             logs = inspect_eval(tasks=task, model=None, **eval_kw)
             seen_logs.extend(logs)
@@ -382,7 +393,7 @@ def collect_direct_ratings_inspect(
     record_collection(evaluations_path.parent, "collection", planned=planned_judgments,
                       logs=seen_logs, records=records, failure_policy=failure_policy,
                       evaluations_path=evaluations_path)
-    write_fingerprint(evaluations_path, ctx)
+    write_fingerprint(evaluations_path, ctx, resolved_sampler_seed=resolved_seed)
     from .metrics import record_analysis_status
     if scoring:
         record_analysis_status(panel_log if phased else logs[0], analysis_status)
