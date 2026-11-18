@@ -10,6 +10,61 @@ import types
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
+DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
+DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
+DIRECT_SAMPLER_ALIASES = {
+    "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
+    "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
+    "partitioned": DIRECT_SAMPLER_PARTITIONED,
+    "random_partition": DIRECT_SAMPLER_PARTITIONED,
+    "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
+    "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
+}
+
+
+def normalize_direct_sampling_settings(collection: dict) -> dict:
+    """Read direct sampler settings independently of the model panel."""
+    raw_mode = str(collection.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL)).strip().lower()
+    mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
+    if mode is None:
+        raise ValueError(
+            "direct collection.sampler_mode must be 'all_to_all', "
+            "'partitioned_random_judge', or 'balanced_unique_judge'"
+        )
+    group_size = int(collection.get("group_size", 4))
+    if group_size <= 0:
+        raise ValueError("direct collection.group_size must be positive")
+    redundancy = int(collection.get("response_redundancy", 1))
+    if redundancy <= 0:
+        raise ValueError("direct collection.response_redundancy must be positive")
+    seed = collection.get("sampler_seed", 42)
+    return {
+        "sampler_mode": mode,
+        "group_size": group_size,
+        "response_redundancy": redundancy,
+        "sampler_seed": None if seed is None else int(seed),
+    }
+
+
+def validate_direct_sampling_panel(settings: dict, *, num_models: int, include_self: bool) -> None:
+    """Check settings against the model panel used to plan judgments."""
+    if num_models <= 0:
+        raise ValueError("direct sampling requires at least one model")
+    max_redundancy = num_models if include_self else num_models - 1
+    if settings["response_redundancy"] > max_redundancy:
+        raise ValueError(
+            "direct collection.response_redundancy exceeds the number of distinct eligible judges"
+        )
+    if (
+        settings["sampler_mode"] == DIRECT_SAMPLER_PARTITIONED
+        and not include_self
+        and settings["group_size"] >= num_models
+    ):
+        raise ValueError(
+            "partitioned direct sampling with include_self=False requires group_size < num_models"
+        )
+
 
 def _resolve_path_for_run(path_value: str | None, run_dir: Path, default_name: str) -> str:
     if not path_value:
@@ -80,12 +135,11 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         direct["include_self"] = bool(direct.get("include_self", True))
         direct["scale_min"] = int(direct.get("scale_min", 1))
         direct["scale_max"] = int(direct.get("scale_max", 10))
-        direct["criterion_aggregation"] = str(
-            direct.get("criterion_aggregation", "mean")
-        ).strip().lower()
-        direct["scenario_aggregation"] = str(
-            direct.get("scenario_aggregation", "mean")
-        ).strip().lower()
+        # Retain the legacy spec fields and their normalized metadata values.
+        for key in ("criterion_aggregation", "scenario_aggregation"):
+            direct[key] = str(direct.get(key, "mean")).strip().lower()
+            if direct[key] != "mean":
+                raise ValueError(f"direct_rating.{key} currently supports only 'mean'")
         direct["normalization"] = str(
             direct.get("normalization", "zscore_softmax")
         ).strip().lower()
@@ -108,10 +162,6 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
             raise ValueError("direct_rating.scale_min must be less than scale_max")
         if (direct["scale_min"], direct["scale_max"]) != (1, 10):
             raise ValueError("direct_rating currently uses the fixed 1-10 rating scale")
-        if direct["criterion_aggregation"] != "mean":
-            raise ValueError("direct_rating.criterion_aggregation currently supports only 'mean'")
-        if direct["scenario_aggregation"] != "mean":
-            raise ValueError("direct_rating.scenario_aggregation currently supports only 'mean'")
         if direct["softmax_temperature"] <= 0:
             raise ValueError("direct_rating.softmax_temperature must be positive")
         direct["eigentrust_alpha"] = float(direct.get("eigentrust_alpha", 0.0))
@@ -132,49 +182,13 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         collection["cached_responses_path"] = None
 
     if mode == "direct_rating":
-        sampler_aliases = {
-            "exhaustive": "all_to_all",
-            "all_to_all": "all_to_all",
-            "partitioned": "partitioned_random_judge",
-            "random_partition": "partitioned_random_judge",
-            "partitioned_random_judge": "partitioned_random_judge",
-            "balanced_unique_judge": "balanced_unique_judge",
-        }
-        raw_sampler = str(collection.get("sampler_mode", "all_to_all")).strip().lower()
-        sampler_mode = sampler_aliases.get(raw_sampler)
-        if sampler_mode is None:
-            raise ValueError(
-                "direct collection.sampler_mode must be 'all_to_all', "
-                "'partitioned_random_judge', or 'balanced_unique_judge'"
-            )
-        collection["sampler_mode"] = sampler_mode
-        collection["group_size"] = int(collection.get("group_size", 4))
-        collection["response_redundancy"] = int(
-            collection.get("response_redundancy", 1)
-        )
-        if collection["group_size"] <= 0:
-            raise ValueError("direct collection.group_size must be positive")
-        if collection["response_redundancy"] <= 0:
-            raise ValueError("direct collection.response_redundancy must be positive")
-        raw_seed = collection.get("sampler_seed", 42)
-        collection["sampler_seed"] = None if raw_seed is None else int(raw_seed)
+        sampling = normalize_direct_sampling_settings(collection)
         num_models = len(normalized.get("models", {}))
         if num_models:
-            max_redundancy = num_models if direct["include_self"] else num_models - 1
-            if collection["response_redundancy"] > max_redundancy:
-                raise ValueError(
-                    "direct collection.response_redundancy exceeds the number of "
-                    "distinct eligible judges"
-                )
-            if (
-                sampler_mode == "partitioned_random_judge"
-                and not direct["include_self"]
-                and collection["group_size"] >= num_models
-            ):
-                raise ValueError(
-                    "partitioned direct sampling with include_self=False requires "
-                    "collection.group_size < number of models"
-                )
+            validate_direct_sampling_panel(
+                sampling, num_models=num_models, include_self=direct["include_self"]
+            )
+        collection.update(sampling)
 
     if "extension" in normalized:
         extension = normalized["extension"]

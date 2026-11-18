@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-import math
 import random
 import re
 from typing import Callable
 
+from pipeline.config.run_spec import (
+    DIRECT_SAMPLER_ALIASES as DIRECT_SAMPLER_ALIASES,
+    DIRECT_SAMPLER_ALL_TO_ALL,
+    DIRECT_SAMPLER_BALANCED,
+    DIRECT_SAMPLER_PARTITIONED,
+    normalize_direct_sampling_settings,
+    validate_direct_sampling_panel,
+)
+
 
 DIRECT_PROMPT_VERSION = 1
-DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
-DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
-DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
-DIRECT_SAMPLER_ALIASES = {
-    "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
-    "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
-    "partitioned": DIRECT_SAMPLER_PARTITIONED,
-    "random_partition": DIRECT_SAMPLER_PARTITIONED,
-    "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
-    "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
-}
 
 
 def build_direct_reflection_prompt(prefix: str = "") -> str:
@@ -146,45 +143,75 @@ def direct_rating_validator(
     return validate
 
 
-def resolve_direct_generation_settings(collection_cfg: dict) -> dict[str, dict]:
-    legacy_max_tokens = int(collection_cfg.get("max_tokens", 4096))
-    has_legacy_max_tokens = "max_tokens" in collection_cfg
-    generation = collection_cfg.get("generation", {}) or {}
-    defaults = {
-        "response": {"max_tokens": legacy_max_tokens, "temperature": 0.7},
-        "reflection": {
-            "max_tokens": legacy_max_tokens if has_legacy_max_tokens else 2048,
-            "temperature": 0.2,
-        },
-        "direct_rating": {
-            "max_tokens": legacy_max_tokens if has_legacy_max_tokens else 512,
-            "temperature": 0.0,
-        },
-    }
-    resolved: dict[str, dict] = {}
-    for phase, phase_defaults in defaults.items():
-        configured = generation.get(phase, {}) or {}
-        values = {
-            "max_tokens": int(configured.get("max_tokens", phase_defaults["max_tokens"])),
-            "temperature": float(configured.get("temperature", phase_defaults["temperature"])),
+def resolve_direct_generation_settings(
+    collection_cfg: dict | None,
+    *,
+    generation_key: str = "generation",
+    defaults: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    """Resolve phase settings, with an explicit key and defaults for pairwise callers."""
+    # ValueArena extracts this function from the source without importing the module.
+    import math
+
+    collection_cfg = collection_cfg or {}
+    allow_token_strings = defaults is None
+    if defaults is None:
+        defaults = {
+            "response": {"max_tokens": collection_cfg.get("max_tokens", 4096), "temperature": 0.7},
+            "reflection": {"max_tokens": collection_cfg.get("max_tokens", 2048), "temperature": 0.2},
+            "direct_rating": {"max_tokens": collection_cfg.get("max_tokens", 512), "temperature": 0.0},
         }
-        if values["max_tokens"] <= 0:
-            raise ValueError(f"collection.generation.{phase}.max_tokens must be positive")
-        if values["temperature"] < 0:
-            raise ValueError(f"collection.generation.{phase}.temperature must be non-negative")
-        overrides = configured.get("per_model") or {}
-        if not isinstance(overrides, dict):
-            raise ValueError(f"collection.generation.{phase}.per_model must be a mapping")
+
+    def mapping(value, path: str) -> dict:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"{path} must be a mapping")
+        return value
+
+    def checked(values: dict, path: str) -> dict:
+        raw_tokens = values["max_tokens"]
+        try:
+            tokens = int(raw_tokens)
+            integer = (allow_token_strings and isinstance(raw_tokens, str)) or tokens == raw_tokens
+            if isinstance(raw_tokens, bool) or not integer or tokens <= 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"invalid generation {path}.max_tokens: expected a positive integer, got {raw_tokens!r}"
+            ) from None
+
+        raw_temperature = values["temperature"]
+        try:
+            temperature = float(raw_temperature)
+            if not math.isfinite(temperature) or temperature < 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"invalid generation {path}.temperature: expected a finite non-negative number, "
+                f"got {raw_temperature!r}"
+            ) from None
+        return {"max_tokens": tokens, "temperature": temperature}
+
+    path = f"collection.{generation_key}"
+    configured = mapping(collection_cfg.get(generation_key), path)
+    unknown = configured.keys() - defaults.keys()
+    if unknown:
+        raise ValueError(f"{path} has unknown phases {sorted(unknown, key=str)}; expected {list(defaults)}")
+
+    resolved = {}
+    for phase, phase_defaults in defaults.items():
+        phase_path = f"{path}.{phase}"
+        phase_config = mapping(configured.get(phase), phase_path)
+        values = checked({**phase_defaults, **phase_config}, phase_path)
+        overrides_path = f"{phase_path}.per_model"
+        overrides = mapping(phase_config.get("per_model"), overrides_path)
         values["per_model"] = {}
         for nick, override in overrides.items():
+            override_path = f"{overrides_path}.{nick}"
             if not isinstance(override, dict):
-                raise ValueError(f"per_model override for {nick} must be a mapping")
-            merged = {**values, **override}
-            tokens = int(merged["max_tokens"])
-            temperature = float(merged["temperature"])
-            if tokens <= 0 or not math.isfinite(temperature) or temperature < 0:
-                raise ValueError(f"invalid generation override for {phase}/{nick}")
-            values["per_model"][nick] = {"max_tokens": tokens, "temperature": temperature}
+                raise ValueError(f"{override_path} must be a mapping")
+            values["per_model"][nick] = checked({**values, **override}, override_path)
         resolved[phase] = values
     return resolved
 
@@ -195,37 +222,10 @@ def resolve_direct_sampling_settings(
     num_models: int,
     include_self: bool,
 ) -> dict:
-    raw_mode = str(collection_cfg.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL)).strip().lower()
-    mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
-    if mode is None:
-        raise ValueError(
-            "direct collection.sampler_mode must be 'all_to_all', "
-            "'partitioned_random_judge', or 'balanced_unique_judge'"
-        )
-    if num_models <= 0:
-        raise ValueError("direct sampling requires at least one model")
-    group_size = int(collection_cfg.get("group_size", 4))
-    if group_size <= 0:
-        raise ValueError("direct collection.group_size must be positive")
-    group_size = min(group_size, num_models)
-    response_redundancy = int(collection_cfg.get("response_redundancy", 1))
-    max_redundancy = num_models if include_self else max(0, num_models - 1)
-    if response_redundancy <= 0 or response_redundancy > max_redundancy:
-        raise ValueError(
-            "direct collection.response_redundancy must be between 1 and "
-            f"{max_redundancy}"
-        )
-    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
-        raise ValueError(
-            "partitioned direct sampling with include_self=False requires group_size < num_models"
-        )
-    raw_seed = collection_cfg.get("sampler_seed", 42)
-    return {
-        "sampler_mode": mode,
-        "group_size": group_size,
-        "response_redundancy": response_redundancy,
-        "sampler_seed": None if raw_seed is None else int(raw_seed),
-    }
+    settings = normalize_direct_sampling_settings(collection_cfg)
+    validate_direct_sampling_panel(settings, num_models=num_models, include_self=include_self)
+    settings["group_size"] = min(settings["group_size"], num_models)
+    return settings
 
 
 def _pack_no_self_groups(ring, group_size, rounds):
@@ -371,31 +371,21 @@ def build_direct_assignments(
 
     model_nicks = list(models)
     num_models = len(model_nicks)
-    if num_models <= 0:
-        raise ValueError("direct assignments require at least one model")
-    mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
-    if mode is None:
-        raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all', "
-            "'partitioned_random_judge', or 'balanced_unique_judge'"
-        )
-    group_size = int(group_size)
-    response_redundancy = int(response_redundancy)
-    if group_size <= 0:
-        raise ValueError("direct group_size must be positive")
-    group_size = min(group_size, num_models)
-    max_redundancy = num_models if include_self else max(0, num_models - 1)
-    if response_redundancy <= 0 or response_redundancy > max_redundancy:
-        raise ValueError(
-            "direct response_redundancy must be between 1 and "
-            f"{max_redundancy} for the configured self-rating policy"
-        )
-    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
-        raise ValueError(
-            "partitioned direct sampling with include_self=False requires group_size < num_models"
-        )
+    sampling = resolve_direct_sampling_settings(
+        {
+            "sampler_mode": sampler_mode,
+            "group_size": group_size,
+            "response_redundancy": response_redundancy,
+            "sampler_seed": sampler_seed,
+        },
+        num_models=num_models,
+        include_self=include_self,
+    )
+    mode = sampling["sampler_mode"]
+    group_size = sampling["group_size"]
+    response_redundancy = sampling["response_redundancy"]
 
-    rng = random.Random(sampler_seed)
+    rng = random.Random(sampling["sampler_seed"])
     balanced_shifts = (
         list(range(num_models)) if include_self else list(range(1, num_models))
     )
@@ -533,23 +523,18 @@ def estimate_direct_calls(
         raise ValueError("num_scenarios and num_models must be non-negative")
     if num_openrouter_models is not None and not 0 <= num_openrouter_models <= num_models:
         raise ValueError("num_openrouter_models must be between zero and num_models")
-    mode = DIRECT_SAMPLER_ALIASES.get(str(sampler_mode).strip().lower())
-    if mode is None:
-        raise ValueError(
-            "unknown direct sampler mode; expected 'all_to_all', "
-            "'partitioned_random_judge', or 'balanced_unique_judge'"
-        )
-    group_size = max(1, min(int(group_size), num_models)) if num_models else 0
-    response_redundancy = int(response_redundancy)
-    if response_redundancy <= 0:
-        raise ValueError("response_redundancy must be positive")
-    max_redundancy = num_models if include_self else max(0, num_models - 1)
-    if mode != DIRECT_SAMPLER_ALL_TO_ALL and response_redundancy > max_redundancy:
-        raise ValueError("response_redundancy exceeds the number of distinct eligible judges")
-    if mode == DIRECT_SAMPLER_PARTITIONED and not include_self and group_size >= num_models:
-        raise ValueError(
-            "partitioned direct sampling with include_self=False requires group_size < num_models"
-        )
+    sampling = normalize_direct_sampling_settings({
+        "sampler_mode": sampler_mode,
+        "group_size": group_size,
+        "response_redundancy": response_redundancy,
+        "sampler_seed": sampler_seed,
+    })
+    mode = sampling["sampler_mode"]
+    group_size = min(sampling["group_size"], num_models)
+    response_redundancy = sampling["response_redundancy"]
+    # An exhaustive count is defined even for an empty panel and has no redundancy parameter.
+    if mode != DIRECT_SAMPLER_ALL_TO_ALL:
+        validate_direct_sampling_panel(sampling, num_models=num_models, include_self=include_self)
     if assignments is not None:
         total_edges = sum(len(assignment["eval_idxs"]) for assignment in assignments)
     elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
@@ -574,7 +559,7 @@ def estimate_direct_calls(
         "response_redundancy": (
             response_redundancy if mode != DIRECT_SAMPLER_ALL_TO_ALL else None
         ),
-        "sampler_seed": sampler_seed if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
+        "sampler_seed": sampling["sampler_seed"] if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
         "directed_edges_per_scenario": edges_per_scenario,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
