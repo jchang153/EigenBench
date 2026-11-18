@@ -106,6 +106,7 @@ def _resolve_upload_backend(upload_cfg: dict) -> str:
 def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: str | None = None):
     spec, run_dir = load_run_spec(spec_ref)
     collection_cfg = spec.get("collection", {})
+    should_collect = bool(collection_cfg.get("enabled", True) if collection_enabled is None else collection_enabled)
     training_cfg = spec.get("training", {})
     upload_cfg = spec.get("upload", {})
     upload_enabled = bool(upload_cfg.get("enabled", False))
@@ -114,8 +115,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: s
     upload_to_dataset = upload_enabled and upload_backend == "huggingface_dataset"
     evaluation_mode = spec.get("evaluation", {}).get("mode", "pairwise_btd")
     if resume_log is not None and (
-        evaluation_mode != "direct_rating" or spec.get("extension")
-        or not (collection_cfg.get("enabled", True) if collection_enabled is None else collection_enabled)
+        evaluation_mode != "direct_rating" or spec.get("extension") or not should_collect
     ):
         raise ValueError("--resume-log requires an enabled direct-rating collection, not an extension")
     space_secret = upload_cfg.get("secret") or os.environ.get("SPACE_SECRET", "")
@@ -128,9 +128,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: s
 
     analysis_status: dict = {}
     scoring = bool(training_cfg.get("enabled", True)) and not upload_to_space
-    if collection_enabled is not None:
-        collection_cfg["enabled"] = collection_enabled
-    if bool(collection_cfg.get("enabled", True)):
+    if should_collect:
         print("Stage: collect evaluations (Inspect engine)")
         if spec.get("extension"):
             from inspect_pipeline.extend import extend_run
@@ -140,9 +138,9 @@ def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: s
             collect_pairwise_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status)
         else:
             from inspect_pipeline.collect import collect_direct_ratings_inspect
-            resume = {"resume_log": resume_log} if resume_log is not None else {}
-            collect_direct_ratings_inspect(spec_ref, scoring=scoring, analysis_status=analysis_status,
-                                           **resume)
+            collect_direct_ratings_inspect(
+                spec_ref, scoring=scoring, analysis_status=analysis_status, resume_log=resume_log,
+            )
     else:
         print("Stage: collect evaluations (skipped; collection.enabled=False)")
 

@@ -258,7 +258,8 @@ def test_runner_preserves_analysis_ownership(tmp_path, monkeypatch, mode, traini
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: uploads.append((args, kwargs)))
     collection_calls, training_calls = [], []
 
-    def collect_panel(spec_ref, *, scoring, analysis_status):
+    def collect_panel(spec_ref, *, scoring, analysis_status, resume_log=None):
+        assert resume_log is None
         collection_calls.append((spec_ref, scoring))
         if artifacts_written:
             analysis_status["artifacts_written"] = True
