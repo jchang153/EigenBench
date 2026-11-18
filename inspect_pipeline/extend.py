@@ -452,9 +452,9 @@ def _source_model_identities(source: Path, records: list[dict], mode: str, *,
     """Read known contributors without inferring identities from a historical spec."""
     from inspect_ai.log import read_eval_log
 
-    from inspect_pipeline.coverage import REPORT_FILE, evaluations_sha256
+    from eigenbench.inspect.coverage import REPORT_FILE, evaluations_sha256
+    from eigenbench.inspect.provenance import FINGERPRINT_FILE
     from inspect_pipeline.export import panel_model_identities, records_fingerprint
-    from inspect_pipeline.provenance import FINGERPRINT_FILE
 
     manifest = source.with_name("inspect_run.json")
     if manifest.is_file():
@@ -503,9 +503,9 @@ def _prepare_extension(
     from pipeline.config import load_run_spec
     from pipeline.utils import load_records
 
+    from eigenbench.inspect.provenance import changed_scenarios, constitution_differs
     from inspect_pipeline.eigenbench import load_selection, resolve_spec_ref
     from inspect_pipeline.model_mapping import model_identity
-    from inspect_pipeline.provenance import changed_scenarios, constitution_differs
 
     spec_ref = resolve_spec_ref(spec_ref)
     spec, run_dir = load_run_spec(spec_ref)
@@ -628,8 +628,8 @@ def extend_run(
     """
     from inspect_ai import eval as inspect_eval
 
+    from eigenbench.inspect.coverage import planned_from_edges, record_collection
     from inspect_pipeline.collect import eval_kwargs, log_names, record_refusal
-    from inspect_pipeline.coverage import planned_from_edges, record_collection
     from inspect_pipeline.export import records_from_log, write_evaluations_atomic, write_inspect_run_info
 
     if new_model is not None:

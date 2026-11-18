@@ -22,8 +22,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from eigenbench.analysis.elo import elo_scores
 from pipeline.config.run_spec import _resolve_path_for_run
-from pipeline.elo import elo_scores
 from pipeline.utils import load_records, save_records
 
 
@@ -424,7 +424,7 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
         report_name = "collection_report.json"
         report_path = collection_dir / report_name
         try:
-            from inspect_pipeline.coverage import evaluations_sha256, report_from_run_dir
+            from eigenbench.inspect.coverage import evaluations_sha256, report_from_run_dir
 
             report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
             staged_hash = evaluations_sha256(staged_eval_path)

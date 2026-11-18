@@ -136,7 +136,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
     evaluation = config["evaluation"]
     training = config["training"]
     if direct:
-        from pipeline.trust.direct_rating import build_direct_trust
+        from eigenbench.analysis.direct_trust import build_direct_trust
         from pipeline.train.direct_analysis import compute_direct_bootstrap, direct_trust_options
         from pipeline.train.train import eigentrust_to_elo
         cfg = evaluation.get("direct_rating", {})
@@ -228,7 +228,7 @@ def eigenbench_rankings():
         # Inspect invokes metrics during progress and again at completion. Keep
         # one completed-panel fit and bootstrap draw stream for this task only.
         from .export import records_fingerprint
-        from pipeline.trust.eigentrust import NonUniqueStationaryError
+        from eigenbench.analysis.eigentrust import NonUniqueStationaryError
 
         fingerprint = records_fingerprint([{"analysis": config}, *records])
         if panel is not None and panel["fingerprint"] == fingerprint:
@@ -293,7 +293,7 @@ def finalize_panel_metrics(ctx: dict, *, logs, records: list[dict], planned, eva
     """Score a phased run's full panel in a native Inspect log, with no model calls."""
     from inspect_ai import Task, eval as inspect_eval
     from inspect_ai.dataset import MemoryDataset, Sample
-    from .coverage import collection_part
+    from eigenbench.inspect.coverage import collection_part
     coverage = collection_part("collection", planned=planned, logs=logs, records=records)
     config = analysis_config(ctx, planned=coverage["planned"],
                              write_artifacts=bool(ctx["run_spec"].get("training", {}).get("enabled", True)))

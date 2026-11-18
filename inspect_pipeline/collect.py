@@ -15,6 +15,12 @@ from inspect_ai import eval as inspect_eval
 from inspect_ai import eval_retry
 from inspect_ai.log import EvalLog, read_eval_log
 
+from eigenbench.inspect.coverage import (
+    _exported_key, evaluations_sha256, judgment_key, planned_from_assignments, record_collection,
+)
+from eigenbench.inspect.provenance import (
+    check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint,
+)
 from pipeline.config import load_run_spec
 from pipeline.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
@@ -40,10 +46,6 @@ from .export import (
     write_inspect_run_info,
     write_omissions,
 )
-from .coverage import (
-    _exported_key, evaluations_sha256, judgment_key, planned_from_assignments, record_collection,
-)
-from .provenance import check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint
 from .model_mapping import model_execution
 from .phases import STORE_RESPONSE
 

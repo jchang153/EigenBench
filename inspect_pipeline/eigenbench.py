@@ -459,8 +459,8 @@ def eigenbench(
     # One task serves the whole panel concurrently.
     check_distinct_local_servers(ctx["models"])
     criteria = ctx["criteria"]
+    from eigenbench.inspect.provenance import direct_resume_identity
     from inspect_pipeline.metrics import analysis_config, panel_scorer
-    from inspect_pipeline.provenance import direct_resume_identity
     samples = build_edge_samples(ctx["assignments"])
     config = analysis_config(ctx, planned=len(samples), write_artifacts=write_artifacts) if panel_metrics else None
     return Task(

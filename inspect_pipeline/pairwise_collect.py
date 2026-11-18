@@ -187,7 +187,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
                            log_dir=log_dir, before=before, failure_policy=failure_policy,
                            evaluations_path=output)
         raise
-    from .coverage import record_collection
+    from eigenbench.inspect.coverage import record_collection
     if phased and scoring:
         from .metrics import finalize_panel_metrics
         panel_log = finalize_panel_metrics(context, logs=logs, records=records,

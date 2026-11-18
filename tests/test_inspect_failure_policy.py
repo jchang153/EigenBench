@@ -579,7 +579,7 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
 
 
 def test_completed_resume_validates_prompts_and_rebuilds_analysis(write_spec, tmp_path, monkeypatch):
-    from inspect_pipeline import provenance
+    from eigenbench.inspect import provenance
     from scripts.run import main
 
     spec = Path(write_spec(policy="strict"))

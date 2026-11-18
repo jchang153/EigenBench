@@ -520,7 +520,7 @@ def export_log(
     write_inspect_run_info(target.parent, log, append=append, evaluations=(target, combined),
                            model_identities=model_identities)
     if report:
-        from .coverage import record_collection
+        from eigenbench.inspect.coverage import record_collection
 
         # Without the plan, planned and unstarted are unknown (null).
         record_collection(target.parent, "extension" if append else "collection", planned=None,
