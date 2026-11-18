@@ -14,13 +14,11 @@ Compare language models against a constitution: a list of criteria such as
 kindness or honesty. Configure models, scenarios, and criteria in `spec.py`,
 collect judgments, then compute EigenTrust scores and Elo rankings.
 
-Collection runs on [Inspect](https://inspect.aisi.org.uk/); the earlier
-collectors have been removed. The native Inspect default is the direct-rating
-variant. The paper's grouped pairwise method has a separate task. The `numerical_rating/`,
-`numerical_rating_criteria/` and Petri experiments are separate entrypoints and
-are outside the proposed Register task. See the
-[reproduction procedure](docs/inspect-reproducibility.md) for pinned setup,
-complete-run evidence and public log preparation. Register submission is pending.
+Collection runs on [Inspect](https://inspect.aisi.org.uk/). Use the
+[pairwise task](docs/inspect-pairwise-protocol.md) for the paper's grouped
+comparisons. The default task runs the direct-rating variant. Its
+[reproduction guide](docs/inspect-reproducibility.md) includes the pinned setup,
+completed runs and public logs.
 
 ## Table of Contents
 - [Install](#install)
