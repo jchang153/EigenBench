@@ -570,6 +570,34 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     assert counts(json.loads((tmp_path / "collection_report.json").read_text())) == counts(report)
 
 
+def test_completed_resume_validates_prompts_and_rebuilds_analysis(write_spec, tmp_path, monkeypatch):
+    from inspect_pipeline import provenance
+    from scripts.run import main
+
+    spec = Path(write_spec(policy="strict"))
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["training"]["enabled"] = True\n')
+    main(str(spec))
+    original = (tmp_path / "direct_rating/summary.json").read_bytes()
+    output = tmp_path / "evaluations.jsonl"
+    exported = output.read_bytes()
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    logs = tmp_path / "inspect_logs"
+    log = str(logs / info["log_file"])
+
+    with monkeypatch.context() as patch:
+        patch.setattr(provenance, "_prompts_identity", lambda: "changed prompts")
+        with pytest.raises(ValueError, match="judging prompts changed"):
+            main(str(spec), resume_log=log)
+    assert output.read_bytes() == exported
+
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["training"]["output_dir"] = "new_analysis"\n')
+    main(str(spec), resume_log=log)
+    assert (tmp_path / "new_analysis/direct_rating/summary.json").read_bytes() == original
+    assert {path.name for path in logs.glob("*.eval")} == {info["log_file"]}
+
+
 def test_fatal_judgment_error_never_produces_rankings_or_artifacts(write_spec, tmp_path):
     from inspect_ai import eval as inspect_eval, score
     from inspect_ai.log import read_eval_log

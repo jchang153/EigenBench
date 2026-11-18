@@ -342,15 +342,15 @@ def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dic
         if key in ctx["seed"] and ctx["seed"][key] != row["response"]:
             raise ValueError(f"Cannot resume: cached answer differs from the log at {key}")
 
+    resume_identity = old_meta.get("resume_identity")
+    if resume_identity is not None and resume_identity != direct_resume_identity(ctx):
+        raise ValueError("Cannot resume: cached answers or judging prompts changed since this log")
     if not missing:
         seen_logs.append(log)
         return [log]
-    resume_identity = old_meta.get("resume_identity")
     if resume_identity is None:
         # Older logs cannot prove the contents of their original cache for unstarted samples.
         print("Warning: this log predates answer fingerprints; use its original frozen response cache.")
-    elif resume_identity != direct_resume_identity(ctx):
-        raise ValueError("Cannot resume: cached answers or judging prompts changed since this log")
     print(f"Resuming {len(missing)}/{len(wanted)} judgments with Inspect; retaining {len(done)}")
     # The solver's attempt cache can contain the same invalid completions. Disable
     # it only for this retry; Inspect supplies completed samples from the original log.
@@ -502,7 +502,9 @@ def collect_direct_ratings_inspect(
     write_fingerprint(evaluations_path, ctx, resolved_sampler_seed=resolved_seed)
     from .metrics import record_analysis_status
     if scoring:
-        record_analysis_status(panel_log if phased else logs[0], analysis_status)
+        analysis_log = panel_log if phased else logs[0]
+        if analysis_log is not previous:
+            record_analysis_status(analysis_log, analysis_status)
 
     print(f"Direct collection complete. {len(records)} ratings saved to {target}")
     return records
