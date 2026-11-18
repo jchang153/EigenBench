@@ -48,6 +48,11 @@ def eigenbench_metadata(log: EvalLog) -> dict:
     return metadata
 
 
+def panel_model_identities(panel: list[dict]) -> dict[str, dict]:
+    return {model["nick"]: {key: value for key, value in model.items() if key != "nick"}
+            for model in panel}
+
+
 def is_invalid_judgment(error) -> bool:
     """Whether a sample error is a judgment still invalid after every attempt."""
 
@@ -284,12 +289,16 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
 
 
 def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False,
-                           primary: bool = True) -> Path:
+                           primary: bool = True,
+                           evaluations: tuple[Path, list[dict]] | None = None,
+                           model_identities: dict[str, dict] | None = None) -> Path:
     """Record which log(s) produced a run, so the upload can carry them.
 
     ``log_files`` lists every log; ``append`` (an extension) adds to the run's earlier ones.
     ``log_file`` stays the latest primary log, for the log viewer; ``primary=False`` (a
     refused extension) keeps the run's earlier one.
+    When exporting, bind known contributors to the output. An identity in an
+    extension does not establish the provenance of older rows from a legacy source.
     """
 
     path = Path(run_dir) / "inspect_run.json"
@@ -302,6 +311,23 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: 
     if primary or not earlier:
         info["log_file"] = names[0]
     info["log_files"] = list(dict.fromkeys(earlier + names))
+    if evaluations is not None:
+        output, records = evaluations
+        for item in logs:
+            meta = (item.eval.metadata or {}).get("eigenbench", {})
+            if model_identities is not None:
+                models = model_identities
+            elif append and "extension_model_identities" in meta:
+                models = meta["extension_model_identities"]
+            elif not append and "panel" in meta:
+                models = panel_model_identities(meta["panel"])
+            else:
+                continue
+            info.setdefault("model_provenance", {})[output.name] = {
+                "records_sha256": records_fingerprint(records),
+                "models": json.loads(json.dumps(models, default=str)),
+            }
+            break
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return path
@@ -370,6 +396,23 @@ def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
             os.unlink(tmp_path)
 
 
+def _appended_model_identities(target: Path, existing: list[dict], records: list[dict],
+                               panel: list[dict], *, direct: bool, log_dir: Path) -> dict[str, dict]:
+    from .extend import DIRECT, PAIRWISE, _source_model_identities
+
+    mode = DIRECT if direct else PAIRWISE
+    known = _source_model_identities(target, existing, mode, log_dir=log_dir) if existing else {}
+    if direct:
+        observed = {row[role]["name"] for row in records for role in ("judge", "evaluee")}
+    else:
+        observed = {row[field] for row in records for field in ("judge_name", "eval1_name", "eval2_name")}
+    added = {nick: identity for nick, identity in panel_model_identities(panel).items() if nick in observed}
+    changed = sorted(nick for nick in known.keys() & added.keys() if known[nick] != added[nick])
+    if changed:
+        raise ValueError(f"appended log changes model references for existing nicks: {', '.join(changed)}")
+    return known | added
+
+
 def export_log(
     log: str | Path | EvalLog,
     *,
@@ -431,6 +474,8 @@ def export_log(
 
     if meta.get("extension_source") and not append:
         raise ValueError("extension logs require --append to preserve the source records")
+    combined = records
+    model_identities = None
     if append:
         from pipeline.utils import load_records
 
@@ -452,6 +497,11 @@ def export_log(
             existing = source_records
         else:
             existing = load_records(str(target)) if target.exists() else []
+        if "extension_model_identities" not in meta:
+            model_identities = _appended_model_identities(
+                source or target, existing, records, meta.get("panel") or [], direct=direct,
+                log_dir=Path(str(log.location)).resolve().parent,
+            )
         def identity(r):
             if r.get("record_type") == "direct_rating":
                 return (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
@@ -459,7 +509,8 @@ def export_log(
         existing_ids = {identity(r) for r in existing}
         if any(identity(r) in existing_ids for r in records):
             raise ValueError("extension records already exist in the destination")
-        write_evaluations_atomic(target, existing + records)
+        combined = existing + records
+        write_evaluations_atomic(target, combined)
     else:
         if planned is not None:
             check_complete(planned=planned, records=records, omissions=omissions)
@@ -467,7 +518,8 @@ def export_log(
         if direct:
             write_omissions(target, planned=planned or _logged_plan(log), records=records,
                             omissions=omissions)
-    write_inspect_run_info(target.parent, log, append=append)
+    write_inspect_run_info(target.parent, log, append=append, evaluations=(target, combined),
+                           model_identities=model_identities)
     if report:
         from .coverage import record_collection
 

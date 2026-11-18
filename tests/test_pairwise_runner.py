@@ -140,6 +140,63 @@ def test_pairwise_cache_uses_last_scenario_row(tmp_path):
 @pytest.mark.parametrize("phased", [False, True])
 def test_incomplete_pairwise_never_exports(tmp_path, phased):
     spec = write_spec(tmp_path, phased=phased, groups=1)
+    report_path = tmp_path / "collection_report.json"
+    report_path.write_text(json.dumps({"collections": [{"status": "exported"}]}))
     with pytest.raises(RuntimeError):
         collect_pairwise_inspect(spec, models=panel([], invalid=True))
     assert not (tmp_path / "evaluations.jsonl").exists()
+    report = json.loads(report_path.read_text())
+    assert (report["planned"], report["exported"]) == (12, 0)
+    part, = report["collections"]
+    assert part["status"] == "refused"
+    assert part["failed"] > 0
+    assert part["logs"]
+
+
+def test_pairwise_refusal_keeps_a_concurrent_export_report(tmp_path, monkeypatch):
+    import inspect_ai
+
+    spec = write_spec(tmp_path, groups=1)
+    output = tmp_path / "evaluations.jsonl"
+    report_path = tmp_path / "collection_report.json"
+    inspect_eval = inspect_ai.eval
+    concurrent_report = '{"collections": [{"status": "exported"}]}'
+
+    def collect_concurrently(*args, **kwargs):
+        output.write_text('{"concurrent": true}\n')
+        report_path.write_text(concurrent_report)
+        return inspect_eval(*args, **kwargs)
+
+    monkeypatch.setattr(inspect_ai, "eval", collect_concurrently)
+    with pytest.raises(RuntimeError, match="output changed during collection"):
+        collect_pairwise_inspect(spec, models=panel([]))
+    assert output.read_text() == '{"concurrent": true}\n'
+    assert report_path.read_text() == concurrent_report
+
+
+def test_pairwise_extension_checks_legacy_provenance_in_configured_log_dir(tmp_path):
+    from inspect_pipeline.export import export_log, load_log
+    from inspect_pipeline.extend import extend_run
+
+    spec = Path(write_spec(tmp_path, groups=1))
+    with spec.open("a") as handle:
+        handle.write(
+            '\nfrom test_pairwise_runner import panel\n'
+            'RUN_SPEC["models"] = panel([])\n'
+            'RUN_SPEC["collection"]["inspect"]["log_dir"] = "custom_logs"\n'
+        )
+    collect_pairwise_inspect(str(spec))
+    info_path = tmp_path / "inspect_run.json"
+    info = json.loads(info_path.read_text())
+    del info["model_provenance"]
+    info_path.write_text(json.dumps(info))
+    log = load_log(tmp_path / "custom_logs" / info["log_file"])
+    log.eval.metadata["eigenbench"]["panel"][0]["name"] = "mockllm/different"
+    with pytest.raises(ValueError, match="appended log changes model references for existing nicks: a"):
+        export_log(log, append=True)
+
+    extend_run(str(spec), new_models={"d": "inspect:mockllm/model"}, dry_run=True)
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["models"]["a"] = "inspect:mockllm/different"\n')
+    with pytest.raises(ValueError, match="model references changed for existing nicks: a"):
+        extend_run(str(spec), new_models={"d": "inspect:mockllm/model"}, dry_run=True)

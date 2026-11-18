@@ -18,6 +18,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Allow "python scripts/upload_results.py ..." to import the run-spec helpers.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from pipeline.config.run_spec import _resolve_path_for_run
+from pipeline.utils import load_records, save_records
+
 
 def parse_spec(spec_path: Path) -> dict:
     """Parse a spec.py file and return the RUN_SPEC dict."""
@@ -174,29 +182,17 @@ def find_btd_dir(run_dir: Path, spec: dict) -> Path | None:
     run directory cannot stand in for missing results.
     """
 
-    name = btd_dir_name(spec)
     configured = spec.get("training", {}).get("output_dir")
-    root = run_dir
-    if configured:
-        root = Path(str(configured)).expanduser()
-        root = root if root.is_absolute() else run_dir / root
-    return root / name if (root / name).is_dir() else None
+    candidate = Path(_resolve_path_for_run(configured, run_dir, ".")) / btd_dir_name(spec)
+    return candidate if candidate.is_dir() else None
 
 
 def find_direct_dir(run_dir: Path, spec: dict) -> Path | None:
-    """Find the direct-rating analysis directory for a run."""
+    """Find the direct-rating output in the configured training directory."""
 
-    candidates = [run_dir / "direct_rating"]
     configured = spec.get("training", {}).get("output_dir")
-    if configured:
-        root = Path(str(configured)).expanduser()
-        if not root.is_absolute():
-            root = run_dir / root
-        candidates.append(root / "direct_rating")
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    return None
+    candidate = Path(_resolve_path_for_run(configured, run_dir, ".")) / "direct_rating"
+    return candidate if candidate.is_dir() else None
 
 
 def _load_json(path: Path, default):
@@ -249,7 +245,10 @@ def build_meta(
 
     evaluation = dict(spec.get("evaluation", {}))
     evaluation["mode"] = mode
-    bootstrap = dict(spec.get("training", {}).get("bootstrap", {}))
+    bootstrap = dict(spec.get("training", {}).get("bootstrap") or {})
+    bootstrap["enabled"] = bool(bootstrap.get("enabled", False))
+    if analysis and "bootstrap_available" in analysis:
+        bootstrap["available"] = bootstrap["enabled"] and analysis["bootstrap_available"]
     bootstrap.setdefault("unit", "scenario" if mode == "direct_rating" else "judgment")
 
     meta = {
@@ -294,6 +293,14 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
 
     print(f"  Parsing {run_dir.name}")
     spec = parse_spec(spec_path)
+    collection = spec.get("collection", {})
+    configured_evaluations = collection.get("evaluations_path")
+    eval_path = Path(_resolve_path_for_run(configured_evaluations, run_dir, "evaluations.jsonl"))
+    if configured_evaluations and not eval_path.is_file():
+        raise FileNotFoundError(f"Configured evaluations file not found: {eval_path}")
+
+    training = spec.get("training", {})
+    bootstrap_enabled = bool((training.get("bootstrap") or {}).get("enabled", False))
     mode = evaluation_mode(spec)
     if mode == "direct_rating":
         analysis_dir = find_direct_dir(run_dir, spec)
@@ -326,19 +333,25 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
     images_dest.mkdir(exist_ok=True)
     data_dest = dest / "data"
 
-    bootstrap_summary_path = analysis_dir / "bootstrap" / "summary.json"
-    if bootstrap_summary_path.exists():
+    bootstrap_unavailable = bootstrap_enabled and analysis_config.get("bootstrap_available") is False
+    stage_bootstrap = bootstrap_enabled and not bootstrap_unavailable
+    bootstrap_dir = analysis_dir / "bootstrap"
+    bootstrap_summary_path = bootstrap_dir / "summary.json"
+    if stage_bootstrap and bootstrap_summary_path.exists():
         summary_data = _load_json(bootstrap_summary_path, [])
     else:
         model_names = list(spec.get("models", {}).keys())
         point_rows = _load_json(analysis_dir / "summary.json", []) if mode == "direct_rating" else []
         summary_data = _point_summary(point_rows, eigentrust, model_names)
+        if bootstrap_unavailable:
+            for row in summary_data:
+                for field in ("elo_std", "elo_ci_lower", "elo_ci_upper"):
+                    row.pop(field, None)
     (dest / "summary.json").write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
 
-    image_files = {
-        "eigenbench.png": analysis_dir / "eigenbench.png",
-        "bootstrap_elo.png": analysis_dir / "bootstrap" / "bootstrap_elo.png",
-    }
+    image_files = {"eigenbench.png": analysis_dir / "eigenbench.png"}
+    if stage_bootstrap:
+        image_files["bootstrap_elo.png"] = bootstrap_dir / "bootstrap_elo.png"
     if mode == "direct_rating":
         image_files["trust_matrix.png"] = analysis_dir / "trust_matrix.png"
     else:
@@ -376,52 +389,63 @@ def stage_run(name: str, run_dir: Path, staging_dir: Path) -> tuple[dict, list[d
             staged_data.extend(
                 f"data/criteria/{path.name}" for path in sorted(criteria_dest.glob("*.csv"))
             )
-        samples_source = analysis_dir / "bootstrap" / "samples.json"
-        if samples_source.exists():
+        samples_source = bootstrap_dir / "samples.json"
+        if stage_bootstrap and samples_source.exists():
             data_dest.mkdir(exist_ok=True)
             shutil.copy2(samples_source, data_dest / "bootstrap_samples.json")
             staged_data.append("data/bootstrap_samples.json")
 
     # Evaluations
-    eval_path = run_dir / "evaluations.jsonl"
-    if eval_path.exists():
-        shutil.copy2(eval_path, dest / "evaluations.jsonl")
+    staged_eval_path = dest / "evaluations.jsonl"
+    is_jsonl_export = eval_path.suffix.lower() == ".jsonl"
+    if eval_path.is_file():
+        if is_jsonl_export:
+            shutil.copy2(eval_path, staged_eval_path)
+        else:
+            save_records(staged_eval_path, load_records(eval_path))
 
     git_commit, git_repo = get_git_info(run_dir)
     # The Inspect logs travel with the run, so the viewer can read them straight
     # from the dataset by URL instead of needing a bundle published elsewhere.
     inspect_info = None
-    inspect_info_path = run_dir / "inspect_run.json"
+    collection_dir = eval_path.parent
+    inspect_info_path = collection_dir / "inspect_run.json"
     loaded = json.loads(inspect_info_path.read_text(encoding="utf-8")) if inspect_info_path.exists() else {}
     names = loaded.get("log_files") or ([loaded["log_file"]] if loaded.get("log_file") else [])
-    present = [run_dir / "inspect_logs" / name for name in names if (run_dir / "inspect_logs" / name).exists()]
+    inspect_cfg = collection.get("inspect") or {}
+    log_dir = collection_dir / (inspect_cfg.get("log_dir") or "inspect_logs")
+    present = [log_dir / name for name in names if (log_dir / name).is_file()]
     if present:
-        for source in present:
-            shutil.copy2(source, dest / source.name)
-        published = [source.name for source in present]
-        primary = loaded.get("log_file") if loaded.get("log_file") in published else published[0]
-        inspect_info = {"log_file": primary, "log_files": published}
         report_name = "collection_report.json"
-        report_path = run_dir / report_name
+        report_path = collection_dir / report_name
         try:
-            repo_root = str(Path(__file__).resolve().parents[1])
-            if repo_root not in sys.path:
-                sys.path.insert(0, repo_root)
             from inspect_pipeline.coverage import evaluations_sha256, report_from_run_dir
 
             report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None
+            staged_hash = evaluations_sha256(staged_eval_path)
+            if staged_hash is None:
+                raise ValueError("no staged evaluations to link to Inspect logs")
+            source_hash = staged_hash if is_jsonl_export else evaluations_sha256(eval_path)
             reported_logs = {entry["file"] for part in (report or {}).get("collections", [])
                              for entry in part.get("logs", [])}
             if (not report or report.get("schema_version") != 2
-                    or report.get("evaluations_sha256") != evaluations_sha256(eval_path)
+                    or report.get("evaluations_sha256") != source_hash
                     or reported_logs != set(names)):
                 # Missing or stale report. Rebuild from the current logs and export,
                 # with the original plan unknown.
-                report = report_from_run_dir(run_dir, eval_path)
+                report = report_from_run_dir(collection_dir, staged_eval_path, log_dir=log_dir,
+                                             verify_records=True)
+            report["evaluations_sha256"] = staged_hash
             (dest / report_name).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-            inspect_info["collection_report_file"] = report_name
         except Exception as exc:
-            print(f"Warning: collection report unavailable: {exc}", file=sys.stderr)
+            print(f"Warning: Inspect evidence unavailable: {exc}", file=sys.stderr)
+        else:
+            for source in present:
+                shutil.copy2(source, dest / source.name)
+            published = [source.name for source in present]
+            primary = loaded.get("log_file") if loaded.get("log_file") in published else published[0]
+            inspect_info = {"log_file": primary, "log_files": published,
+                            "collection_report_file": report_name}
     meta = build_meta(
         name,
         spec,

@@ -81,6 +81,48 @@ def test_native_metrics_match_frozen_baseline(name, artifacts, tmp_path):
             np.testing.assert_allclose(a["trust_matrix"], e["trust_matrix"], atol=1e-7, rtol=0)
 
 
+@pytest.mark.parametrize("artifacts", [False, True])
+def test_nonunique_bootstrap_draw_preserves_unique_point_ranking(tmp_path, artifacts):
+    from scripts.upload_results import stage_run
+
+    labels = ["a", "b"]
+    rows = [
+        {"record_type": "direct_rating", "scenario_index": scenario,
+         "judge": {"name": judge, "index": j}, "evaluee": {"name": evaluee, "index": e},
+         "ratings": [{"criterion_index": 0, "rating": 10 if (j == e) == (scenario == 0) else 1}]}
+        for scenario in range(2)
+        for j, judge in enumerate(labels) for e, evaluee in enumerate(labels)
+    ]
+    # The full matrix has two uniform rows. Seed 42 selects scenario zero twice,
+    # whose identity matrix has two closed classes.
+    evaluation = {"mode": "direct_rating", "direct_rating": {"normalization": "minmax_l1"}}
+    training = {"enabled": artifacts, "output_dir": str(tmp_path / "analysis"),
+                "bootstrap": {"enabled": True, "n_bootstraps": 1, "random_seed": 42}}
+    cfg = {"model_order": labels, "criteria": ["c"], "evaluation": evaluation, "collection": {},
+           "planned": len(rows), "write_artifacts": artifacts, "training": training}
+    with pytest.warns(RuntimeWarning, match="bootstrap draw 1 has no unique"):
+        metrics = compute_panel_metrics(rows, cfg)
+    assert metrics["ranking_available"] == metrics["bootstrap_unavailable_nonunique_eigentrust"] == 1
+    assert metrics["a/eigentrust"] == metrics["b/eigentrust"] == 0.5
+    assert all("elo_ci" not in name for name in metrics)
+
+    if artifacts:
+        spec = {"models": dict.fromkeys(labels, "provider/model"),
+                "evaluation": evaluation, "training": training}
+        (tmp_path / "spec.py").write_text(f"RUN_SPEC = {spec!r}\n")
+        old = tmp_path / "analysis/direct_rating/bootstrap"
+        old.mkdir()
+        (old / "summary.json").write_text('[{"elo_mean": 999}]')
+        (old / "samples.json").write_text("[]")
+        (old / "bootstrap_elo.png").touch()
+        meta, summary = stage_run("demo", tmp_path, tmp_path / "staged")
+        assert meta["analysis"]["bootstrap_available"] is False
+        assert meta["bootstrap"]["enabled"] is True and meta["bootstrap"]["available"] is False
+        assert [row["elo_mean"] for row in summary] == [1500.0, 1500.0]
+        assert all("elo_ci_lower" not in row and "elo_ci_upper" not in row for row in summary)
+        assert not list((tmp_path / "staged").rglob("*bootstrap*"))
+
+
 def test_effective_model_order_and_self_setting(tmp_path):
     rows, config = _fixture("direct", tmp_path)
     config["training"]["bootstrap"]["enabled"] = False
@@ -156,36 +198,98 @@ def test_real_pairwise_inspect_metrics_and_phased_coverage(tmp_path, phased):
             export_log(log)
 
 
-def test_real_direct_metrics_match_export(tmp_path):
-    from inspect_ai import eval as inspect_eval
-    from inspect_pipeline.eigenbench import eigenbench
-    from inspect_pipeline.export import records_from_log
+def test_pairwise_model_coverage_refuses_ranking_and_preserves_export(tmp_path):
+    from inspect_ai.log import read_eval_log
+    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from scripts.run_train import main
+    from test_inspect_pairwise import _panel, _write_spec
+
+    path = Path(_write_spec(tmp_path, groups=1, sampler_mode="uniform", group_size=2, sampler_seed=1))
+    path.write_text(path.read_text() + """
+RUN_SPEC["models"]["d"] = "inspect:mockllm/model"
+RUN_SPEC["dataset"]["count"] = 1
+RUN_SPEC["training"] = {"enabled": True, "max_epochs": 1, "dims": [2]}
+""")
+    models = _panel([])
+    models["d"] = models["a"]
+    with pytest.warns(RuntimeWarning, match="No retained comparisons include: c, d"):
+        rows = collect_pairwise_inspect(str(path), models=models)
+    assert {row[f"{role}_name"] for row in rows for role in ("judge", "eval1", "eval2")} == {"a", "b"}
+    manifest = json.loads((tmp_path / "inspect_run.json").read_text())
+    log = read_eval_log(str(tmp_path / "inspect_logs" / manifest["log_files"][0]))
+    assert log.status == "success"
+    values = _metrics(log)
+    assert values["coverage/scored"] == values["coverage/planned"] == len(rows) == 2
+    assert values["comparisons_retained"] == 4
+    assert values["ranking_available"] == 0
+    assert values["ranking_unavailable_model_coverage"] == 1
+    assert values["panel_models_unobserved"] == 2
+    assert all(not metric.startswith("btd_d") for metric in values)
+    exported = [json.loads(line) for line in (tmp_path / "evaluations.jsonl").read_text().splitlines()]
+    assert exported == rows
+    with pytest.raises(RuntimeError, match="No retained comparisons include: c, d"):
+        main(str(path))
+    assert not (tmp_path / "train").exists()
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_real_direct_metrics_match_export(tmp_path, ambiguous):
+    from inspect_ai.log import read_eval_log
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from pipeline.trust.eigentrust import NonUniqueStationaryError
+    from scripts.run_train import main
+
     # A minimal callable mock exercises persistence without external providers.
     (tmp_path / "scenarios.json").write_text('["scenario zero", "scenario one"]')
     (tmp_path / "constitution.json").write_text('["criterion"]')
     path = tmp_path / "spec.py"
     # Build a minimal model fixture without invoking any provider.
-    path.write_text('''from inspect_ai.model import ModelOutput, get_model
+    path.write_text(r'''from inspect_ai.model import ModelOutput, get_model
 
-def mock():
+def mock(nick):
     def out(input, tools, tool_choice, config):
-        return ModelOutput.from_content(model="mockllm/model", content="<criterion_1_rating>7</criterion_1_rating>")
+        if "assign one integer rating" in input[0].text:
+            own_answer = f"<response>\nanswer {nick}\n</response>" in input[1].text
+            rating = (10 if own_answer else 1) if AMBIGUOUS else 7
+            text = f"<criterion_1_rating>{rating}</criterion_1_rating>"
+        else:
+            text = f"answer {nick}"
+        return ModelOutput.from_content(model="mockllm/model", content=text)
     return get_model("mockllm/model", custom_outputs=out, memoize=False)
-RUN_SPEC = {"models": {"a": mock(), "b": mock()}, "evaluation": {"mode": "direct_rating"},
+RUN_SPEC = {"models": {"a": mock("a"), "b": mock("b")}, "evaluation": {"mode": "direct_rating"},
 "dataset": {"path": "scenarios.json"}, "constitution": {"path": "constitution.json", "num_criteria": 1},
-"collection": {"inspect": {"cache": False}, "sampler_mode": "all_to_all"}, "training": {"enabled": False}}
-''')
-    # Native task construction, execution and persisted log (no mocked metric machinery).
-    logs = inspect_eval(tasks=eigenbench(str(path)), model=None, display="none",
-                        log_dir=str(tmp_path / "logs"))
-    assert logs[0].status == "success"
-    rows = records_from_log(logs[0])
-    values = _metrics(logs[0])
-    assert values["coverage/scored"] == 8
-    assert values["a/eigentrust"] == values["b/eigentrust"] == 0.5
-    assert values["a/elo"] == values["b/elo"] == 1500
-    assert values["a/rank"] == values["b/rank"] == 1
-    assert len(rows) == 8
+"collection": {"inspect": {"cache": False, "display": "none"}, "sampler_mode": "all_to_all"},
+"training": {"enabled": False}}
+''' + f"""
+AMBIGUOUS = {ambiguous!r}
+RUN_SPEC["collection"]["evaluations_path"] = {str(tmp_path / "evaluations.jsonl")!r}
+if AMBIGUOUS:
+    RUN_SPEC["evaluation"]["direct_rating"] = {{"normalization": "minmax_l1"}}
+    RUN_SPEC["training"]["enabled"] = True
+""")
+    if ambiguous:
+        with pytest.warns(RuntimeWarning, match="no unique stationary vector"):
+            rows = collect_direct_ratings_inspect(str(path))
+    else:
+        rows = collect_direct_ratings_inspect(str(path))
+    manifest = json.loads((tmp_path / "inspect_run.json").read_text())
+    log = read_eval_log(str(tmp_path / "inspect_logs" / manifest["log_files"][0]))
+    assert log.status == "success"
+    values = _metrics(log)
+    assert values["coverage/scored"] == values["coverage/planned"] == len(rows) == 8
+    exported = [json.loads(line) for line in (tmp_path / "evaluations.jsonl").read_text().splitlines()]
+    assert exported == rows
+    if ambiguous:
+        assert values["ranking_available"] == 0
+        assert values["ranking_unavailable_nonunique_eigentrust"] == 1
+        assert all(not metric.endswith("/rank") for metric in values)
+        with pytest.raises(NonUniqueStationaryError, match="no unique stationary vector"):
+            main(str(path))
+        assert not (tmp_path / "train").exists()
+    else:
+        assert values["a/eigentrust"] == values["b/eigentrust"] == 0.5
+        assert values["a/elo"] == values["b/elo"] == 1500
+        assert values["a/rank"] == values["b/rank"] == 1
 
 
 def test_historical_analysis_preserves_record_names_with_reordered_spec(tmp_path):

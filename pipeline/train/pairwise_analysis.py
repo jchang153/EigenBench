@@ -76,12 +76,11 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
 
     # Historical records keep their numeric IDs and the baseline label/count
     # resolution. Native scoring passes an explicit order after remapping IDs.
-    num_models = (len(model_order) if model_order is not None else
-                  len(set([i[2] for i in comparisons] + [i[3] for i in comparisons]
-                          + [i[4] for i in comparisons])))
+    observed_indices = {index for row in comparisons for index in row[2:5]}
+    num_models = len(model_order) if model_order is not None else len(observed_indices)
     num_criteria_eff = len(set([i[0] for i in comparisons]))
     if model_order is None:
-        largest = max(max(row[2:5]) for row in comparisons)
+        largest = max(observed_indices)
         if largest >= num_models:
             raise ValueError(
                 f"records use model index {largest} but only {num_models} models appear; "
@@ -89,6 +88,23 @@ def run_pairwise_analysis(*, data: list[dict], models: dict, num_criteria: int,
             )
     model_labels = (list(model_order) if model_order is not None else
                     build_model_labels(num_models, models, extracted_name_map))
+    if model_order is not None:
+        missing = [name for index, name in enumerate(model_order) if index not in observed_indices]
+    elif len(models) > num_models:
+        observed_labels = set(model_labels)
+        missing = [name for name in models if name not in observed_labels]
+    else:
+        missing = []
+    if missing:
+        diagnostics["panel_models_unobserved"] = len(missing)
+        return {
+            "diagnostics": diagnostics,
+            "dimensions": {},
+            "unavailable_reason": (
+                "Pairwise panel ranking requires observations for every declared model. "
+                f"No retained comparisons include: {', '.join(missing)}."
+            ),
+        }
 
     model_kind = train_cfg.get("model", "btd_ties")
 

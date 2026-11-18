@@ -267,7 +267,8 @@ def record_collection(run_dir: str | Path, kind: str, *, planned, logs, records,
     return path
 
 
-def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None = None) -> dict:
+def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None = None, *,
+                        log_dir: str | Path | None = None, verify_records: bool = False) -> dict:
     """A version 2 report for a run that has no collection_report.json.
 
     Reads every log in inspect_run.json (``log_files``, else ``log_file``) and the exported
@@ -281,10 +282,32 @@ def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None
     names = info.get("log_files") or ([info["log_file"]] if info.get("log_file") else [])
     if not names:
         raise ValueError("inspect_run.json names no logs")
-    logs = [read_eval_log(str(run_dir / "inspect_logs" / name)) for name in names]
+    logs_dir = Path(log_dir) if log_dir is not None else run_dir / "inspect_logs"
+    logs = [read_eval_log(str(logs_dir / name)) for name in names]
     evaluations = Path(evaluations_path or run_dir / "evaluations.jsonl")
     with evaluations.open(encoding="utf-8") as handle:
         records = [json.loads(line) for line in handle if line.strip()]
+    if verify_records:
+        from .export import records_fingerprint, records_from_log
+        from .pairwise import records_from_pairwise_log
+
+        # Coverage keys omit the response, reflection and judgment. For publication,
+        # an unbound log must reproduce the actual payload, including repeated rows.
+        logged_records = Counter()
+        for log in logs:
+            judgment = next((sample for sample in log.samples or []
+                             if judgment_key(sample.metadata or {})), None)
+            if judgment is None:
+                continue
+            if "eval_nick" in judgment.metadata:
+                rows = records_from_log(log, strict=False, whole=False)
+            else:
+                criteria = log.eval.metadata["eigenbench"]["criteria"]
+                rows = records_from_pairwise_log(log, criteria, strict=False)
+            logged_records.update(records_fingerprint([row]) for row in rows)
+        exported_records = Counter(records_fingerprint([row]) for row in records)
+        if not exported_records or exported_records - logged_records:
+            raise ValueError("Inspect judgment logs do not reproduce the selected evaluations")
     policies = {
         ((getattr(log.eval, "metadata", None) or {}).get("eigenbench") or {}).get("failure_policy")
         for log in logs

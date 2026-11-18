@@ -285,6 +285,19 @@ exports only the successful subset; that output is not a complete benchmark.
 Do not reuse responses or logs from a run with incorrect model identities or
 scenario indexing.
 
+For a hosted direct-rating run with frozen answers in
+`collection.cached_responses_path`, resume and re-export in one command:
+
+```bash
+python scripts/run.py runs/my_run/spec.py --resume-log "$LOG_FILE"
+```
+
+Pass the latest judgment log for the same plan, including a log marked
+successful with omitted samples. Inspect retains successful samples and runs
+only failed or unstarted judgments. The saved answers are required for the
+outstanding judgments, and the export is replaced only after all judgments
+pass strict validation. If another retry is needed, use the new Inspect log.
+
 ### Native Inspect command
 
 After `uv sync`, run the default direct-rating task with `OPENROUTER_API_KEY` set

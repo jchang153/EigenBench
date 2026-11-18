@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 from tqdm import tqdm
+
+
+class NonUniqueStationaryError(RuntimeError):
+    """The damped trust matrix admits more than one stationary distribution."""
 
 
 def _overflow_shift(logits):
@@ -86,13 +92,29 @@ def _iterate(t, T, tol: float, max_iter: int, verbose: bool):
     return t, False
 
 
+def _require_unique_stationary(T):
+    """A finite Markov chain has a unique stationary vector with one closed class."""
+    edges = T > 0
+    if bool(edges.all()):
+        return
+    graph = csr_matrix(edges.detach().cpu().numpy())
+    count, labels = connected_components(graph, directed=True, connection="strong")
+    sources, targets = graph.nonzero()
+    source_classes, target_classes = labels[sources], labels[targets]
+    open_classes = np.unique(source_classes[source_classes != target_classes])
+    if count - len(open_classes) > 1:
+        raise NonUniqueStationaryError(
+            "EigenTrust has no unique stationary vector: the trust matrix has multiple closed classes"
+        )
+
+
 def _stationary(T, tol: float):
-    """Solve t T = t, sum(t) = 1 directly; raise if the solution is not unique."""
+    """Solve t T = t and sum(t) = 1 directly."""
     M = T.detach().cpu().to(torch.float64).numpy()
     n = M.shape[0]
     A = M.T - np.eye(n)
     if np.linalg.matrix_rank(A) < n - 1:
-        raise RuntimeError("EigenTrust has no unique stationary vector: the trust matrix is reducible")
+        raise RuntimeError("EigenTrust stationary solve is numerically ill-conditioned")
     b = np.zeros(n + 1)
     b[-1] = 1.0
     t = np.linalg.lstsq(np.vstack([A, np.ones(n)]), b, rcond=None)[0]
@@ -106,8 +128,10 @@ def eigentrust(C, alpha: float = 0.0, tol: float = 1e-6, max_iter: int = 1000, v
 
     Power iteration is used first. If it has not converged after ``max_iter`` steps
     (slow mixing, or a periodic matrix), the same matrix is solved directly.
+    Matrices with more than one closed class after damping have no unique result.
     """
     T = damp_matrix(C, alpha)
+    _require_unique_stationary(T)
     t = torch.full((C.size(0),), 1.0 / C.size(0), device=C.device, dtype=C.dtype)
     t, settled = _iterate(t, T, tol, max_iter, verbose)
     return t if settled else _stationary(T, tol)

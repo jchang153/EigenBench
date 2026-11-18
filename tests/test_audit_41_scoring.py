@@ -193,6 +193,24 @@ def test_eigentrust_refuses_a_matrix_without_a_unique_answer():
         eigentrust(split, max_iter=10, verbose=False)
 
 
+def test_direct_minmax_refuses_converged_nonunique_eigentrust():
+    from pipeline.trust.direct_rating import build_direct_trust
+
+    rows = [
+        {"record_type": "direct_rating", "scenario_index": 0,
+         "judge": {"index": judge}, "evaluee": {"index": evaluee},
+         "ratings": [{"criterion_index": 0, "rating": 10 if judge == evaluee else 1}]}
+        for judge in range(3)
+        for evaluee in range(3)
+    ]
+    config = {"num_models": 3, "num_criteria": 1, "normalization": "minmax_l1"}
+    with pytest.raises(RuntimeError, match="no unique stationary vector"):
+        build_direct_trust(rows, **config)
+
+    result = build_direct_trust(rows, **config, eigentrust_alpha=0.1)
+    np.testing.assert_allclose(result.eigentrust_scores, np.full(3, 1 / 3))
+
+
 def test_bootstrap_refuses_plain_bt():
     from pipeline.train.bootstrap import _build_model_and_loader
 

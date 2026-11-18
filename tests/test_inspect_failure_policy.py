@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 os.environ.setdefault("MPLBACKEND", "Agg")
@@ -477,6 +480,122 @@ def test_native_retry_counts_reused_scores_and_persistent_omission(write_spec, t
         assert native.metrics["coverage/planned"].value == PLANNED
         assert native.metrics["ranking_available"].value == 1
         assert native.metrics["a/elo"].value == native.metrics["b/elo"].value == 1500
+
+
+@pytest.mark.parametrize("policy", ["strict", "omit_invalid_judgments", "interrupted"])
+def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeypatch, policy):
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.log import read_eval_log
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.eigenbench import eigenbench
+
+    spec = Path(write_spec(fault="rating", policy=policy if policy != "interrupted" else "strict"))
+    monkeypatch.setenv("INSPECT_CACHE_DIR", str(tmp_path / "inspect_cache"))
+    cache = tmp_path / "responses.jsonl"
+    trace = tmp_path / "calls.txt"
+    fault = tmp_path / "fault"
+    fault.touch()
+    rows = [
+        {"scenario_index": i, "scenario": f"Scenario number {i}: what now?",
+         "responses": {nick: f"[{nick}] answer {i}" for nick in NICKS}}
+        for i in range(SCENARIOS)
+    ]
+    cache.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    source = spec.read_text().replace('FAULT = \'rating\'',
+                                     f'FAULT = "rating" if Path({str(fault)!r}).exists() else None')
+    source = "from pathlib import Path\n" + source.replace(
+        '        if system.startswith("Without making any mention"):', f'''        with Path({str(trace)!r}).open("a") as f:
+            f.write(f"{{nick}} {{scenario}} {{system}} {{user}}\\n")
+        if system.startswith("Without making any mention"):
+            raise AssertionError("cached answers must not be regenerated")''')
+    source += f'\nRUN_SPEC["collection"]["cached_responses_path"] = {str(cache)!r}\n'
+    # Force the first attempt's invalid completion into Inspect's generation cache.
+    source += 'RUN_SPEC["collection"]["inspect"]["cache"] = True\n'
+    spec.write_text(source)
+
+    out = tmp_path / "evaluations.jsonl"
+    if policy == "interrupted":
+        [initial] = inspect_eval(eigenbench(str(spec), panel_metrics=False), model=None,
+                                 max_samples=1, fail_on_error=True, display="none",
+                                 log_dir=str(tmp_path / "inspect_logs"))
+        assert initial.status == "error"
+        assert len(initial.samples) < PLANNED
+        old_records = []
+    elif policy == "strict":
+        with pytest.raises(RuntimeError, match="nothing exported"):
+            collect(str(spec))
+        old_records = []
+    else:
+        old_records = collect(str(spec))
+        assert len(old_records) == PLANNED - 1
+    if policy != "interrupted":
+        info = json.loads((tmp_path / "inspect_run.json").read_text())
+        initial = read_eval_log(str(tmp_path / "inspect_logs" / info["log_file"]))
+    log = initial.location
+    fault.unlink()
+    trace.unlink()
+
+    # Replacing the response under an existing judgment must be refused before inference.
+    previous_export = out.read_bytes() if out.exists() else None
+    original = cache.read_text()
+    cache.write_text(original.replace("[b] answer 0", "[b] answer 0 changed"))
+    with pytest.raises(ValueError, match="cached answer"):
+        collect_direct_ratings_inspect(str(spec), resume_log=log)
+    assert not trace.exists()
+    assert (out.read_bytes() if out.exists() else None) == previous_export
+    cache.write_text(original)
+
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/run.py"), str(spec), "--resume-log", log],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    resumed = [json.loads(line) for line in out.read_text().splitlines()]
+    assert len(resumed) == PLANNED
+    assert all(row in resumed for row in old_records)
+    calls = re.findall(r"(?m)^([ab]) (\d) You are acting as a judge\..*?\[([ab])\] answer",
+                       trace.read_text(), re.DOTALL)
+    done = {(s.metadata["judge_nick"], str(s.metadata["scenario_index"]), s.metadata["eval_nick"])
+            for s in initial.samples if s.error is None}
+    expected = {(j, str(i), n) for i in range(SCENARIOS) for j in NICKS for n in NICKS} - done
+    assert Counter(calls) == {edge: 2 for edge in expected}
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    assert counts(report) == {"planned": PLANNED, "logged": PLANNED, "exported": PLANNED,
+                              "failed": 0, "omitted": 0, "unstarted": 0}
+    final = json.loads((tmp_path / "inspect_run.json").read_text())["log_file"]
+    trace.unlink()
+    assert collect_direct_ratings_inspect(str(spec),
+                                         resume_log=str(tmp_path / "inspect_logs" / final)) == resumed
+    assert not trace.exists()
+    assert counts(json.loads((tmp_path / "collection_report.json").read_text())) == counts(report)
+
+
+def test_completed_resume_validates_prompts_and_rebuilds_analysis(write_spec, tmp_path, monkeypatch):
+    from inspect_pipeline import provenance
+    from scripts.run import main
+
+    spec = Path(write_spec(policy="strict"))
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["training"]["enabled"] = True\n')
+    main(str(spec))
+    original = (tmp_path / "direct_rating/summary.json").read_bytes()
+    output = tmp_path / "evaluations.jsonl"
+    exported = output.read_bytes()
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    logs = tmp_path / "inspect_logs"
+    log = str(logs / info["log_file"])
+
+    with monkeypatch.context() as patch:
+        patch.setattr(provenance, "_prompts_identity", lambda: "changed prompts")
+        with pytest.raises(ValueError, match="judging prompts changed"):
+            main(str(spec), resume_log=log)
+    assert output.read_bytes() == exported
+
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["training"]["output_dir"] = "new_analysis"\n')
+    main(str(spec), resume_log=log)
+    assert (tmp_path / "new_analysis/direct_rating/summary.json").read_bytes() == original
+    assert {path.name for path in logs.glob("*.eval")} == {info["log_file"]}
 
 
 def test_fatal_judgment_error_never_produces_rankings_or_artifacts(write_spec, tmp_path):
