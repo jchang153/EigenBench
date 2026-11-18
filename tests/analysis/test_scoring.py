@@ -1,14 +1,10 @@
 """Comparison cleaning, EigenTrust convergence and the BT route."""
 
-import sys
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def planned_rows(prefer):
@@ -167,7 +163,7 @@ def _stationary(T):
 
 @pytest.mark.parametrize("T", [CYCLING, _weak_blocks()], ids=["periodic", "slow"])
 def test_eigentrust_returns_the_stationary_vector_when_iteration_stalls(T, recwarn):
-    from pipeline.trust.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     at_1000 = eigentrust(T, max_iter=1000, verbose=False)
     assert torch.allclose(at_1000, eigentrust(T, max_iter=1001, verbose=False), atol=1e-9)
@@ -177,14 +173,14 @@ def test_eigentrust_returns_the_stationary_vector_when_iteration_stalls(T, recwa
 
 
 def test_eigentrust_is_unchanged_when_it_converges():
-    from pipeline.trust.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     T = torch.tensor([[0.5, 0.3, 0.2], [0.2, 0.6, 0.2], [0.3, 0.3, 0.4]], dtype=torch.float64)
     assert torch.norm(eigentrust(T, verbose=False) @ T - eigentrust(T, verbose=False), p=1) < 1e-6
 
 
 def test_eigentrust_refuses_a_matrix_without_a_unique_answer():
-    from pipeline.trust.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     # Two closed classes, {0, 1} and {2, 3}, each cycling; model 4 feeds the second.
     split = torch.tensor([[0, 1, 0, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 1, 0],
@@ -194,7 +190,7 @@ def test_eigentrust_refuses_a_matrix_without_a_unique_answer():
 
 
 def test_direct_minmax_refuses_converged_nonunique_eigentrust():
-    from pipeline.trust.direct_rating import build_direct_trust
+    from eigenbench.analysis.direct_trust import build_direct_trust
 
     rows = [
         {"record_type": "direct_rating", "scenario_index": 0,

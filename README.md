@@ -491,11 +491,12 @@ Default locations inside the run folder:
 | Directory | Purpose |
 | --- | --- |
 | `runs/` | Example specs and local run folders. |
-| `scripts/` | Collection, extension, scoring, and upload commands. |
-| `inspect_pipeline/` | Inspect tasks, model mapping, and export helpers. |
-| `pipeline/config/` | Spec, dataset, and constitution loaders. |
-| `pipeline/protocol/` | Shared prompts, parsing, sampling, and response-cache readers. |
-| `pipeline/train/` | Scoring, bootstrap, and plots. |
+| `scripts/` | Command-line entry points for running, extending, scoring, and publishing. |
+| `eigenbench/protocol/` | Shared response and pairwise prompts, and pairwise group sampling. |
+| `eigenbench/analysis/` | Trust matrix computation, EigenTrust, and Elo conversion. |
+| `eigenbench/inspect/` | Collection reports and fingerprints for Inspect runs. |
+| `inspect_pipeline/` | Native Inspect task entry points, model mapping, collection, and export. |
+| `pipeline/` | Spec and data loading, direct-rating prompts and planning, cache reads, and analysis workflows. |
 | `data/constitutions/` | Available criterion sets. |
 | `tests/` | Regression tests. |
 
