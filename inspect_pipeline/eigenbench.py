@@ -40,7 +40,7 @@ from pipeline.config import (
     select_scenarios,
 )
 from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
-from pipeline.protocol.response_cache import load_cached_responses
+from pipeline.protocol.response_cache import cached_seed
 from pipeline.protocol.direct_rating import (
     build_direct_assignments,
     resolve_direct_generation_settings,
@@ -350,33 +350,6 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
             "max_attempts": max_attempts,
             "cache_enabled": cache_enabled,
         },
-    }
-
-
-def cached_seed(path: str | None, selected, nicks, *, merge_rows: bool) -> dict[tuple[int, str], str]:
-    """Cached responses for the selected scenarios, refusing a cache made for other text."""
-
-    if not path:
-        return {}
-    from pipeline.utils import load_records
-
-    current = {int(s_idx): text for s_idx, text in selected}
-    changed = sorted({
-        int(row["scenario_index"]) for row in load_records(path)
-        if isinstance(row, dict) and "scenario_index" in row and "scenario" in row
-        and int(row["scenario_index"]) in current and row["scenario"] != current[int(row["scenario_index"])]
-    })
-    if changed:
-        raise ValueError(
-            f"{path} holds responses to other scenario text at index "
-            f"{', '.join(map(str, changed[:10]))}; point collection.cached_responses_path "
-            "at a cache for this dataset selection"
-        )
-    cached = load_cached_responses(path, merge_rows=merge_rows)
-    return {
-        (s_idx, nick): text
-        for s_idx, responses in cached.items() if s_idx in current
-        for nick, text in responses.items() if nick in nicks
     }
 
 
