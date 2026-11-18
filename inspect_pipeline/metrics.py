@@ -137,7 +137,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
     training = config["training"]
     if direct:
         from pipeline.trust.direct_rating import build_direct_trust
-        from pipeline.train.direct_analysis import compute_direct_bootstrap
+        from pipeline.train.direct_analysis import compute_direct_bootstrap, direct_trust_options
         from pipeline.train.train import eigentrust_to_elo
         cfg = evaluation.get("direct_rating", {})
         collection = config["collection"]
@@ -158,11 +158,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
         else:
             result = build_direct_trust(
                 records, num_models=len(labels), num_criteria=len(config["criteria"]),
-                include_self=bool(cfg.get("include_self", True)), allow_sparse=allow_sparse,
-                normalization=cfg.get("normalization", "zscore_softmax"),
-                softmax_temperature=float(cfg.get("softmax_temperature", 1.0)),
-                scale_min=float(cfg.get("scale_min", 1)), scale_max=float(cfg.get("scale_max", 10)),
-                eigentrust_alpha=float(cfg.get("eigentrust_alpha", 0.0)),
+                allow_sparse=allow_sparse, **direct_trust_options(cfg),
             )
             bootstrap = compute_direct_bootstrap(
                 records=records, model_labels=labels, num_criteria=len(config["criteria"]),

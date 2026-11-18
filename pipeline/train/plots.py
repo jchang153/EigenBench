@@ -1,6 +1,8 @@
-"""Embedding visualization helpers for trained BT/BTD models."""
+"""Embedding and ranking plots for EigenBench analysis."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -241,4 +243,27 @@ def save_eigenbench_plot(
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_bootstrap_plot(summary_rows: list[dict], path: Path, *, title: str) -> None:
+    """Save bootstrap Elo means and their percentile intervals."""
+    labels = [row["model_name"] for row in summary_rows]
+    means = np.array([row["elo_mean"] for row in summary_rows])
+    lower = np.array([row["elo_ci_lower"] for row in summary_rows])
+    upper = np.array([row["elo_ci_upper"] for row in summary_rows])
+    x = np.arange(len(summary_rows))
+    fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
+    # The mean can fall outside its percentile interval, so draw the interval directly.
+    ax.vlines(x, lower, upper, color="C0")
+    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
+              np.concatenate([x, x]) + 0.1, color="C0")
+    ax.plot(x, means, "o", color="C0")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_ylabel("EigenBench Elo")
+    ax.set_title(title)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(fig)
