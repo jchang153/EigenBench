@@ -80,11 +80,12 @@ def collection_identity(ctx: dict) -> dict:
 
 def direct_resume_identity(ctx: dict) -> str:
     """Bind retries to the same rendered prompt templates and frozen answers."""
-    return records_fingerprint([
-        {"prompts_sha256": _prompts_identity()},
-        *[{"scenario_index": index, "model": nick, "response": answer}
-          for (index, nick), answer in sorted(ctx["seed"].items())],
-    ])
+    entries: list[dict] = [{"prompts_sha256": _prompts_identity()}]
+    entries.extend(
+        {"scenario_index": index, "model": nick, "response": answer}
+        for (index, nick), answer in sorted(ctx["seed"].items())
+    )
+    return records_fingerprint(entries)
 
 
 def _normalized(identity: dict) -> dict:

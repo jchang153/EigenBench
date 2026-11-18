@@ -325,11 +325,11 @@ def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: 
                 continue
             info.setdefault("model_provenance", {})[output.name] = {
                 "records_sha256": records_fingerprint(records),
-                "models": json.loads(json.dumps(models, default=str)),
+                "models": models,
             }
             break
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(info, indent=2, default=str) + "\n", encoding="utf-8")
     return path
 
 
@@ -510,14 +510,12 @@ def export_log(
         if any(identity(r) in existing_ids for r in records):
             raise ValueError("extension records already exist in the destination")
         combined = existing + records
-        write_evaluations_atomic(target, combined)
-    else:
-        if planned is not None:
-            check_complete(planned=planned, records=records, omissions=omissions)
-        write_evaluations_atomic(target, records)
-        if direct:
-            write_omissions(target, planned=planned or _logged_plan(log), records=records,
-                            omissions=omissions)
+    elif planned is not None:
+        check_complete(planned=planned, records=records, omissions=omissions)
+    write_evaluations_atomic(target, combined)
+    if direct and not append:
+        write_omissions(target, planned=planned or _logged_plan(log), records=records,
+                        omissions=omissions)
     write_inspect_run_info(target.parent, log, append=append, evaluations=(target, combined),
                            model_identities=model_identities)
     if report:
