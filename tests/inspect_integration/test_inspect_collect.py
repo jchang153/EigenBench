@@ -16,7 +16,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -454,7 +454,7 @@ def test_matching_eval_model_uses_requested_outputs(run_dir):
 
 def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
     from inspect_ai.model import get_model
-    import inspect_pipeline.eigenbench as task_module
+    import eigenbench.inspect.context as task_module
     import inspect_pipeline.model_mapping as mapping
 
     monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
@@ -473,7 +473,7 @@ def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
 
 def test_eval_model_keeps_panel_members_when_nicknames_collide(monkeypatch):
     from inspect_ai.model import get_model
-    import inspect_pipeline.eigenbench as task_module
+    import eigenbench.inspect.context as task_module
 
     under_test = get_model("mockllm/model", memoize=False)
     monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
@@ -830,7 +830,7 @@ RUN_SPEC = {{
     if recurring:
         # The plan asks for its first comparison twice.
         import dataclasses
-        import inspect_pipeline.extend as extend_module
+        from eigenbench.protocol import extension as extend_module
 
         plan_pairwise = extend_module._plan_pairwise
         def with_repeat(plan, *args, **kwargs):
@@ -1157,12 +1157,12 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
 
 def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clients(monkeypatch):
     import inspect_ai
-    import inspect_pipeline.eigenbench as eigenbench
+    from eigenbench.inspect import context as inspect_context
     from inspect_pipeline.execution import eval_phase, model_phase
 
     context = {"models": {"a": "inspect:mockllm/model", "b": "inspect:mockllm/other"}}
     clients, closed = [], []
-    get_model = eigenbench.get_model
+    get_model = inspect_context.get_model
 
     def track_model(*args, **kwargs):
         assert not kwargs["memoize"]
@@ -1175,7 +1175,7 @@ def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clie
         model.api.aclose = close
         return model
 
-    monkeypatch.setattr(eigenbench, "get_model", track_model)
+    monkeypatch.setattr(inspect_context, "get_model", track_model)
     for _ in range(2):
         with pytest.raises(RuntimeError, match="provider failed"):
             with model_phase(context, "a") as phase:
@@ -1290,3 +1290,22 @@ def test_appending_an_inspect_log_preserves_model_provenance(run_dir):
     previous = json.loads(initial_info)["model_provenance"][output.name]
     assert refreshed["models"] == previous["models"]
     assert refreshed["records_sha256"] == records_fingerprint(baseline + appended)
+
+
+def test_cli_refuses_a_saved_file_with_another_panels_scenario(run_dir):
+    import json as _json
+
+    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from scripts.run import main
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec()
+    collect_direct_ratings_inspect(str(spec))
+    evaluations = tmp_path / "evaluations.jsonl"
+    records = [_json.loads(line) for line in evaluations.read_text().splitlines()]
+    foreign = [dict(r, scenario_index=99, judge={**r["judge"], "name": "x" + r["judge"]["name"]},
+                    evaluee={**r["evaluee"], "name": "x" + r["evaluee"]["name"]})
+               for r in records if r["scenario_index"] == 0]
+    evaluations.write_text("".join(_json.dumps(r) + "\n" for r in foreign + records))
+    with pytest.raises(ValueError, match="spec lists"):
+        main(str(spec), collection_enabled=False)

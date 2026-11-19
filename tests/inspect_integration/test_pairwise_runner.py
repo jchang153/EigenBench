@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from inspect_ai.model import ModelOutput, get_model
 from inspect_pipeline.pairwise_collect import collect_pairwise_inspect, estimate_pairwise_calls
@@ -208,7 +208,7 @@ def test_pairwise_extension_checks_legacy_provenance_in_configured_log_dir(tmp_p
     spec = Path(write_spec(tmp_path, groups=1))
     with spec.open("a") as handle:
         handle.write(
-            '\nfrom test_pairwise_runner import panel\n'
+            '\nfrom tests.inspect_integration.test_pairwise_runner import panel\n'
             'RUN_SPEC["models"] = panel([])\n'
             'RUN_SPEC["collection"]["inspect"]["log_dir"] = "custom_logs"\n'
         )

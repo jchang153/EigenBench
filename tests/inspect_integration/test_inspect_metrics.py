@@ -11,7 +11,7 @@ import torch
 
 from inspect_pipeline.metrics import compute_panel_metrics
 
-FIXTURES = Path(__file__).parent / "fixtures" / "inspect_migration"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "inspect_migration"
 
 
 def _fixture(name, tmp_path, *, artifacts=False):
@@ -167,7 +167,7 @@ def test_rectangular_criteria_fails_before_fitting(tmp_path, monkeypatch):
 @pytest.mark.parametrize("phased", [False, True])
 def test_real_pairwise_inspect_metrics_and_phased_coverage(tmp_path, phased):
     from inspect_ai.log import read_eval_log
-    from test_inspect_pairwise import _write_spec, _panel
+    from tests.inspect_integration.test_inspect_pairwise import _write_spec, _panel
     from inspect_pipeline.export import export_log
     from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
     from inspect_pipeline.coverage import report_from_run_dir
@@ -202,7 +202,7 @@ def test_pairwise_model_coverage_refuses_ranking_and_preserves_export(tmp_path):
     from inspect_ai.log import read_eval_log
     from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
     from scripts.run_train import main
-    from test_inspect_pairwise import _panel, _write_spec
+    from tests.inspect_integration.test_inspect_pairwise import _panel, _write_spec
 
     path = Path(_write_spec(tmp_path, groups=1, sampler_mode="uniform", group_size=2, sampler_seed=1))
     path.write_text(path.read_text() + """
@@ -315,7 +315,7 @@ def test_requested_epoch_coverage_survives_an_entire_failed_epoch(tmp_path):
     from inspect_ai import eval as inspect_eval
     from inspect_ai.solver import chain, solver
     from inspect_pipeline.pairwise import eigenbench_pairwise
-    from test_pairwise_runner import write_spec, panel
+    from tests.inspect_integration.test_pairwise_runner import write_spec, panel
 
     @solver
     def fail_second_epoch():
@@ -410,7 +410,7 @@ def test_public_rescore_preserves_requested_epochs_and_coverage(tmp_path):
     from inspect_ai.log import read_eval_log
     from inspect_pipeline.metrics import panel_scorer
     from inspect_pipeline.pairwise import eigenbench_pairwise
-    from test_pairwise_runner import write_spec, panel
+    from tests.inspect_integration.test_pairwise_runner import write_spec, panel
     task = eigenbench_pairwise(write_spec(tmp_path, groups=1), models=panel([]))
     with pytest.warns(RuntimeWarning, match="multiple Inspect epochs"):
         [log] = inspect_eval(task, model=None, epochs=2, display="none",
@@ -430,7 +430,7 @@ def test_pairwise_collection_only_bypasses_fitting_and_invalid_training(tmp_path
     from inspect_ai.log import read_eval_log
     import inspect_pipeline.metrics as metrics
     from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
-    from test_inspect_pairwise import _write_spec, _panel
+    from tests.inspect_integration.test_inspect_pairwise import _write_spec, _panel
     path = Path(_write_spec(tmp_path, groups=1))
     path.write_text(path.read_text() + f"\nRUN_SPEC['collection']['inspect']['phased'] = {phased!r}\n" +
                     "RUN_SPEC['training'] = {'enabled': False, 'separate_criteria': True}\n")
@@ -451,7 +451,7 @@ def test_native_no_score_bypasses_unsupported_training(tmp_path, monkeypatch):
     from inspect_ai import eval as inspect_eval
     import inspect_pipeline.metrics as metrics
     from inspect_pipeline.pairwise import eigenbench_pairwise
-    from test_inspect_pairwise import _write_spec, _panel
+    from tests.inspect_integration.test_inspect_pairwise import _write_spec, _panel
     path = Path(_write_spec(tmp_path, groups=1))
     path.write_text(path.read_text() + "\nRUN_SPEC['training'] = {'separate_criteria': True}\n")
     def forbidden(*args, **kwargs):

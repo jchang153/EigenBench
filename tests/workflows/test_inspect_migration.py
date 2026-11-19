@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = Path(__file__).parent / "fixtures" / "inspect_migration"
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "inspect_migration"
 
 
 def test_hosted_requirements_remain_independent_of_working_directory():
@@ -198,13 +198,13 @@ def test_historical_records_keep_frozen_analysis_and_bootstrap(tmp_path, mode, n
 
 
 def test_extension_dispatch_uses_the_inspect_extension(tmp_path, monkeypatch):
-    from inspect_pipeline import extend
+    from eigenbench.inspect.collection import extension
     from scripts.run import main
     path = tmp_path / "spec.py"
     path.write_text("RUN_SPEC = {'extension': {'from_evaluations': 'old.jsonl'}, "
                     "'training': {'enabled': False}}\n")
     calls = []
-    monkeypatch.setattr(extend, "extend_run", lambda spec: calls.append(spec))
+    monkeypatch.setattr(extension, "extend_run", lambda spec: calls.append(spec))
     main(str(path))
     assert calls == [str(path)]
 

@@ -488,17 +488,21 @@ Default locations inside the run folder:
 
 ## Repository layout
 
+Run specs configure what to collect. Inspect runs the tasks and exports judgment
+records. Analysis reads those records and publishing stages the resulting run.
+
 | Directory | Purpose |
 | --- | --- |
-| `runs/` | Example specs and local run folders. |
-| `scripts/` | Command-line entry points for running, extending, scoring, and publishing. |
-| `eigenbench/protocol/` | Shared response and pairwise prompts, and pairwise group sampling. |
-| `eigenbench/analysis/` | Trust matrix computation, EigenTrust, and Elo conversion. |
-| `eigenbench/inspect/` | Collection reports and fingerprints for Inspect runs. |
-| `inspect_pipeline/` | Native Inspect task entry points, model mapping, collection, and export. |
-| `pipeline/` | Spec and data loading, direct-rating prompts and planning, cache reads, and analysis workflows. |
-| `data/constitutions/` | Available criterion sets. |
-| `tests/` | Regression tests. |
+| `eigenbench/config/` | Load run specs, datasets, and constitutions. |
+| `eigenbench/protocol/` | Prompts, verdict parsing, and judgment schedules for direct ratings, pairwise comparisons, and extensions. |
+| `eigenbench/analysis/` | Fit comparison models and compute trust, rankings, bootstrap intervals, and plots. |
+| `eigenbench/records.py` | Read and write judgment records in JSON and JSONL. |
+| `eigenbench/inspect/` | Native task implementations, provider routing, collection, and log export. |
+| `eigenbench/run.py`, `score.py`, `publish.py` | Run, score, and publish an evaluation. |
+| `scripts/` | Run, score, extension, publication, and preparation commands. |
+| `inspect_pipeline/`, `pipeline/` | Native file-based tasks, historical Inspect registrations, and compatibility imports used by existing consumers. |
+| `runs/`, `data/` | Runnable specs and benchmark data. |
+| `tests/` | Configuration, protocol, analysis, Inspect integration, and workflow suites. |
 
 ## Citation
 

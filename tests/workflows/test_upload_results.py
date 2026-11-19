@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -194,7 +195,7 @@ def test_stage_does_not_replace_a_missing_configured_evaluations_file_with_defau
 def test_stage_rebuilds_report_only_for_matching_judgment_content(tmp_path):
     from inspect_pipeline.coverage import evaluations_sha256
     from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
-    from test_inspect_pairwise import _panel, _write_spec as write_pairwise_spec
+    from tests.inspect_integration.test_inspect_pairwise import _panel, _write_spec as write_pairwise_spec
 
     run = tmp_path / "run"
     logs = tmp_path / "logs"
@@ -277,3 +278,48 @@ def test_catalogue_replaces_runs_against_the_revision_it_read(tmp_path, monkeypa
     else:
         upload.upload_run(slug, run, "org/runs")
     assert [item["slug"] for item in published["runs"]] == [slug, "keep"]
+
+
+def test_catalogue_update_never_writes_a_stale_cached_index(tmp_path, monkeypatch):
+    """F23: after a timed-out Hub read the client can return a stale cached index.json."""
+    import huggingface_hub
+    from scripts import upload_results
+
+    stale = tmp_path / "index.json"
+    stale.write_text(json.dumps({"last_updated": None, "runs": [{"slug": "old-a", "timestamp": "1"}]}))
+
+    def download(repo_id, filename, repo_type=None, force_download=False, **kwargs):
+        if force_download:
+            raise TimeoutError("read timed out")
+        return str(stale)  # what a cached read returns when the fresh check fails
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
+    written = []
+    api = SimpleNamespace(token=None, upload_file=lambda path_or_fileobj, **kwargs: written.append(path_or_fileobj))
+    with pytest.raises(TimeoutError):
+        upload_results.update_index("new", "new", {}, [], "org/dataset", api, revision="snapshot")
+    assert written == []
+
+
+def test_catalogue_starts_only_when_the_index_is_missing(tmp_path, monkeypatch):
+    import huggingface_hub
+    from huggingface_hub.utils import EntryNotFoundError
+    from scripts import upload_results
+
+    def missing(repo_id, filename, **kwargs):
+        raise EntryNotFoundError("index.json not found")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", missing)
+    assert upload_results._load_index("org/dataset", revision="snapshot", token=None) == {"last_updated": None, "runs": []}
+
+
+def test_staging_reads_only_the_configured_output_dir(tmp_path):
+    """F22: an older run/btd_d8 must not stand in for training.output_dir results."""
+    from scripts.upload_results import find_btd_dir
+
+    (tmp_path / "btd_d8").mkdir()
+    configured = {"training": {"dims": [8], "output_dir": "fresh"}}
+    assert find_btd_dir(tmp_path, configured) is None
+    (tmp_path / "fresh" / "btd_d8").mkdir(parents=True)
+    assert find_btd_dir(tmp_path, configured) == tmp_path / "fresh" / "btd_d8"
+    assert find_btd_dir(tmp_path, {"training": {"dims": [8]}}) == tmp_path / "btd_d8"

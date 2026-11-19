@@ -7,7 +7,7 @@ def test_adapter_cache_survives_lazy_provider_name_change(monkeypatch):
     from inspect_ai.model import GenerateConfig
     from inspect_pipeline.phases import generate_validated
 
-    module = importlib.import_module("inspect_pipeline.eigenbench")
+    module = importlib.import_module("eigenbench.inspect.context")
     responses = {}
     calls = []
     scopes = {}

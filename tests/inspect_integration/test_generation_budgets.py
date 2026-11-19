@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from test_inspect_collect import run_dir, NICKS, SCENARIO_COUNT
+from tests.inspect_integration.test_inspect_collect import run_dir, NICKS, SCENARIO_COUNT
 
 
 @pytest.mark.parametrize("generation_key", ["generation", "pairwise_generation"])
@@ -29,7 +29,7 @@ def test_generation_temperatures_must_be_finite(generation_key, temperature, per
 
 def test_hosted_worker_can_load_config_tools_without_importing_the_package(tmp_path):
     # ValueArena's worker verifies the runner source by executing only these entry points.
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     direct_source = root / "pipeline/protocol/direct_rating.py"
     tree = ast.parse(direct_source.read_text())
     function = next(

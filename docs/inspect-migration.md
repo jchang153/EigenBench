@@ -14,7 +14,7 @@ accept `--seed` and `--dry-run`.
 `scripts/run_collect.py` and `scripts/run_collect_responses.py` now stop with a
 migration message. Their provider clients, checkpoint implementation, and mixed
 collection notebook have been removed. Inspect owns generation, concurrency,
-retries, logs, and model lifecycle. The protocol helpers in `pipeline/protocol/`
+retries, logs, and model lifecycle. The protocol helpers in `eigenbench/protocol/`
 contain prompts, parsing, sampling, assignment planning, and cache reading.
 
 `collection.cached_responses_path` still accepts historical scenario response

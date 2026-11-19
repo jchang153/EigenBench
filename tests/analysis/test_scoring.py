@@ -212,3 +212,32 @@ def test_bootstrap_refuses_plain_bt():
 
     with pytest.raises(ValueError, match="btd_ties"):
         _build_model_and_loader([[0, 0, 0, 0, 1, 1]], "bt", 1, 2, 2, 4)
+
+
+@pytest.mark.parametrize("module", ["pipeline.train.bootstrap", "pipeline.train.direct_analysis"])
+def test_bootstrap_plot_accepts_a_mean_outside_its_interval(tmp_path, module):
+    import importlib
+
+    _save_bootstrap_plot = importlib.import_module(module)._save_bootstrap_plot
+    rows = [{"model_name": "a", "elo_mean": 1591.4, "elo_ci_lower": 1598.4, "elo_ci_upper": 1620.0},
+            {"model_name": "b", "elo_mean": 1400.0, "elo_ci_lower": 1390.0, "elo_ci_upper": 1410.0}]
+    _save_bootstrap_plot(rows, tmp_path / "plot.png")
+    assert (tmp_path / "plot.png").stat().st_size > 0
+
+
+def test_empty_grouped_holdout_is_reported_not_scored():
+    from pipeline.train.train import group_split_comparisons
+
+    comparisons = [[0, s, 0, 0, 1, 1] for s in range(4)]
+    with pytest.warns(RuntimeWarning, match="leaves no test groups"):
+        train, test = group_split_comparisons(comparisons, test_size=0.2, random_state=42)
+    assert len(train) == 4 and test == []
+
+
+def test_direct_analysis_refuses_records_from_another_panel():
+    from pipeline.train.train import check_model_order
+
+    check_model_order([(0, "a"), (1, "b"), (1, None)], ["a", "b", "c"])
+    for observed in ([(0, "b"), (1, "a")], [(0, "c"), (1, "d")]):
+        with pytest.raises(ValueError, match="spec lists"):
+            check_model_order(observed, ["a", "b"])

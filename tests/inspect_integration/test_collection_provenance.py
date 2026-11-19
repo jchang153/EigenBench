@@ -13,7 +13,7 @@ import json
 import pytest
 from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 
-from test_inspect_collect import run_dir  # noqa: F401  (pytest fixture)
+from tests.inspect_integration.test_inspect_collect import run_dir  # noqa: F401  (pytest fixture)
 
 from inspect_pipeline.collect import collect_direct_ratings_inspect
 from inspect_pipeline.provenance import FINGERPRINT_FILE, check_reusable, collection_identity
@@ -40,17 +40,17 @@ def test_unchanged_rerun_reuses_and_records_a_fingerprint(run_dir):
 def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased, monkeypatch):
     from inspect_ai.log import read_eval_log
     import inspect_pipeline.collect as collect
-    import inspect_pipeline.eigenbench as eigenbench
+    from eigenbench.inspect import context as inspect_context
 
     calls = []
-    build_assignments = eigenbench.build_direct_assignments
+    build_assignments = inspect_context.build_direct_assignments
 
     def tracked_assignments(*args, **kwargs):
         result = build_assignments(*args, **kwargs)
         calls.append((kwargs["sampler_seed"], result))
         return result
 
-    monkeypatch.setattr(eigenbench, "build_direct_assignments", tracked_assignments)
+    monkeypatch.setattr(inspect_context, "build_direct_assignments", tracked_assignments)
     monkeypatch.setattr(collect, "build_direct_assignments", tracked_assignments)
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
