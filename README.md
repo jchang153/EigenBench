@@ -488,16 +488,14 @@ Default locations inside the run folder:
 
 ## Repository layout
 
-| Directory | Purpose |
+| Path | What lives here |
 | --- | --- |
-| `runs/` | Example specs and local run folders. |
-| `scripts/` | Collection, extension, scoring, and upload commands. |
-| `inspect_pipeline/` | Inspect tasks, model mapping, and export helpers. |
-| `pipeline/config/` | Spec, dataset, and constitution loaders. |
-| `pipeline/protocol/` | Shared prompts, parsing, sampling, and response-cache readers. |
-| `pipeline/train/` | Scoring, bootstrap, and plots. |
-| `data/constitutions/` | Available criterion sets. |
-| `tests/` | Regression tests. |
+| `eigenbench/config/` | Run specs, datasets, and constitutions. |
+| `eigenbench/protocol/` | Prompts, verdict parsing, and schedules for direct ratings, pairwise comparisons, and extensions. |
+| `eigenbench/records.py`, `eigenbench/analysis/` | The judgment record format and the code that turns those records into trust scores and rankings. |
+| `inspect_pipeline/` | Native Inspect tasks, solvers, scorers, model routing, and log export. The `collection/` directory runs full panels and extensions. |
+| `scripts/` | Commands to run, extend, export, and publish evaluations. |
+| `runs/`, `data/`, `tests/` | Runnable specs, benchmark inputs, and tests grouped by behavior. |
 
 ## Citation
 

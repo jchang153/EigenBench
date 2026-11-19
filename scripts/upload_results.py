@@ -1,30 +1,167 @@
-"""
-Upload EigenBench run results to HuggingFace dataset repo for ValueArena.
-
-Usage:
-    python scripts/upload_results.py --name "my-run" --run-dir runs/my_run/
-"""
+"""Publish runs to ValueArena or a Hugging Face dataset."""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+import copy
 import json
+import os
+import pprint
 import shutil
 import subprocess
 import sys
+import tempfile
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Allow "python scripts/upload_results.py ..." to import the run-spec helpers.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from pipeline.config.run_spec import _resolve_path_for_run
-from pipeline.elo import elo_scores
-from pipeline.utils import load_records, save_records
+from eigenbench.analysis.elo import elo_scores
+from eigenbench.config.run_spec import _resolve_path_for_run
+from eigenbench.records import load_records, save_records
+
+
+def _space_safe_model_id(model_ref: object) -> str:
+    """Convert a structured local model reference to Space metadata syntax.
+
+    ValueArena trains only from the collected comparisons, so it does not load
+    these models. Its current metadata parser nevertheless expects legacy
+    string model IDs.
+    """
+
+    if isinstance(model_ref, str):
+        return model_ref
+    if not isinstance(model_ref, Mapping) or model_ref.get("provider") != "hf_local":
+        raise ValueError(f"Unsupported model reference for ValueArena: {model_ref!r}")
+
+    repo_id = model_ref.get("repo_id")
+    if not isinstance(repo_id, str) or not repo_id:
+        raise ValueError("Structured local model reference must include repo_id")
+    subfolder = model_ref.get("subfolder")
+    if subfolder:
+        return f"hf_local:{repo_id}/{subfolder}"
+    if model_ref.get("kind") == "lora":
+        # The Space uses the third path component only to classify metadata;
+        # model artifacts are never loaded during the upload-stage training.
+        return f"hf_local:{repo_id}/adapter"
+    return f"hf_local:{repo_id}"
+
+
+def write_space_safe_spec(spec: dict) -> str:
+    """Materialize a standalone spec accepted by the current ValueArena Space."""
+
+    space_spec = copy.deepcopy(spec)
+    space_spec["models"] = {
+        name: _space_safe_model_id(model_ref)
+        for name, model_ref in spec.get("models", {}).items()
+    }
+    if isinstance(space_spec.get("upload"), dict):
+        space_spec["upload"].pop("secret", None)
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".py",
+        delete=False,
+        prefix="va_spec_",
+    )
+    handle.write("RUN_SPEC = ")
+    pprint.pprint(space_spec, stream=handle, sort_dicts=False)
+    handle.close()
+    return handle.name
+
+
+def resolve_upload_backend(upload_cfg: dict) -> str:
+    value = str(upload_cfg.get("backend", "valuearena_space")).strip().lower()
+    aliases = {
+        "space": "valuearena_space",
+        "valuearena": "valuearena_space",
+        "hf": "huggingface_dataset",
+        "hf_dataset": "huggingface_dataset",
+        "huggingface": "huggingface_dataset",
+    }
+    backend = aliases.get(value, value)
+    if backend not in {"valuearena_space", "huggingface_dataset"}:
+        raise ValueError(
+            "upload.backend must be 'valuearena_space' or 'huggingface_dataset'; "
+            f"got {value!r}"
+        )
+    return backend
+
+
+def submit_to_space(spec: dict, space_spec_path: str, space_secret: str) -> None:
+    """Submit collected records for analysis and publication on ValueArena."""
+
+    collection_cfg = spec.get("collection", {})
+    upload_cfg = spec.get("upload", {})
+    # Auto-capture git commit
+    git_commit = upload_cfg.get("git_commit", "")
+    if not git_commit:
+        try:
+            git_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=_REPO_ROOT, text=True
+            ).strip()
+        except Exception:
+            git_commit = ""
+
+    eval_path = collection_cfg.get("evaluations_path", "")
+    spec_path = space_spec_path
+
+    run_name = upload_cfg.get("name", spec.get("name", ""))
+    run_group = upload_cfg.get("group", "")
+    run_note = upload_cfg.get("note", "")
+
+    try:
+        eval_mb = os.path.getsize(eval_path) / 1e6
+    except OSError:
+        eval_mb = 0.0
+    upload_timeout = float(
+        upload_cfg.get("timeout_seconds", max(600.0, eval_mb * 20.0))
+    )
+
+    # Write a standalone script and run it detached via nohup
+    script_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="va_submit_")
+    script_file.write(f"""
+import os
+# Remove SOCKS proxies (cause socksio import error) but keep HTTP/HTTPS proxy for DNS
+for k in list(os.environ):
+    kl = k.lower()
+    if kl in ("all_proxy", "ftp_proxy", "grpc_proxy", "rsync_proxy"):
+        os.environ.pop(k, None)
+import httpx
+from gradio_client import Client, handle_file
+c = Client(
+    "https://invi-bhagyesh-valuearena.hf.space/",
+    httpx_kwargs={{"timeout": httpx.Timeout({upload_timeout!r})}},
+)
+try:
+    secret = os.environ["SPACE_SECRET"]
+    result = c.predict(secret, handle_file({eval_path!r}), handle_file({spec_path!r}), {run_name!r}, {run_group!r}, {run_note!r}, {git_commit!r})
+    print("Done!", result[0] if result else result)
+except Exception as e:
+    print("Error:", e)
+finally:
+    for path in (__file__, {spec_path!r}):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+""")
+    script_file.close()
+
+    log_file = script_file.name.replace(".py", ".log")
+    submit_env = os.environ.copy()
+    submit_env["SPACE_SECRET"] = space_secret
+    subprocess.Popen(
+        f"nohup {sys.executable} -u {script_file.name} > {log_file} 2>&1 &",
+        shell=True,
+        env=submit_env,
+    )
+    print(f"Handed off to background uploader ({eval_mb:.1f} MB, timeout {upload_timeout:.0f}s).")
+    print(f"  Result (check this): {log_file}")
+    print(f"  Track: https://huggingface.co/spaces/invi-bhagyesh/ValueArena")
 
 
 def parse_spec(spec_path: Path) -> dict:

@@ -14,7 +14,7 @@ accept `--seed` and `--dry-run`.
 `scripts/run_collect.py` and `scripts/run_collect_responses.py` now stop with a
 migration message. Their provider clients, checkpoint implementation, and mixed
 collection notebook have been removed. Inspect owns generation, concurrency,
-retries, logs, and model lifecycle. The protocol helpers in `pipeline/protocol/`
+retries, logs, and model lifecycle. The protocol helpers in `eigenbench/protocol/`
 contain prompts, parsing, sampling, assignment planning, and cache reading.
 
 `collection.cached_responses_path` still accepts historical scenario response
@@ -26,9 +26,13 @@ analysis/upload only and never fills a response cache.
 
 Historical direct-rating and pairwise `evaluations.jsonl` files still pass to
 the same analysis helpers. `scripts.run_train.main(spec_ref)` remains available
-to ValueArena and other hosted callers. This migration needs no external pin
-change and changes no cleaning, normalization, EigenTrust, BTD, or bootstrap
-methodology.
+to ValueArena and other hosted callers. ValueArena updates its imports and
+source checks when it pins a revision using the `eigenbench` package.
+
+For Python analysis scripts, import `train_vector_bt` from
+`eigenbench.analysis.fit`, `eigentrust` from `eigenbench.analysis.eigentrust`,
+and `load_records` from `eigenbench.records`. These replace imports from the
+old `pipeline` package.
 
 Pairwise `adaptive_inverse_count` and mixed-collector `all_to_all` are distinct
 protocols that Inspect did not support before this migration. They fail clearly.

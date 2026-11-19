@@ -1,35 +1,24 @@
-"""Phased execution for runs that cannot hold every model in memory at once.
-
-A judgment needs both its evaluee and its judge, so the edge-per-sample task in
-``eigenbench.py`` keeps every model live for the whole run. That is free for
-hosted models and fatal on a single GPU, so local runs split the work the way
-every response first, then every judgment, one model
-resident at a time.
-
-These tasks are driven by ``inspect_pipeline.collect`` rather than the CLI, so
-they live outside the entrypoint module -- ``inspect eval eigenbench.py`` runs
-every ``@task`` it finds in a file.
-"""
+"""Collect responses and judgments one model at a time for local panels."""
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Inspect puts this directory on sys.path. Prefer the eigenbench package.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if sys.path[:1] != [_REPO_ROOT]:
+    sys.path.insert(0, _REPO_ROOT)
 
 from inspect_ai import Task, task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.viewer import ViewerConfig
 
-from inspect_pipeline.eigenbench import (
-    _edge_sample_id,
-    _run_context,
-    _samples_view,
-    sanitize,
-)
-from inspect_pipeline.execution import prepared_run_context
-from inspect_pipeline.phases import (
-    ResponsePool,
-    direct_rating_scorer,
-    direct_rating_solver,
-    response_only_solver,
-)
+from inspect_pipeline.collection.phased import prepared_run_context
+from inspect_pipeline.context import _run_context, sanitize
+from inspect_pipeline.eigenbench import _edge_sample_id, _samples_view
+from inspect_pipeline.generation import ResponsePool
+from inspect_pipeline.phases import direct_rating_scorer, direct_rating_solver, response_only_solver
 
 
 @task

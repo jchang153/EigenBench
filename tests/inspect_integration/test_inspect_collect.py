@@ -1,0 +1,1312 @@
+"""End-to-end tests for the Inspect AI direct-rating engine (offline, mockllm).
+
+Covers the native CLI path (`inspect eval` + export) and the programmatic
+driver, then feeds the exported evaluations.jsonl through the legacy analysis.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from inspect_pipeline.models import to_inspect_model  # noqa: E402
+
+NICKS = ["alpha", "beta", "gamma"]
+NUM_CRITERIA = 3
+SCENARIO_COUNT = 3
+
+# A spec whose models are scripted mockllm instances. Responses embed a
+# per-call counter so a shared response can be told apart from a re-generated
+# one; ratings are a deterministic function of (judge, evaluee, criterion).
+SPEC_TEMPLATE = '''
+import sys
+sys.path.insert(0, {repo_root!r})
+
+import re
+from inspect_ai.model import ModelOutput, get_model
+
+NICKS = {nicks!r}
+NUM_CRITERIA = {num_criteria}
+_calls = {{"n": 0}}
+
+
+def rating_value(judge, evaluee, criterion_one_based):
+    return (ord(judge[0]) * 3 + ord(evaluee[0]) * 5 + criterion_one_based * 7) % 10 + 1
+
+
+def _mock(nick):
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        user = input[1].text if len(input) > 1 else ""
+        if system.startswith("Without making any mention"):
+            _calls["n"] += 1
+            content = "[{{}}#{{}}] answers".format(nick, _calls["n"])
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            content = "[{{}}] reflection".format(nick)
+        elif system.startswith("You are acting as a judge. Carefully consider how well"):
+            match = re.search(r"<response>\\n\\[(\\w+)#", user)
+            assert match, "no evaluee in rating prompt"
+            evaluee = match.group(1)
+            content = "\\n".join(
+                "<criterion_{{0}}_rating>{{1}}</criterion_{{0}}_rating>".format(
+                    i, rating_value(nick, evaluee, i)
+                )
+                for i in range(1, NUM_CRITERIA + 1)
+            )
+        else:
+            raise AssertionError("unexpected system prompt: " + system[:80])
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    return get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+
+
+RUN_SPEC = {{
+    "name": "mocktest",
+    "verbose": False,
+    "models": {{nick: _mock(nick) for nick in NICKS}},
+    "evaluation": {{"mode": "direct_rating"}},
+    "dataset": {{"path": {scenarios_path!r}, "start": 0, "count": {scenario_count}}},
+    "constitution": {{"path": {constitution_path!r}, "num_criteria": {num_criteria}}},
+    "collection": {{
+        "enabled": True,
+        "sampler_mode": {sampler_mode!r},
+        "inspect": {{"cache": False, "display": "none"}},
+    }},
+    "training": {{"enabled": True, "bootstrap": {{"enabled": False}}}},
+}}
+'''
+
+
+def rating_value(judge: str, evaluee: str, criterion_one_based: int) -> int:
+    return (ord(judge[0]) * 3 + ord(evaluee[0]) * 5 + criterion_one_based * 7) % 10 + 1
+
+
+@pytest.fixture
+def run_dir(tmp_path):
+    """A run folder with scenarios, a constitution, and a mock-model spec."""
+
+    scenarios = [f"Scenario number {i}: what do you do?" for i in range(6)]
+    scenarios_path = tmp_path / "scenarios.json"
+    scenarios_path.write_text(json.dumps(scenarios), encoding="utf-8")
+
+    constitution = [
+        f"Criterion {i} for Testing: prefer the response that is good in way {i}"
+        for i in range(1, NUM_CRITERIA + 1)
+    ]
+    constitution_path = tmp_path / "constitution.json"
+    constitution_path.write_text(json.dumps(constitution), encoding="utf-8")
+
+    def write_spec(sampler_mode="all_to_all"):
+        spec_path = tmp_path / "spec.py"
+        spec_path.write_text(
+            SPEC_TEMPLATE.format(
+                repo_root=str(REPO_ROOT),
+                nicks=NICKS,
+                num_criteria=NUM_CRITERIA,
+                scenarios_path=str(scenarios_path),
+                constitution_path=str(constitution_path),
+                scenario_count=SCENARIO_COUNT,
+                sampler_mode=sampler_mode,
+            ),
+            encoding="utf-8",
+        )
+        return spec_path
+
+    return tmp_path, write_spec
+
+
+def _check_records(records, *, expected_edges, sampler_mode):
+    assert len(records) == expected_edges
+    seen_edges = set()
+    responses_by_key = {}
+    for record in records:
+        assert list(record.keys()) == [
+            "schema_version",
+            "record_type",
+            "constitution",
+            "scenario",
+            "scenario_index",
+            "judge",
+            "evaluee",
+            "sampling",
+            "response",
+            "reflection",
+            "judgment_raw",
+            "ratings",
+        ]
+        assert record["schema_version"] == 2
+        assert record["record_type"] == "direct_rating"
+        assert record["sampling"]["mode"] == sampler_mode
+        judge, evaluee = record["judge"]["name"], record["evaluee"]["name"]
+        assert record["response"].startswith(f"[{evaluee}#")
+        assert record["reflection"] == f"[{judge}] reflection"
+        assert [entry["criterion_index"] for entry in record["ratings"]] == list(
+            range(NUM_CRITERIA)
+        )
+        for entry in record["ratings"]:
+            assert entry["rating"] == rating_value(
+                judge, evaluee, entry["criterion_index"] + 1
+            )
+        edge = (record["scenario_index"], record["judge"]["index"], record["evaluee"]["index"])
+        assert edge not in seen_edges
+        seen_edges.add(edge)
+        responses_by_key.setdefault(
+            (record["scenario_index"], evaluee), set()
+        ).add(record["response"])
+
+    # ResponsePool: every judge of a response saw the identical text, and each
+    # (scenario, evaluee) response was generated exactly once.
+    assert all(len(texts) == 1 for texts in responses_by_key.values())
+    all_responses = {next(iter(texts)) for texts in responses_by_key.values()}
+    assert len(all_responses) == SCENARIO_COUNT * len(NICKS)
+    return seen_edges
+
+
+def test_cli_inspect_eval_and_export(run_dir):
+    """The native path: inspect eval -> export_evaluations.py."""
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+    log_dir = tmp_path / "logs"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "inspect_ai",
+            "eval",
+            "inspect_pipeline/eigenbench.py",
+            "-T",
+            f"spec={spec_path}",
+            "--log-dir",
+            str(log_dir),
+            "--display",
+            "none",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    evaluations_path = tmp_path / "exported.jsonl"
+    export = subprocess.run(
+        [
+            sys.executable,
+            "scripts/export_evaluations.py",
+            str(log_dir),
+            "-o",
+            str(evaluations_path),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert export.returncode == 0, export.stdout + export.stderr
+
+    records = [
+        json.loads(line)
+        for line in evaluations_path.read_text(encoding="utf-8").splitlines()
+    ]
+    # all_to_all with include_self: S * M * M edges
+    _check_records(
+        records,
+        expected_edges=SCENARIO_COUNT * len(NICKS) * len(NICKS),
+        sampler_mode="all_to_all",
+    )
+
+
+def test_programmatic_run_and_analysis(run_dir):
+    """The wrapper path: collect -> export -> legacy trust-matrix analysis."""
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="balanced_unique_judge")
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+
+    records = collect_direct_ratings_inspect(str(spec_path))
+
+    # balanced_unique_judge with redundancy 1: S * M edges
+    _check_records(
+        records,
+        expected_edges=SCENARIO_COUNT * len(NICKS),
+        sampler_mode="balanced_unique_judge",
+    )
+
+    evaluations_path = tmp_path / "evaluations.jsonl"
+    assert evaluations_path.exists()
+    assert len(evaluations_path.read_text().splitlines()) == len(records)
+
+    estimate = json.loads((tmp_path / "direct_call_estimate.json").read_text())
+    assert estimate["rating_tasks"] == SCENARIO_COUNT * len(NICKS)
+
+    # rerun short-circuits on the completed file
+    assert len(collect_direct_ratings_inspect(str(spec_path))) == len(records)
+
+    from eigenbench.analysis.direct_rating import run_direct_analysis
+
+    run_direct_analysis(
+        records=records,
+        models={nick: f"mock/{nick}" for nick in NICKS},
+        num_criteria=NUM_CRITERIA,
+        evaluation_cfg={"mode": "direct_rating", "direct_rating": {"include_self": True}},
+        training_cfg={"bootstrap": {"enabled": False}},
+        output_root=tmp_path / "train",
+        collection_cfg={"sampler_mode": "balanced_unique_judge"},
+        verbose=False,
+    )
+    out_dir = tmp_path / "train" / "direct_rating"
+    summary = json.loads((out_dir / "summary.json").read_text())
+    assert {entry["model_name"] for entry in summary} == set(NICKS)
+    assert (out_dir / "trust_matrix.csv").exists()
+
+
+def test_model_mapping(monkeypatch):
+    from inspect_pipeline import models as model_mapping
+
+    monkeypatch.setattr(model_mapping, "_root_adapter_base", lambda *_: None)
+    monkeypatch.setattr(model_mapping, "resolve_max_model_len", lambda _model, _revision, cap: cap)
+    ref = to_inspect_model("anthropic/claude-sonnet-4")
+    assert ref.name == "openrouter/anthropic/claude-sonnet-4"
+    assert not ref.is_local
+
+    assert to_inspect_model("inspect:mockllm/model").name == "mockllm/model"
+
+    ref = to_inspect_model("hf_local:Qwen/Qwen2.5-7B-Instruct")
+    assert ref.name == "vllm/Qwen/Qwen2.5-7B-Instruct"
+    assert ref.is_local
+
+    ref = to_inspect_model(
+        {
+            "provider": "hf_local",
+            "kind": "lora",
+            "repo_id": "someorg/some-adapter",
+            "base_model_id": "Qwen/Qwen2.5-7B-Instruct",
+            "revision": "abc123",
+        }
+    )
+    assert ref.name == "vllm/Qwen/Qwen2.5-7B-Instruct:someorg/some-adapter@abc123"
+    assert ref.is_local
+
+    with pytest.raises(ValueError):
+        to_inspect_model("inspect:no-slash")
+    with pytest.raises(ValueError):
+        to_inspect_model("")
+
+
+def test_vllm_phasing_follows_server_ownership(monkeypatch):
+    from inspect_ai.model import get_model
+    from inspect_pipeline.context import has_local_models
+    from inspect_pipeline.models import check_distinct_local_servers
+
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    name = "vllm/org/test-base"
+    local = get_model(name, memoize=False)
+    external = get_model(name, base_url="http://localhost:8000/v1", memoize=False)
+    via_port = get_model(name, port=8000, memoize=False)
+    assert has_local_models({"a": "inspect:" + name})
+    assert has_local_models({"a": local})
+    assert not has_local_models({"a": external, "b": via_port})
+    check_distinct_local_servers({"a": external, "b": via_port})
+    with pytest.raises(ValueError, match="different revisions or endpoints"):
+        check_distinct_local_servers({"a": local, "b": external})
+    monkeypatch.setenv("VLLM_BASE_URL", "http://gpu-vm:8001/v1")
+    assert not has_local_models({"a": "inspect:" + name, "b": local, "c": "hf_local:org/adapter/subfolder"})
+
+
+def test_vllm_resolver_refuses_previously_connected_base(monkeypatch):
+    from inspect_ai.model import get_model
+    from inspect_pipeline.context import _model_resolver
+    from inspect_pipeline.models import InspectModelRef, model_identity
+
+    name = "vllm/org/shared-endpoint-test"
+    url = "http://user:secret@vm-b/v1"
+    model = get_model(name, base_url=url, memoize=False)
+    # Inspect's already-running server is shared per base name, even with a fresh client.
+    monkeypatch.setattr(model.api._server, "base_url", "http://vm-a/v1")
+    monkeypatch.setenv("VLLM_BASE_URL", "http://vm-a/v1")
+    explicit = model_identity(model)
+    mapped = model_identity(InspectModelRef(name, {"base_url": url}))
+    assert explicit["vllm_endpoint_sha256"] == mapped["vllm_endpoint_sha256"]
+    assert "secret" not in json.dumps([explicit, mapped])
+    monkeypatch.setenv("VLLM_BASE_URL", "http://vm-c/v1")
+    assert model_identity(model) == explicit
+    with pytest.raises(RuntimeError, match="different server"):
+        _model_resolver({"member": model})("member")
+
+
+def test_direct_estimate_counts_the_actual_providers(run_dir, monkeypatch):
+    from eigenbench.config import load_run_spec
+    from inspect_pipeline.collection.direct_rating import estimate_direct_calls_for_spec
+    import inspect_pipeline.models as mapping
+
+    folder, write_spec = run_dir
+    spec, _ = load_run_spec(str(write_spec()))
+    monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    monkeypatch.setattr(mapping, "_resolve_hf_local", lambda *_: pytest.fail("resolved weights for estimate"))
+    spec["models"] = {
+        "local": "hf_local:org/adapter/subfolder", "native": "inspect:vllm/org/base",
+        "router": "org/hosted", "native_router": "inspect:openrouter/org/second",
+        "direct_api": "inspect:anthropic/test",
+    }
+    cache = folder / "estimate-cache.jsonl"
+    cache.write_text(json.dumps({"scenario_index": 0, "responses": {
+        "local": "a", "router": "b", "direct_api": "c",
+    }}) + "\n")
+    spec["collection"]["cached_responses_path"] = str(cache)
+    estimate = estimate_direct_calls_for_spec(spec, folder)
+    # Three scenarios, five judges. Each model has 3 responses and 30 judge calls.
+    assert estimate["total_logical_generations"] == 162
+    assert estimate["num_openrouter_models"] == 2
+    assert estimate["openrouter_requests"] == 65
+    assert estimate["local_logical_generations"] == 65
+    assert estimate["other_logical_generations"] == 32
+    monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+    estimate = estimate_direct_calls_for_spec(spec, folder)
+    assert estimate["openrouter_requests"] == 65
+    assert estimate["local_logical_generations"] == 0
+    assert estimate["other_logical_generations"] == 97
+
+
+def test_default_spec_builds_without_arguments(monkeypatch):
+    """`inspect eval inspect_pipeline/eigenbench.py` needs no -T spec."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-key")
+    import eigenbench.config.airisk as airisk
+    from inspect_pipeline.context import DEFAULT_SPEC, _run_context
+    from inspect_pipeline.eigenbench import eigenbench
+
+    scenarios = [f"Dilemma {i}" for i in range(150)]
+    monkeypatch.setattr(airisk, "load_airisk_scenarios", lambda: scenarios)
+    ctx = _run_context(DEFAULT_SPEC, None)
+    models = ctx["models"]
+    assert len(models) == 4 and all(isinstance(ref, str) for ref in models.values())
+    assert [scenario for _, scenario in ctx["selected"]] == scenarios[:100]
+    assert len(ctx["criteria"]) == 8 and ctx["include_self"]
+
+    task = eigenbench()
+    assert len(task.dataset) == 100 * len(models) ** 2
+
+    import contextvars
+    from inspect_ai.model import get_model
+    from inspect_ai.model._model import init_active_model
+    from inspect_pipeline.context import with_eval_model
+
+    def panel_with(model_name):
+        def run():
+            init_active_model(get_model(model_name), None)
+            return with_eval_model(DEFAULT_SPEC, None)
+        return contextvars.copy_context().run(run)
+
+    assert panel_with("none") is None  # inspect eval without --model: the spec's panel
+    existing = panel_with("openrouter/openai/gpt-4.1-nano")
+    assert list(existing) == list(models)
+    assert str(existing["GPT-4.1 nano"]) == "openrouter/openai/gpt-4.1-nano"
+    assert list(panel_with("mockllm/model")) == [*models, "mockllm/model"]
+
+
+def test_matching_eval_model_uses_requested_outputs(run_dir):
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.model import ModelOutput, get_model
+    from inspect_pipeline.export import records_from_log
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec()
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text
+        if system.startswith("Without making any mention"):
+            content = "requested target response"
+        elif system.startswith("You are acting as a judge. Carefully consider the following response"):
+            content = "requested target reflection"
+        else:
+            content = "\n".join(f"<criterion_{i}_rating>7</criterion_{i}_rating>" for i in range(1, NUM_CRITERIA + 1))
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    under_test = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    log = inspect_eval(
+        f"{REPO_ROOT}/inspect_pipeline/eigenbench.py@eigenbench",
+        task_args={"spec": str(spec_path), "models": {"target": "inspect:mockllm/model"}, "cache": False},
+        model=under_test,
+        display="none",
+        log_dir=str(tmp_path / "logs"),
+    )[0]
+    assert log.status == "success"
+    records = records_from_log(log)
+    assert len(records) == SCENARIO_COUNT
+    assert {r["judge"]["name"] for r in records} == {"target"}
+    assert {r["evaluee"]["name"] for r in records} == {"target"}
+    assert all(r["response"] == "requested target response" for r in records)
+    assert all(r["reflection"] == "requested target reflection" for r in records)
+    assert all(entry["rating"] == 7 for r in records for entry in r["ratings"])
+
+
+def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
+    from inspect_ai.model import get_model
+    import inspect_pipeline.context as task_module
+    import inspect_pipeline.models as mapping
+
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
+
+    monkeypatch.setattr(mapping, "resolve_max_model_len", lambda *args: 8192)
+    ref = {"provider": "hf_local", "repo_id": "org/base", "revision": "pinned"}
+    under_test = get_model("vllm/org/base", revision="changed", memoize=False)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
+    with pytest.raises(ValueError, match="conflicts with the settings"):
+        task_module.with_eval_model("unused", {"pinned": ref})
+
+    matching = get_model("vllm/org/base", memoize=False, **mapping.to_inspect_model(ref).model_args)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: matching)
+    assert task_module.with_eval_model("unused", {"pinned": ref}) == {"pinned": matching}
+
+
+def test_eval_model_keeps_panel_members_when_nicknames_collide(monkeypatch):
+    from inspect_ai.model import get_model
+    import inspect_pipeline.context as task_module
+
+    under_test = get_model("mockllm/model", memoize=False)
+    monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
+    panel = {
+        "mockllm/model": "inspect:mockllm/first",
+        "mockllm/model (--model)": "inspect:mockllm/second",
+    }
+    joined = task_module.with_eval_model("unused", panel)
+    assert len(joined) == len(panel) + 1
+    assert all(joined[nick] == value for nick, value in panel.items())
+    assert joined["mockllm/model (--model 2)"] is under_test
+
+
+def test_eval_model_joins_the_panel(run_dir):
+    """`inspect eval ... --model X` rates X with the spec's panel, and X judges it."""
+    from inspect_ai import eval as inspect_eval
+    from inspect_ai.model import ModelOutput, get_model
+    from inspect_pipeline.export import records_from_log
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+    calls = {"n": 0}
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text
+        if system.startswith("Without making any mention"):
+            calls["n"] += 1
+            content = f"[delta#{calls['n']}] answers"
+        elif system.startswith("You are acting as a judge. Carefully consider the following response"):
+            content = "[delta] reflection"
+        else:
+            content = "\n".join(f"<criterion_{i}_rating>7</criterion_{i}_rating>" for i in range(1, NUM_CRITERIA + 1))
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    under_test = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    task = f"{REPO_ROOT}/inspect_pipeline/eigenbench.py@eigenbench"
+    log = inspect_eval(task, task_args={"spec": str(spec_path), "cache": False}, model=under_test,
+                       display="none", log_dir=str(tmp_path / "logs"))[0]
+    assert log.status == "success"
+    records = records_from_log(log)
+    panel = set(NICKS) | {"mockllm/model"}
+    assert {r["judge"]["name"] for r in records} == {r["evaluee"]["name"] for r in records} == panel
+    assert len(records) == SCENARIO_COUNT * len(panel) ** 2
+    native = next(score for score in log.results.scores if score.name == "panel_scorer")
+    assert {f"{nick}/elo" for nick in panel} <= native.metrics.keys()
+    assert native.metrics["coverage/planned"].value == len(records)
+    assert log.eval.metadata["eigenbench"]["analysis"]["model_order"] == list(NICKS) + ["mockllm/model"]
+
+    # Without --model the panel is the spec's alone.
+    log = inspect_eval(task, task_args={"spec": str(spec_path), "cache": False},
+                       display="none", log_dir=str(tmp_path / "logs"))[0]
+    assert {r["judge"]["name"] for r in records_from_log(log)} == set(NICKS)
+
+
+def test_local_models_preserve_vllm_defaults_and_overrides(monkeypatch):
+    import inspect_pipeline.models as mapping
+    from inspect_pipeline.models import VLLM_SERVER_DEFAULTS
+
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
+
+    monkeypatch.delenv("EIGENBENCH_TENSOR_PARALLEL_SIZE", raising=False)
+    monkeypatch.delenv("EIGENBENCH_VLLM_SERVER_ARGS", raising=False)
+    assert VLLM_SERVER_DEFAULTS == {
+        "max_model_len": 8192, "gpu_memory_utilization": 0.9, "enforce_eager": True,
+    }
+
+    # Keep the shorter of the default and the model's own window (no network here).
+    windows = {"allenai/OLMo-2-1124-7B": 4096}
+    lookups = []
+    def window(model_id, revision=None, requested=8192):
+        lookups.append((model_id, revision))
+        return min(requested, windows.get(model_id, requested))
+    monkeypatch.setattr(mapping, "resolve_max_model_len", window)
+    assert to_inspect_model("hf_local:allenai/OLMo-2-1124-7B").model_args["max_model_len"] == 4096
+
+    ref = to_inspect_model({"provider": "hf_local", "repo_id": "Qwen/Qwen3.8-27B", "revision": "abc"})
+    assert ref.model_args == {**VLLM_SERVER_DEFAULTS, "revision": "abc"}
+    lora = to_inspect_model({"provider": "hf_local", "kind": "lora", "repo_id": "org/adapter",
+                             "base_model_id": "Qwen/Qwen2.5-7B-Instruct", "base_revision": "def"})
+    assert lora.model_args == {**VLLM_SERVER_DEFAULTS, "revision": "def"}
+    assert to_inspect_model("anthropic/claude-sonnet-4").model_args == {}
+
+    # The LoRA's window is its base model's, at the base revision.
+    assert ("Qwen/Qwen2.5-7B-Instruct", "def") in lookups
+
+    monkeypatch.setenv("EIGENBENCH_TENSOR_PARALLEL_SIZE", "2")
+    monkeypatch.setenv("EIGENBENCH_VLLM_SERVER_ARGS", '{"max_model_len": 32768, "enforce_eager": null}')
+    lookups.clear()
+    ref = to_inspect_model("hf_local:Qwen/Qwen2.5-7B-Instruct")
+    assert ref.model_args == {"max_model_len": 32768, "gpu_memory_utilization": 0.9, "tensor_parallel_size": 2}
+    assert lookups == []  # an explicit max_model_len is used as given
+
+    monkeypatch.setenv("EIGENBENCH_VLLM_SERVER_ARGS", "[1]")
+    with pytest.raises(ValueError):
+        to_inspect_model("hf_local:Qwen/Qwen2.5-7B-Instruct")
+
+
+def test_phased_matches_single_task(run_dir):
+    """A phased run must produce exactly the records an edge-per-sample run does.
+
+    Phasing exists only to keep one model resident at a time; it must not change
+    the protocol or the output.
+    """
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+
+    single = collect_direct_ratings_inspect(str(spec_path))
+
+    # Re-run the same spec through the phased path.
+    (tmp_path / "evaluations.jsonl").unlink()
+    spec_text = spec_path.read_text().replace(
+        '"inspect": {"cache": False, "display": "none"}',
+        '"inspect": {"cache": False, "display": "none", "phased": True}',
+    )
+    spec_path.write_text(spec_text, encoding="utf-8")
+    phased = collect_direct_ratings_inspect(str(spec_path))
+
+    assert len(phased) == len(single)
+
+    def key(r):
+        return (r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+
+    def normalize(r):
+        # The mock stamps a call counter into each response to prove pooling;
+        # the two paths generate in a different order, so only the identity of
+        # the responding model is comparable across them.
+        out = dict(r)
+        out["response"] = r["response"].split("#", 1)[0]
+        return out
+
+    for a, b in zip(sorted(single, key=key), sorted(phased, key=key)):
+        assert normalize(a) == normalize(b), f"phased record differs at {key(a)}"
+
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    assert info["log_file"].endswith(".eval")
+    # Every log: one per judge, the primary first, and one per responding model.
+    [part] = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
+    roles = {entry["file"]: entry["role"] for entry in part["logs"]}
+    assert info["log_files"][0] == info["log_file"] and roles[info["log_file"]] == "panel_metrics"
+    assert sorted(roles[name] for name in info["log_files"]) == ["judgments"] * len(NICKS) + ["panel_metrics"] + ["responses"] * len(NICKS)
+
+
+@pytest.mark.parametrize("include_self", [True, False])
+@pytest.mark.parametrize("scenario_count", [3, 200])
+@pytest.mark.parametrize("sampler_mode", ["balanced_unique_judge", "all_to_all"])
+def test_direct_extension_covers_each_scenario_once(
+    include_self, scenario_count, sampler_mode
+):
+    from collections import Counter
+
+    from eigenbench.protocol.extension import plan_addition, projected_counts
+    from eigenbench.protocol.direct_rating import build_direct_assignments
+
+    names = [f"model_{i}" for i in range(8)]
+    scenarios = [(i, f"Scenario {i}") for i in range(scenario_count)]
+    assignments = build_direct_assignments(
+        scenarios, dict.fromkeys(names, "mockllm/model"),
+        sampler_mode=sampler_mode, include_self=include_self, sampler_seed=42,
+    )
+    records = [
+        {
+            "record_type": "direct_rating",
+            "scenario_index": a["scenario_index"],
+            "scenario": a["scenario"],
+            "judge": {"index": a["judge_idx"], "name": a["judge_nick"]},
+            "evaluee": {"index": e, "name": names[e]},
+            "response": f"saved response {a['scenario_index']} {names[e]}",
+        }
+        for a in assignments for e in a["eval_idxs"]
+    ]
+    plan = plan_addition(records, "new", include_self=include_self)
+    assert plan == plan_addition(records, "new", include_self=include_self)
+    assert Counter(e.scenario_index for e in plan.as_evaluee) == {
+        i: 1 for i in range(scenario_count)
+    }
+    assert plan.responses_needed() == set(range(scenario_count))
+    assert all(e.evaluee == "new" for e in plan.as_evaluee)
+    eligible = names + (["new"] if include_self else [])
+    loads = Counter(e.judge for e in plan.as_evaluee)
+    assert set(loads) <= set(eligible)
+    assert max(loads[j] for j in eligible) - min(loads[j] for j in eligible) <= 1
+    identities = [(e.scenario_index, e.judge, e.evaluee) for e in plan.edges]
+    assert len(identities) == len(set(identities))
+    for e in plan.as_judge:
+        assert e.judge == "new" and e.evaluee in names
+        assert e.response == f"saved response {e.scenario_index} {e.evaluee}"
+    grid = projected_counts(records, plan)
+    assert sum(row[-1] for row in grid) == scenario_count
+    assert sum(grid[-1]) == plan.targets["row_target"]
+    assert plan.summary()["new_responses"] == scenario_count
+
+
+def test_extend_adds_a_model(run_dir, monkeypatch):
+    """Adding a model fills a new row and column without redoing the rest."""
+
+    import numpy as np
+    from inspect_ai.model import ModelOutput, get_model
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
+    from eigenbench.protocol.extension import count_matrix, detect_mode, model_names, plan_addition, projected_counts
+
+    tmp_path, write_spec = run_dir
+    spec_path = write_spec(sampler_mode="all_to_all")
+    base = collect_direct_ratings_inspect(str(spec_path))
+    mode = detect_mode(base)
+    before = np.array(count_matrix(base, mode, len(model_names(base, mode))))
+
+    # The plan is decided before any inference, so it can be checked on its own.
+    plan = plan_addition(base, "delta", include_self=True, seed=7)
+    after_planned = np.array(projected_counts(base, plan))
+    assert after_planned.shape == (before.shape[0] + 1,) * 2
+    # Existing counts are untouched: no work is repeated.
+    assert (after_planned[:-1, :-1] == before).all()
+    # Edges where the new model judges reuse a response that already exists.
+    assert any(e.response is not None for e in plan.as_judge)
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            content = "[delta#1] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            content = "[delta] reflection"
+        else:
+            content = "\n".join(
+                f"<criterion_{i}_rating>5</criterion_{i}_rating>"
+                for i in range(1, NUM_CRITERIA + 1)
+            )
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    delta = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    result = extend_run(str(spec_path), "delta", delta, include_self=True, seed=7)
+
+    merged = [
+        json.loads(line)
+        for line in (tmp_path / "evaluations.jsonl").read_text().splitlines()
+    ]
+    assert len(merged) == len(base) + result["collected"]
+
+    names = model_names(merged, mode)
+    assert names[-1] == "delta"
+    after = np.array(count_matrix(merged, mode, len(names)))
+    assert (after[:-1, :-1] == before).all(), "existing cells must not change"
+    assert after[:, -1].sum() > 0 and after[-1, :].sum() > 0, "new row and column filled"
+
+    # Every new record is well formed for the analysis layer.
+    new = [r for r in merged if "delta" in (r["judge"]["name"], r["evaluee"]["name"])]
+    assert len(new) == result["collected"]
+    new_responses = [r for r in new if r["evaluee"]["name"] == "delta"]
+    assert len(new_responses) == SCENARIO_COUNT
+    assert {r["scenario_index"] for r in new_responses} == set(range(SCENARIO_COUNT))
+    for r in new:
+        assert [e["criterion_index"] for e in r["ratings"]] == list(range(NUM_CRITERIA))
+
+
+@pytest.mark.parametrize("new_names, extra_count, phased, recurring", [
+    (["d"], 0, False, False), (["d"], 0, True, False), (["d", "e"], 2, False, False), (["d", "e"], 2, True, False),
+    (["d"], 0, False, True), (["d"], 0, True, True),
+])
+def test_pairwise_extend_collects(tmp_path, monkeypatch, new_names, extra_count, phased, recurring):
+    """A pairwise run can be extended on the Inspect engine, even when a comparison recurs."""
+
+    import numpy as np
+    from inspect_ai.model import ModelOutput, get_model
+
+    from inspect_pipeline.collection.extension import extend_run
+    from eigenbench.protocol.extension import PAIRWISE, count_matrix, model_names, plan_addition
+
+    names = ["a", "b", "c"]
+    scenarios = [f"Scenario {i}: what do you do?" for i in range(6)]
+    records = []
+    for s, text in enumerate(scenarios[:4]):
+        for ji, j in enumerate(names):
+            for x in range(len(names)):
+                for y in range(x + 1, len(names)):
+                    records.append({
+                        "constitution": "c1", "scenario": text, "scenario_index": s,
+                        "eval1": x, "eval1_name": names[x],
+                        "eval1 response": f"{names[x]} on {s}", "eval1 reflection": "r",
+                        "eval2": y, "eval2_name": names[y],
+                        "eval2 response": f"{names[y]} on {s}", "eval2 reflection": "r",
+                        "judge": ji, "judge_name": j,
+                        "judge response": "<criterion_1_choice>1</criterion_1_choice>",
+                    })
+
+    constitution = tmp_path / "constitution.json"
+    constitution.write_text(json.dumps(["c1"]), encoding="utf-8")
+    scen_file = tmp_path / "scenarios.json"
+    scen_file.write_text(json.dumps(scenarios), encoding="utf-8")
+    evals = tmp_path / "evaluations.jsonl"
+    evals.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    spec = tmp_path / "spec.py"
+    spec.write_text(f"""
+from inspect_ai.model import ModelOutput, get_model
+
+
+def _mock(nick):
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            c = f"[{{nick}}] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            c = f"[{{nick}}] reflection"
+        else:
+            c = "<criterion_1_choice>1</criterion_1_choice>"
+        return ModelOutput.from_content(model="mockllm/model", content=c)
+
+    return get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+
+
+RUN_SPEC = {{
+    "name": "pw",
+    "models": {{n: _mock(n) for n in {names!r}}},
+    "evaluation": {{"mode": "pairwise_btd"}},
+    "dataset": {{"path": {str(scen_file)!r}, "count": {len(scenarios)}}},
+    "constitution": {{"path": {str(constitution)!r}, "num_criteria": 1}},
+    "collection": {{"evaluations_path": {str(evals)!r},
+                    "inspect": {{"cache": False, "display": "none"}}}},
+    "training": {{"enabled": False}},
+}}
+""", encoding="utf-8")
+
+    if phased:
+        with spec.open("a") as handle:
+            handle.write('\nRUN_SPEC["collection"]["inspect"]["phased"] = True\n')
+    before = np.array(count_matrix(records, PAIRWISE, len(names)))
+    plan = plan_addition(records, "d", seed=3)
+    assert plan.mode == PAIRWISE
+    assert all(e.opponent for e in plan.edges), "every comparison needs an opponent"
+
+    def outputs(input, tools, tool_choice, config):
+        system = input[0].text if input else ""
+        if system.startswith("Without making any mention"):
+            content = "[d] answers"
+        elif system.startswith(
+            "You are acting as a judge. Carefully consider the following response"
+        ):
+            content = "[d] reflection"
+        else:
+            content = "<criterion_1_choice>1</criterion_1_choice>"
+        return ModelOutput.from_content(model="mockllm/model", content=content)
+
+    if recurring:
+        # The plan asks for its first comparison twice.
+        import dataclasses
+        from eigenbench.protocol import extension as extend_module
+
+        plan_pairwise = extend_module._plan_pairwise
+        def with_repeat(plan, *args, **kwargs):
+            result = plan_pairwise(plan, *args, **kwargs)
+            plan.as_evaluee.append(dataclasses.replace(plan.as_evaluee[0]))
+            return result
+        monkeypatch.setattr(extend_module, "_plan_pairwise", with_repeat)
+
+    d = get_model("mockllm/model", custom_outputs=outputs, memoize=False)
+    result = extend_run(str(spec), new_models=dict.fromkeys(new_names, d),
+                        additional_scenarios=extra_count, seed=3)
+
+    merged = [json.loads(line) for line in evals.read_text().splitlines()]
+    assert len(merged) == len(records) + result["collected"]
+
+    names_after = model_names(merged, PAIRWISE)
+    assert names_after[-len(new_names):] == new_names
+    after = np.array(count_matrix(merged, PAIRWISE, len(names_after)))
+    assert after[:, -1].sum() > 0 and after[-1, :].sum() > 0
+
+    new = [r for r in merged if "d" in (r["judge_name"], r["eval1_name"], r["eval2_name"])]
+    for r in new:
+        assert r["judge response"], "a comparison must record a verdict"
+        assert r["eval1 response"] and r["eval2 response"]
+
+    # The run's report accounts for every planned comparison, a repeated one included.
+    extension = json.loads((tmp_path / "collection_report.json").read_text())["collections"][-1]
+    assert extension["kind"] == "extension" and extension["status"] == "exported"
+    assert extension["planned"] == extension["logged"] == extension["exported"] == result["collected"]
+    assert (extension["omitted"], extension["unstarted"], extension["omissions"]) == (0, 0, [])
+    if recurring:
+        from collections import Counter
+
+        key = lambda r: (r["scenario_index"], r["judge_name"], r["eval1_name"], r["eval2_name"])
+        counts = Counter(key(r) for r in new)
+        assert sorted(counts.values())[-1] == 2, "the repeated comparison is collected twice"
+
+
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("new_names", [[], ["delta", "epsilon"]])
+def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
+    """A new spec extends source records without modifying the source run."""
+    from collections import Counter
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
+    from inspect_pipeline.export import export_log
+
+    tmp_path, write_spec = run_dir
+    base_spec = write_spec(sampler_mode="balanced_unique_judge")
+    original = collect_direct_ratings_inspect(str(base_spec))
+    source = tmp_path / "evaluations.jsonl"
+    before = source.read_bytes()
+    expanded = tmp_path / "expanded"
+    expanded.mkdir()
+    output = expanded / "evaluations.jsonl"
+    spec = expanded / "spec.py"
+    spec.write_text(SPEC_TEMPLATE.format(
+        repo_root=str(REPO_ROOT), nicks=NICKS + new_names, num_criteria=NUM_CRITERIA,
+        scenarios_path=str(tmp_path / "scenarios.json"),
+        constitution_path=str(tmp_path / "constitution.json"), scenario_count=5,
+        sampler_mode="balanced_unique_judge",
+    ) + '\nRUN_SPEC["extension"] = {"from_evaluations": "../evaluations.jsonl", '
+        '"additional_scenarios": 2}\n')
+    # Dry-run through the public command line, with no inference or output writes.
+    result = subprocess.run(
+        [sys.executable, "scripts/extend_run.py", str(spec), "--dry-run"],
+        cwd=REPO_ROOT, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["additional_scenarios"] == 2
+    assert not output.exists()
+    if native:
+        result = subprocess.run(
+            [sys.executable, "-m", "inspect_ai", "eval", "inspect_pipeline/extend.py",
+             "-T", f"spec={spec}", "--log-dir", str(expanded / "inspect_logs"),
+             "--display", "none"], cwd=REPO_ROOT, text=True, capture_output=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        log = next((expanded / "inspect_logs").glob("*.eval"))
+        rows, _ = export_log(log, evaluations_path=output, append=True)
+        summary = {"collected": len(rows)}
+    else:
+        from inspect_pipeline.collection.extension import extend_run
+        summary = extend_run(str(spec))
+    combined = [json.loads(line) for line in output.read_text().splitlines()]
+    assert combined[:len(original)] == original
+    assert source.read_bytes() == before
+    added = combined[len(original):]
+    assert len(added) == summary["collected"]
+    for name in new_names:
+        assert Counter(r["scenario_index"] for r in added if r["evaluee"]["name"] == name) == {
+            i: 1 for i in range(5)
+        }
+    for scenario in (3, 4):
+        fresh = [r for r in added if r["scenario_index"] == scenario]
+        assert Counter(r["evaluee"]["name"] for r in fresh) == dict.fromkeys(NICKS + new_names, 1)
+        assert Counter(r["judge"]["name"] for r in fresh) == dict.fromkeys(NICKS + new_names, 1)
+    saved = {(r["scenario_index"], r["evaluee"]["name"]): r["response"] for r in original}
+    for r in added:
+        key = r["scenario_index"], r["evaluee"]["name"]
+        if key in saved:
+            assert r["response"] == saved[key]
+    identities = [(r["scenario_index"], r["judge"]["index"], r["evaluee"]["index"])
+                  for r in combined]
+    assert len(identities) == len(set(identities))
+    expected_order = NICKS + new_names
+    for r in combined:
+        for role in ("judge", "evaluee"):
+            assert expected_order[r[role]["index"]] == r[role]["name"]
+    with pytest.raises(ValueError, match="output already exists"):
+        extend_run(str(spec))
+    # Native Inspect export also includes the baseline when writing a fresh output.
+    log = next((expanded / "inspect_logs").glob("*.eval"))
+    exported = expanded / "exported.jsonl"
+    from inspect_pipeline.export import load_log, records_fingerprint
+    with pytest.raises(ValueError, match="require --append"):
+        export_log(log, evaluations_path=exported)
+    legacy_log = load_log(log)
+    legacy_log.eval.metadata["eigenbench"].pop("extension_model_identities")
+    export_log(legacy_log, evaluations_path=exported, append=True)
+    assert [json.loads(line) for line in exported.read_text().splitlines()] == combined
+    provenance = json.loads((expanded / "inspect_run.json").read_text())["model_provenance"][exported.name]
+    assert provenance["records_sha256"] == records_fingerprint(combined)
+    assert set(provenance["models"]) == set(expected_order)
+
+    # A missing or modified baseline must never produce an extension-only output.
+    rejected = expanded / "rejected.jsonl"
+    source.unlink()
+    with pytest.raises(ValueError, match="source is missing"):
+        export_log(log, evaluations_path=rejected, append=True)
+    assert not rejected.exists()
+    changed = [dict(r) for r in original]
+    changed[0]["scenario"] = "changed after collection"
+    source.write_text("\n".join(json.dumps(r) for r in changed) + "\n")
+    with pytest.raises(ValueError, match="source changed"):
+        export_log(log, evaluations_path=rejected, append=True)
+    assert not rejected.exists()
+    source.write_bytes(before)
+    # Formatting changes are harmless, but old logs without a fingerprint and
+    # successful logs containing only a subset of the plan must be rejected.
+    source.write_text("\n".join(json.dumps(r, sort_keys=True) for r in original) + "\n")
+    export_log(log, evaluations_path=expanded / "reformatted.jsonl", append=True)
+    source.write_bytes(before)
+    parsed_log = load_log(log)
+    fingerprint = parsed_log.eval.metadata["eigenbench"].pop("extension_source_sha256")
+    with pytest.raises(ValueError, match="no source fingerprint"):
+        export_log(parsed_log, evaluations_path=rejected, append=True)
+    parsed_log.eval.metadata["eigenbench"]["extension_source_sha256"] = fingerprint
+    parsed_log.samples = parsed_log.samples[:-1]
+    with pytest.raises(ValueError, match="complete plan"):
+        export_log(parsed_log, evaluations_path=rejected, append=True)
+    assert not rejected.exists()
+
+
+def test_joint_model_planner_and_pairwise_analysis():
+    from collections import Counter
+
+    from eigenbench.protocol.extension import plan_additions, projected_counts
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+
+    names = ["a", "b", "c"]
+    records = [
+        {"judge": j, "judge_name": names[j], "eval1": a, "eval1_name": names[a],
+         "eval2": b, "eval2_name": names[b], "scenario_index": s, "scenario": f"s{s}",
+         "eval1 response": f"{a}-{s}", "eval2 response": f"{b}-{s}"}
+        for s in range(4) for j in range(3) for a in range(3) for b in range(3) if a != b
+    ]
+    plan = plan_additions(records, ["d", "e"], new_scenarios={4: "s4", 5: "s5"})
+    assert len(projected_counts(records, plan)) == 5
+    index = {n: i for i, n in enumerate(names + ["d", "e"])}
+    keys = [(e.scenario_index, e.judge, e.evaluee, e.opponent) for e in plan.edges]
+    assert len(keys) == len(set(keys))
+    for s, j, a, b in keys:
+        assert (s, j, b, a) in keys
+    rows = [[0, e.scenario_index, index[e.judge], index[e.evaluee], index[e.opponent],
+             1 if index[e.evaluee] < index[e.opponent] else 2] for e in plan.edges]
+    cleaned = handle_inconsistencies_with_ties_criteria(rows)
+    assert Counter(map(tuple, cleaned)) == Counter(map(tuple, rows))
+    for s in (4, 5):
+        assert {e.evaluee for e in plan.edges if e.scenario_index == s} == set(index)
+    assert all(any(e.judge == n for e in plan.edges) for n in ("d", "e"))
+
+
+def test_extension_rejects_incompatible_inputs(run_dir):
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
+    from eigenbench.protocol.extension import plan_additions
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec(sampler_mode="balanced_unique_judge")
+    records = collect_direct_ratings_inspect(str(spec))
+    with pytest.raises(ValueError, match="unique"):
+        plan_additions(records, ["delta", "delta"])
+    with pytest.raises(ValueError, match="overlap"):
+        plan_additions(records, ["delta"], new_scenarios={0: "different"})
+    before = (tmp_path / "evaluations.jsonl").read_bytes()
+    with pytest.raises(ValueError, match="unused scenarios"):
+        extend_run(str(spec), new_models={"delta": "mockllm/model"}, additional_scenarios=2)
+    with pytest.raises(ValueError, match="already appear"):
+        extend_run(str(spec), new_models={"alpha": "mockllm/model"})
+    assert (tmp_path / "evaluations.jsonl").read_bytes() == before
+
+
+@pytest.mark.parametrize("include_self", [True, False])
+@pytest.mark.parametrize("new_count", [2, 12])
+def test_many_new_models_share_one_population(include_self, new_count):
+    from collections import Counter
+    from eigenbench.protocol.extension import plan_additions, projected_counts
+
+    names = ["a", "b", "c"]
+    records = [
+        {"record_type": "direct_rating", "scenario_index": s, "scenario": str(s),
+         "judge": {"index": (i + 1) % 3, "name": names[(i + 1) % 3]},
+         "evaluee": {"index": i, "name": n}, "response": f"{n}-{s}"}
+        for s in range(60) for i, n in enumerate(names)
+    ]
+    new = [f"new{i}" for i in range(new_count)]
+    plan = plan_additions(records, new, include_self=include_self)
+    for name in new:
+        edges = [e for e in plan.as_evaluee if e.evaluee == name]
+        assert Counter(e.scenario_index for e in edges) == dict.fromkeys(range(60), 1)
+        eligible = [n for n in names + new if include_self or n != name]
+        loads = Counter(e.judge for e in edges)
+        assert set(loads) == set(eligible)
+        assert max(loads.values()) - min(loads.values()) <= 1
+    if not include_self:
+        assert all(e.judge != e.evaluee for e in plan.edges)
+    grid = projected_counts(records, plan)
+    assert all(sum(row) == 60 for row in grid[len(names):])
+    assert plan.summary()["new_responses"] == 60 * new_count
+
+
+def test_pairwise_strict_export_rejects_cancelled_and_missing_content():
+    from types import SimpleNamespace
+    from inspect_pipeline.pairwise import records_from_pairwise_log
+
+    sample = SimpleNamespace(id="partial", error=None, metadata={}, store={})
+    with pytest.raises(RuntimeError, match="did not complete"):
+        records_from_pairwise_log(SimpleNamespace(status="cancelled", samples=[sample]), ["c1"])
+    with pytest.raises(RuntimeError, match="missing generated content"):
+        records_from_pairwise_log(SimpleNamespace(status="success", samples=[sample]), ["c1"])
+
+
+def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch):
+    import re
+    import runpy
+    from contextlib import contextmanager
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import extend_model
+    from inspect_pipeline.collection.extension import extend_run
+    from inspect_pipeline.export import export_log
+    import inspect_pipeline.collection.extension_phased as phased
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec(sampler_mode="balanced_unique_judge")
+    collect_direct_ratings_inspect(str(spec))
+    target = tmp_path / "evaluations.jsonl"
+    baseline = target.read_bytes()
+    manifest = tmp_path / "inspect_run.json"
+    baseline_provenance = json.loads(manifest.read_text())["model_provenance"][target.name]
+
+    def restore_baseline():
+        target.write_bytes(baseline)
+        info = json.loads(manifest.read_text())
+        info["model_provenance"][target.name] = baseline_provenance
+        manifest.write_text(json.dumps(info))
+
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["dataset"]["count"] = 5\n')
+    factory = runpy.run_path(str(spec))["_mock"]
+    newcomers = {n: factory(n) for n in ("delta", "epsilon")}
+    extend_run(str(spec), new_models=newcomers, additional_scenarios=2)
+    single = [json.loads(line) for line in target.read_text().splitlines()]
+    restore_baseline()
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["collection"]["inspect"]["phased"] = True\n')
+
+    # Instrument the actual resolver/close lifecycle: a different model must
+    # never resolve while another model's phase is still open.
+    active = set()
+    closed = []
+    model_phase = phased.model_phase
+
+    @contextmanager
+    def tracked_phase(context, nick):
+        with model_phase(context, nick) as ctx:
+            resolve = ctx["resolve_model"]
+            def tracked(name):
+                assert not active or active == {name}
+                active.add(name)
+                return resolve(name)
+            ctx["resolve_model"] = tracked
+            yield ctx
+        closed.extend(active)
+        active.clear()
+
+    monkeypatch.setattr(phased, "model_phase", tracked_phase)
+    extend_run(str(spec), new_models=newcomers, additional_scenarios=2)
+    actual = [json.loads(line) for line in target.read_text().splitlines()]
+    def normalized(rows):
+        return [re.sub(r"#\d+", "#counter", json.dumps(r, sort_keys=True)) for r in rows]
+    assert normalized(actual) == normalized(single)
+    assert not active and len(closed) == 10  # Five response phases, five judges.
+    info = json.loads((tmp_path / "inspect_run.json").read_text())
+    # The run keeps its earlier logs and adds the extension's five judge and five response logs.
+    # The collection, the single-task extension, then this one, each with its own logs.
+    parts = json.loads((tmp_path / "collection_report.json").read_text())["collections"]
+    assert [part["kind"] for part in parts] == ["collection", "extension", "extension"]
+    extension = parts[-1]
+    assert extension["status"] == "exported"
+    assert sorted(entry["role"] for entry in extension["logs"]) == ["judgments"] * 5 + ["responses"] * 5
+    offset = 0
+    for part in parts:  # log_files keeps every earlier log, in order
+        files = {entry["file"] for entry in part["logs"]}
+        assert set(info["log_files"][offset:offset + len(files)]) == files
+        offset += len(files)
+    assert offset == len(info["log_files"])
+    judge_log = tmp_path / "inspect_logs" / info["log_file"]
+    with pytest.raises(ValueError, match="only one judge"):
+        export_log(judge_log, evaluations_path=tmp_path / "partial.jsonl", append=True)
+    restore_baseline()
+    with pytest.raises(ValueError, match="requires phased execution"):
+        extend_model(str(spec), new_model="delta", model_id="inspect:mockllm/model")
+
+
+def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clients(monkeypatch):
+    import inspect_ai
+    from inspect_pipeline import context as inspect_context
+    from inspect_pipeline.collection.phased import eval_phase, model_phase
+
+    context = {"models": {"a": "inspect:mockllm/model", "b": "inspect:mockllm/other"}}
+    clients, closed = [], []
+    get_model = inspect_context.get_model
+
+    def track_model(*args, **kwargs):
+        assert not kwargs["memoize"]
+        model = get_model(*args, **kwargs)
+        clients.append(model)
+
+        async def close():
+            closed.append(model)
+
+        model.api.aclose = close
+        return model
+
+    monkeypatch.setattr(inspect_context, "get_model", track_model)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="provider failed"):
+            with model_phase(context, "a") as phase:
+                with pytest.raises(RuntimeError, match="phased task for 'a' attempted to load 'b'"):
+                    phase["resolve_model"]("b")
+
+                def fail(**kwargs):
+                    phase["resolve_model"]("a")
+                    raise RuntimeError("provider failed")
+
+                monkeypatch.setattr(inspect_ai, "eval", fail)
+                eval_phase(None, {}, [])
+    assert len(clients) == len(closed) == 2
+    assert all(client is closed_client for client, closed_client in zip(clients, closed))
+    assert clients[0] is not clients[1]
+
+
+def test_extension_phasing_defaults_to_local_models(monkeypatch):
+    import inspect_pipeline.models as mapping
+    from inspect_pipeline.collection.extension import _use_phased_extension
+
+    monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
+    prepared = {"spec": {"collection": {}}, "models": {"local": "hf_local:org/model"}}
+    assert _use_phased_extension(prepared)
+    prepared["spec"]["collection"]["inspect"] = {"phased": False}
+    assert not _use_phased_extension(prepared)
+    prepared["models"] = {"api": "inspect:mockllm/model"}
+    prepared["spec"]["collection"]["inspect"] = {"phased": True}
+    assert _use_phased_extension(prepared)
+
+
+@pytest.mark.parametrize("layout", ["native", "phased", "single"])
+def test_extension_keeps_model_identities_across_exports(run_dir, layout):
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import extend_model
+    from inspect_pipeline.collection.extension import extend_run
+    from inspect_pipeline.export import export_log
+
+    tmp_path, write_spec = run_dir
+    base_spec = write_spec()
+    baseline_text = base_spec.read_text().replace(
+        'get_model("mockllm/model",', 'get_model(f"mockllm/{nick}-v1",',
+    )
+    base_spec.write_text(baseline_text)
+    collect_direct_ratings_inspect(str(base_spec), scoring=False)
+    source = tmp_path / "evaluations.jsonl"
+    source_before = source.read_bytes()
+    # Exercise the older direct collector's fingerprint, before manifests stored identities.
+    (tmp_path / "inspect_run.json").unlink()
+    (tmp_path / "collection_report.json").unlink()
+
+    output_dir = tmp_path / "expanded"
+    output_dir.mkdir()
+    spec = output_dir / "extension.py"
+    expanded_text = baseline_text.replace(repr(NICKS), repr(NICKS + ["delta"]))
+    first_extension = expanded_text + '\nRUN_SPEC["extension"] = {"from_evaluations": "../evaluations.jsonl"}\n'
+    spec.write_text(first_extension + '\nRUN_SPEC["models"]["alpha"] = "inspect:mockllm/alpha-v2"\n')
+    with pytest.raises(ValueError, match="references changed for existing nicks: alpha"):
+        extend_run(str(spec), dry_run=True)
+    output = output_dir / "evaluations.jsonl"
+    assert not output.exists()
+
+    spec.write_text(first_extension)
+    if layout == "native":
+        [log] = inspect_eval(extend_model(str(spec)), model=None, display="none",
+                             log_dir=str(output_dir / "custom-logs"))
+        export_log(log.location, append=True)
+    else:
+        with spec.open("a") as handle:
+            handle.write(f'\nRUN_SPEC["collection"]["inspect"]["phased"] = {layout == "phased"!r}\n')
+        extend_run(str(spec))
+    output_before = output.read_bytes()
+
+    spec.write_text(expanded_text.replace(repr(NICKS + ["delta"]), repr(NICKS + ["delta", "epsilon"]))
+                    + '\nRUN_SPEC["models"]["alpha"] = "inspect:mockllm/alpha-v2"\n'
+                    + '\nRUN_SPEC["models"]["delta"] = "inspect:mockllm/delta-v2"\n')
+    with pytest.raises(ValueError, match="references changed for existing nicks: alpha, delta"):
+        extend_run(str(spec), dry_run=True)
+    assert source.read_bytes() == source_before
+    assert output.read_bytes() == output_before
+
+
+def test_appending_an_inspect_log_preserves_model_provenance(run_dir):
+    from inspect_ai import eval as inspect_eval
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.eigenbench import eigenbench
+    from inspect_pipeline.export import export_log, records_fingerprint
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec()
+    baseline = collect_direct_ratings_inspect(str(spec), scoring=False)
+    output = tmp_path / "evaluations.jsonl"
+    initial_bytes = output.read_bytes()
+    info_path = tmp_path / "inspect_run.json"
+    initial_info = info_path.read_bytes()
+    with spec.open("a") as handle:
+        handle.write('\nRUN_SPEC["dataset"]["start"] = 3\n')
+    [log] = inspect_eval(eigenbench(str(spec), panel_metrics=False), model=None, display="none",
+                         log_dir=str(tmp_path / "inspect_logs"))
+    changed = log.model_copy(deep=True)
+    changed.eval.metadata["eigenbench"]["panel"][0]["name"] = "mockllm/other"
+    with pytest.raises(ValueError, match="model references for existing nicks: alpha"):
+        export_log(changed, append=True)
+    assert output.read_bytes() == initial_bytes
+    assert info_path.read_bytes() == initial_info
+
+    appended, _ = export_log(log, append=True)
+    assert len(appended) == len(baseline)
+    refreshed = json.loads(info_path.read_text())["model_provenance"][output.name]
+    previous = json.loads(initial_info)["model_provenance"][output.name]
+    assert refreshed["models"] == previous["models"]
+    assert refreshed["records_sha256"] == records_fingerprint(baseline + appended)
+
+
+def test_cli_refuses_a_saved_file_with_another_panels_scenario(run_dir):
+    import json as _json
+
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from scripts.run import main
+
+    tmp_path, write_spec = run_dir
+    spec = write_spec()
+    collect_direct_ratings_inspect(str(spec))
+    evaluations = tmp_path / "evaluations.jsonl"
+    records = [_json.loads(line) for line in evaluations.read_text().splitlines()]
+    foreign = [dict(r, scenario_index=99, judge={**r["judge"], "name": "x" + r["judge"]["name"]},
+                    evaluee={**r["evaluee"], "name": "x" + r["evaluee"]["name"]})
+               for r in records if r["scenario_index"] == 0]
+    evaluations.write_text("".join(_json.dumps(r) + "\n" for r in foreign + records))
+    with pytest.raises(ValueError, match="spec lists"):
+        main(str(spec), collection_enabled=False)

@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Callable
 
-# Inspect loads task files outside their package.
+# Inspect puts this directory on sys.path. Prefer the eigenbench package.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
+if sys.path[:1] != [str(_REPO_ROOT)]:
     sys.path.insert(0, str(_REPO_ROOT))
-
-from typing import Callable  # noqa: E402
 
 from inspect_ai import Task, task  # noqa: E402
 from inspect_ai.dataset import MemoryDataset, Sample  # noqa: E402
@@ -24,31 +23,26 @@ from inspect_ai.model import ChatMessageSystem, ChatMessageUser, Model  # noqa: 
 from inspect_ai.scorer import Score, Target, mean, scorer  # noqa: E402
 from inspect_ai.solver import Generate, Solver, TaskState, solver  # noqa: E402
 
-from pipeline.protocol.pairwise import (  # noqa: E402
+from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
+from eigenbench.protocol.pairwise import (
     build_comparison_prompt,
     build_reflection_prompt,
     build_reflection_user,
     build_comparison_user,
-)
-from pipeline.utils.comparisons import (  # noqa: E402
     _contiguous_prefix_len,
     _extract_valid_criterion_scores,
     validate_partial_criteria_response,
 )
-
-from inspect_pipeline.pairwise_plan import (  # noqa: E402
+from eigenbench.protocol.pairwise_plan import (
     PAIRWISE_PLAN_VERSION,
     pairwise_comparisons,
     plan_pairwise_groups,
     resolve_pairwise_sampling_settings,
 )
-from inspect_pipeline.phases import (  # noqa: E402
-    RESPONSE_SYSTEM_MESSAGE,
-    ResponsePool,
-    generate_validated,
-    phase_config,
-    response_only_solver,
-)
+
+from inspect_pipeline.generation import ResponsePool, generate_validated, phase_config
+from inspect_pipeline.metrics import analysis_config, panel_scorer
+from inspect_pipeline.phases import response_only_solver
 
 STORE_EVAL1_RESPONSE = "eigenbench:eval1_response"
 STORE_EVAL2_RESPONSE = "eigenbench:eval2_response"
@@ -378,7 +372,7 @@ def build_pairwise_task(
     Inspect's ``Task.name`` is read-only.
     """
 
-    from inspect_pipeline.eigenbench import _run_context, sanitize
+    from inspect_pipeline.context import _run_context, sanitize
 
     ctx = context if context is not None else _run_context(
         spec, models, cache, build_assignments=False
@@ -396,7 +390,6 @@ def build_pairwise_task(
     if samples is None:
         samples = pairwise_comparison_samples(comparisons, cached=ctx["seed"])
 
-    from inspect_pipeline.metrics import analysis_config, panel_scorer
     config = (analysis_config(ctx, planned=len(comparisons), write_artifacts=write_artifacts)
               if panel_metrics and full_panel else None)
     scorers = [pairwise_choice_scorer(num_criteria=len(criteria))]
@@ -449,9 +442,9 @@ def eigenbench_pairwise(
     ``--model`` joins the panel as one more judge and evaluee.
     """
 
-    from inspect_pipeline.eigenbench import resolve_spec_ref, with_eval_model
-    from inspect_pipeline.model_mapping import check_distinct_local_servers
-    from pipeline.config import load_run_spec
+    from inspect_pipeline.context import resolve_spec_ref, with_eval_model
+    from inspect_pipeline.models import check_distinct_local_servers
+    from eigenbench.config import load_run_spec
 
     models = with_eval_model(spec, models)
     # One task serves the whole panel concurrently.
@@ -515,7 +508,7 @@ def eigenbench_pairwise_extend(
 ):
     """Task collecting a pairwise plan's comparisons with the shared solver."""
 
-    from inspect_pipeline.eigenbench import _run_context
+    from inspect_pipeline.context import _run_context
 
     ctx = context if context is not None else _run_context(spec, models, build_assignments=False)
     collection_cfg = ctx["collection_cfg"]

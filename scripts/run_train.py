@@ -1,14 +1,17 @@
-"""Internal training stage for pipeline orchestration.
-
-This module is intended to be invoked by ``scripts/run.py``.
-"""
+"""Score the saved judgments for an EigenBench run."""
 
 from __future__ import annotations
 
 import os
 
-from pipeline.config import load_run_spec
-from pipeline.utils import load_records
+if __name__ == "__main__":
+    raise SystemExit(
+        "run_train.py is an internal stage. "
+        "Use: python scripts/run.py <spec_module_or_path>"
+    )
+
+from eigenbench.config import load_run_spec
+from eigenbench.records import load_records
 
 
 def _resolve_output_root(evaluations_path: str, train_cfg: dict) -> str:
@@ -52,7 +55,7 @@ def main(spec_ref: str):
 
     evaluation_cfg = _spec.get("evaluation", {})
     if evaluation_cfg.get("mode", "pairwise_btd") == "direct_rating":
-        from pipeline.train.direct_analysis import run_direct_analysis
+        from eigenbench.analysis.direct_rating import run_direct_analysis
 
         print("Direct-rating mode: skipping BT/BTD fitting and aggregating ratings directly.")
         out_root = _resolve_output_root(evaluations_path, train_cfg)
@@ -68,7 +71,7 @@ def main(spec_ref: str):
         )
         return
 
-    from pipeline.train.pairwise_analysis import run_pairwise_analysis
+    from eigenbench.analysis.pairwise import run_pairwise_analysis
 
     result = run_pairwise_analysis(
         data=data, models=_spec.get("models", {}), num_criteria=num_criteria,
@@ -77,10 +80,3 @@ def main(spec_ref: str):
     )
     if result["unavailable_reason"]:
         raise RuntimeError(result["unavailable_reason"])
-
-
-if __name__ == "__main__":
-    raise SystemExit(
-        "run_train.py is an internal stage. "
-        "Use: python scripts/run.py <spec_module_or_path>"
-    )

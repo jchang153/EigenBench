@@ -13,7 +13,11 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from pipeline.protocol.direct_rating import (
+from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
+from .export import records_fingerprint
+from eigenbench.protocol.extension import scenarios_of
+from .models import model_identity
+from eigenbench.protocol.direct_rating import (
     DIRECT_PROMPT_VERSION,
     build_direct_rating_prompt,
     build_direct_rating_user_prompt,
@@ -22,10 +26,6 @@ from pipeline.protocol.direct_rating import (
 )
 
 from .coverage import _exported_key, judgment_key, planned_from_assignments
-from .export import records_fingerprint
-from .extend import scenarios_of
-from .model_mapping import model_identity
-from .phases import RESPONSE_SYSTEM_MESSAGE
 
 
 FINGERPRINT_FILE = "collection_fingerprint.json"

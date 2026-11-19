@@ -136,9 +136,9 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
     evaluation = config["evaluation"]
     training = config["training"]
     if direct:
-        from pipeline.trust.direct_rating import build_direct_trust
-        from pipeline.train.direct_analysis import compute_direct_bootstrap, direct_trust_options
-        from pipeline.train.train import eigentrust_to_elo
+        from eigenbench.analysis.direct_trust import build_direct_trust
+        from eigenbench.analysis.direct_rating import compute_direct_bootstrap, direct_trust_options
+        from eigenbench.analysis.fit import eigentrust_to_elo
         cfg = evaluation.get("direct_rating", {})
         collection = config["collection"]
         allow_sparse = (str(collection.get("sampler_mode", "all_to_all")).strip().lower() != "all_to_all"
@@ -147,7 +147,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
         bootstrap_cfg = training.get("bootstrap") or {}
         if write_artifacts:
             output_root = training.get("output_dir") or Path(collection["evaluations_path"]).parent / "train"
-            from pipeline.train.direct_analysis import run_direct_analysis
+            from eigenbench.analysis.direct_rating import run_direct_analysis
             analysis = run_direct_analysis(
                 records=records, models=dict.fromkeys(labels), num_criteria=len(config["criteria"]),
                 evaluation_cfg=evaluation, collection_cfg=collection, training_cfg=training,
@@ -171,7 +171,7 @@ def compute_panel_metrics(records: list[dict], config: dict) -> dict:
             labels, bootstrap=bootstrap,
         ))
     else:
-        from pipeline.train.pairwise_analysis import run_pairwise_analysis
+        from eigenbench.analysis.pairwise import run_pairwise_analysis
         output_root = None
         if config.get("write_artifacts", False) and training.get("enabled", True):
             output_root = training.get("output_dir") or Path(config["collection"]["evaluations_path"]).parent / "train"
@@ -228,7 +228,7 @@ def eigenbench_rankings():
         # Inspect invokes metrics during progress and again at completion. Keep
         # one completed-panel fit and bootstrap draw stream for this task only.
         from .export import records_fingerprint
-        from pipeline.trust.eigentrust import NonUniqueStationaryError
+        from eigenbench.analysis.eigentrust import NonUniqueStationaryError
 
         fingerprint = records_fingerprint([{"analysis": config}, *records])
         if panel is not None and panel["fingerprint"] == fingerprint:
