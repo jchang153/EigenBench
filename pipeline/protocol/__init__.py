@@ -1,3 +1,3 @@
-"""Compatibility imports for eigenbench.protocol.__init__."""
+"""Compatibility import for the shared response prompt."""
 
-from eigenbench.protocol.__init__ import RESPONSE_SYSTEM_MESSAGE as RESPONSE_SYSTEM_MESSAGE
+from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE as RESPONSE_SYSTEM_MESSAGE

@@ -1,4 +1,4 @@
-"""Configuration access layer for criteria/scenarios."""
+"""Compatibility imports for configuration loading."""
 
 from .datasets import (
     load_dataset_scenarios,

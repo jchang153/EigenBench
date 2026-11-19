@@ -1,4 +1,4 @@
-"""Utility helpers for record persistence and comparison extraction."""
+"""Compatibility imports for records and comparisons."""
 
 from .transcripts import load_records, save_records, append_records
 from .comparisons import (
