@@ -1,0 +1,269 @@
+"""Embedding and ranking plots for EigenBench analysis."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import torch
+from matplotlib import pyplot as plt
+from matplotlib import cm
+from matplotlib.lines import Line2D
+from sklearn.decomposition import PCA
+
+
+def _to_2d_with_pca(u: np.ndarray, v: np.ndarray):
+    """Project embeddings to 2D via PCA (with 1D fallback)."""
+
+    all_embeddings = np.vstack([u, v])
+    dim = all_embeddings.shape[1]
+
+    if dim >= 2:
+        pca = PCA(n_components=2)
+        all_2d = pca.fit_transform(all_embeddings)
+        variance = pca.explained_variance_ratio_
+    elif dim == 1:
+        # PCA cannot produce 2 components from 1-D input; keep a zero y-axis.
+        x = all_embeddings[:, 0]
+        all_2d = np.column_stack([x, np.zeros_like(x)])
+        variance = np.array([1.0, 0.0], dtype=float)
+    else:
+        all_2d = np.zeros((all_embeddings.shape[0], 2), dtype=float)
+        variance = np.array([0.0, 0.0], dtype=float)
+
+    u_2d = all_2d[: len(u)]
+    v_2d = all_2d[len(u) :]
+    return u_2d, v_2d, variance
+
+
+def _build_u_color_index(num_u: int, num_models: int):
+    """Map each u-row to a model index color.
+
+    For criterion-conditioned models, u rows are packed as
+    row_idx = criterion * num_models + judge_idx, so modulo by num_models
+    recovers judge_idx.
+    """
+
+    if num_models <= 0:
+        return [0] * num_u
+    return [idx % num_models for idx in range(num_u)]
+
+
+def save_uv_embedding_plot(
+    model: torch.nn.Module,
+    model_names: list[str],
+    save_path: str,
+    *,
+    figsize=(20, 12),
+):
+    """Save side-by-side PCA visualization of u and v embeddings.
+
+    Left: judge lenses (u, triangles), optionally sized by inverse tie propensity.
+    Right: model dispositions (v, circles), legend on right side.
+    """
+
+    if not hasattr(model, "u") or not hasattr(model, "v"):
+        raise ValueError("Model does not expose both 'u' and 'v' embeddings.")
+
+    with torch.no_grad():
+        u = model.u.weight.detach().cpu().numpy()
+        v = model.v.weight.detach().cpu().numpy()
+
+        log_lambda = None
+        if hasattr(model, "log_lambda"):
+            log_lambda = model.log_lambda.weight.detach().cpu().numpy().reshape(-1)
+
+    if len(model_names) < v.shape[0]:
+        extra = [f"Model {i}" for i in range(len(model_names), v.shape[0])]
+        model_names = list(model_names) + extra
+    else:
+        model_names = list(model_names[: v.shape[0]])
+
+    u_2d, v_2d, variance = _to_2d_with_pca(u, v)
+
+    fig, (ax_u, ax_v) = plt.subplots(1, 2, figsize=figsize)
+
+    colors = cm.tab20(np.linspace(0, 1, max(1, len(model_names))))
+    u_color_idx = _build_u_color_index(len(u_2d), len(model_names))
+
+    # Judge sizes: inverse lambda when available, else fixed.
+    if log_lambda is not None and len(log_lambda) == len(u_2d):
+        lambda_vals = np.exp(log_lambda)
+        lam_min = float(np.min(lambda_vals))
+        lam_max = float(np.max(lambda_vals))
+        if lam_max > lam_min:
+            scale = (lambda_vals - lam_min) / (lam_max - lam_min)
+        else:
+            scale = np.ones_like(lambda_vals)
+        u_sizes = 120 + (1.0 - scale) * 240.0
+    else:
+        u_sizes = np.full(len(u_2d), 160.0, dtype=float)
+
+    v_size = 170.0
+
+    for idx, (x, y) in enumerate(u_2d):
+        color_idx = u_color_idx[idx]
+        ax_u.scatter(
+            x,
+            y,
+            c=[colors[color_idx]],
+            alpha=0.72,
+            s=float(u_sizes[idx]),
+            marker="^",
+            edgecolors="black",
+            linewidth=0.55,
+        )
+        # Show judge index next to each lens point.
+        ax_u.annotate(
+            str(color_idx),
+            (x, y),
+            xytext=(4, 3),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+        )
+
+    for idx, (x, y) in enumerate(v_2d):
+        ax_v.scatter(
+            x,
+            y,
+            c=[colors[idx]],
+            alpha=0.78,
+            s=v_size,
+            marker="o",
+            edgecolors="black",
+            linewidth=0.55,
+        )
+        # Show model index next to each disposition point for quick lookup.
+        ax_v.annotate(
+            str(idx),
+            (x, y),
+            xytext=(4, 3),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+        )
+
+    var_text = f"PC1 {variance[0]:.1%}, PC2 {variance[1]:.1%}"
+    ax_u.set_title(f"Judge Lenses (u)\n{var_text}", fontsize=14)
+    ax_v.set_title("Model Dispositions (v)", fontsize=14)
+
+    for ax in (ax_u, ax_v):
+        ax.axhline(y=0, color="black", linestyle="-", alpha=0.3, linewidth=0.8)
+        ax.axvline(x=0, color="black", linestyle="-", alpha=0.3, linewidth=0.8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel("PC1")
+        ax.set_ylabel("PC2")
+
+    legend_elements = []
+    for idx, model_name in enumerate(model_names):
+        label = f"[{idx}] {model_name}"
+        legend_elements.append(
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                color="w",
+                markerfacecolor=colors[idx],
+                markeredgecolor="black",
+                markersize=8,
+                label=label,
+                linestyle="None",
+            )
+        )
+
+    ax_v.legend(
+        handles=legend_elements,
+        fontsize=10,
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        frameon=False,
+    )
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_eigenbench_plot(
+    model_names: list[str],
+    eigentrust_elo: np.ndarray,
+    save_path: str,
+    *,
+    title: str = "EigenBench Elo Scores",
+    color: str = "#377eb8",
+    figsize=(15, 7),
+):
+    """Save EigenBench Elo plot sorted highest -> lowest with model labels."""
+
+    if eigentrust_elo is None:
+        raise ValueError("eigentrust_elo is required.")
+
+    scores = np.asarray(eigentrust_elo, dtype=float).reshape(-1)
+    if scores.size == 0:
+        raise ValueError("eigentrust_elo is empty.")
+
+    n = min(len(model_names), scores.size)
+    labels = list(model_names[:n])
+    scores = scores[:n]
+
+    order = np.argsort(-scores)  # highest to lowest
+    scores_sorted = scores[order]
+    labels_sorted = [labels[i] for i in order]
+
+    x_pos = np.arange(n)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.scatter(
+        x_pos,
+        scores_sorted,
+        color=color,
+        s=90,
+        marker="o",
+        edgecolors="#FFFFFF",
+        linewidths=1.2,
+        zorder=3,
+    )
+    ax.plot(x_pos, scores_sorted, color=color, alpha=0.35, linewidth=1.2, zorder=2)
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(labels_sorted, rotation=45, ha="right", fontsize=12)
+    ax.set_ylabel("EigenBench Elo Score", fontsize=13)
+    ax.set_title(title, fontsize=16, pad=10)
+
+    y_min = float(np.min(scores_sorted))
+    y_max = float(np.max(scores_sorted))
+    margin = max(5.0, (y_max - y_min) * 0.08)
+    ax.set_ylim(y_min - margin, y_max + margin)
+
+    ax.grid(True, alpha=0.3)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_bootstrap_plot(summary_rows: list[dict], path: Path, *, title: str) -> None:
+    """Save bootstrap Elo means and their percentile intervals."""
+    labels = [row["model_name"] for row in summary_rows]
+    means = np.array([row["elo_mean"] for row in summary_rows])
+    lower = np.array([row["elo_ci_lower"] for row in summary_rows])
+    upper = np.array([row["elo_ci_upper"] for row in summary_rows])
+    x = np.arange(len(summary_rows))
+    fig, ax = plt.subplots(figsize=(max(10, len(summary_rows) * 0.45), 6))
+    # The mean can fall outside its percentile interval, so draw the interval directly.
+    ax.vlines(x, lower, upper, color="C0")
+    ax.hlines(np.concatenate([lower, upper]), np.concatenate([x, x]) - 0.1,
+              np.concatenate([x, x]) + 0.1, color="C0")
+    ax.plot(x, means, "o", color="C0")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_ylabel("EigenBench Elo")
+    ax.set_title(title)
+    ax.grid(True, axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
