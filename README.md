@@ -488,21 +488,14 @@ Default locations inside the run folder:
 
 ## Repository layout
 
-Run specs configure what to collect. Inspect runs the tasks and exports judgment
-records. Analysis reads those records and publishing stages the resulting run.
-
-| Directory | Purpose |
+| Path | What lives here |
 | --- | --- |
-| `eigenbench/config/` | Load run specs, datasets, and constitutions. |
-| `eigenbench/protocol/` | Prompts, verdict parsing, and judgment schedules for direct ratings, pairwise comparisons, and extensions. |
-| `eigenbench/analysis/` | Fit comparison models and compute trust, rankings, bootstrap intervals, and plots. |
-| `eigenbench/records.py` | Read and write judgment records in JSON and JSONL. |
-| `eigenbench/inspect/` | Native task implementations, provider routing, collection, and log export. |
-| `eigenbench/run.py`, `score.py`, `publish.py` | Run, score, and publish an evaluation. |
-| `scripts/` | Run, score, extension, publication, and preparation commands. |
-| `inspect_pipeline/`, `pipeline/` | Native file-based tasks, historical Inspect registrations, and compatibility imports used by existing consumers. |
-| `runs/`, `data/` | Runnable specs and benchmark data. |
-| `tests/` | Configuration, protocol, analysis, Inspect integration, and workflow suites. |
+| `pipeline/config/` | Run specs, datasets, and constitutions. |
+| `pipeline/protocol/` | Prompts, verdict parsing, and schedules for direct ratings, pairwise comparisons, and extensions. |
+| `pipeline/records.py`, `pipeline/analysis/` | The judgment record format and the code that turns those records into trust scores and rankings. |
+| `inspect_pipeline/` | Native Inspect tasks, solvers, scorers, model routing, and log export. The `collection/` directory runs full panels and extensions. |
+| `scripts/` | Commands to run, extend, export, and publish evaluations. |
+| `runs/`, `data/`, `tests/` | Runnable specs, benchmark inputs, and tests grouped by behavior. |
 
 ## Citation
 
