@@ -29,6 +29,7 @@ from eigenbench.inspect.context import (
 from eigenbench.inspect.direct_rating import (
     _edge_sample_id, _samples_view, build_direct_rating_task, build_edge_samples,
 )
+from inspect_pipeline.metrics import panel_scorer as panel_scorer
 from inspect_pipeline.phases import direct_rating_scorer as direct_rating_scorer
 
 @task

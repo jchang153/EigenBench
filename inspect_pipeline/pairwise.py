@@ -52,7 +52,10 @@ def eigenbench_pairwise(
     ``--model`` joins the panel as one more judge and evaluee.
     """
 
-    return build_pairwise_eval_task(spec, models=models, cache=cache, write_artifacts=write_artifacts)
+    return build_pairwise_eval_task(
+        spec, models=models, cache=cache, write_artifacts=write_artifacts,
+        registrations=(pairwise_solver, pairwise_choice_scorer),
+    )
 
 
 @solver

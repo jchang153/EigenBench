@@ -288,12 +288,6 @@ def extend_run(
 
     The legacy positional (spec, nickname, reference) call remains supported.
     """
-    from inspect_ai import eval as inspect_eval
-
-    from eigenbench.inspect.coverage import planned_from_edges, record_collection
-    from .direct_rating import eval_kwargs, log_names, record_refusal
-    from ..export import records_from_log, write_evaluations_atomic, write_inspect_run_info
-
     if new_model is not None:
         if new_models is not None or model_ref is None:
             raise ValueError("supply either new_model/model_ref or new_models")
@@ -308,6 +302,13 @@ def extend_run(
     print(json.dumps(summary, indent=2))
     if dry_run:
         return summary
+
+    from inspect_ai import eval as inspect_eval
+
+    from ..coverage import planned_from_edges, record_collection
+    from ..export import records_from_log, write_evaluations_atomic, write_inspect_run_info
+    from .direct_rating import eval_kwargs, log_names, record_refusal
+
     inspect_cfg = spec["collection"].get("inspect", {}) or {}
     log_dir = Path(inspect_cfg.get("log_dir") or "inspect_logs")
     if not log_dir.is_absolute():

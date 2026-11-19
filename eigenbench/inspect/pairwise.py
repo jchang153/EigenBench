@@ -8,7 +8,7 @@ from typing import Callable
 from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser, Model
-from inspect_ai.scorer import Score, Target
+from inspect_ai.scorer import Score, Scorer, Target
 from inspect_ai.solver import Generate, Solver, TaskState
 
 from eigenbench.protocol.pairwise import (
@@ -355,6 +355,7 @@ def build_pairwise_task(
     context: dict | None = None,
     samples: list[Sample] | None = None,
     name: str | None = None,
+    registrations: tuple[Callable[..., Solver], Callable[..., Scorer]] | None = None,
 ) -> Task:
     """Build the initial task or a phased judge's share of its samples.
 
@@ -382,7 +383,11 @@ def build_pairwise_task(
         samples = pairwise_comparison_samples(comparisons, cached=ctx["seed"])
 
     from inspect_pipeline.metrics import panel_scorer
-    from inspect_pipeline.pairwise import pairwise_choice_scorer, pairwise_solver
+
+    if registrations is None:
+        from inspect_pipeline.pairwise import pairwise_choice_scorer, pairwise_solver
+    else:
+        pairwise_solver, pairwise_choice_scorer = registrations
 
     from .metrics import analysis_config
     config = (analysis_config(ctx, planned=len(comparisons), write_artifacts=write_artifacts)
@@ -422,6 +427,7 @@ def build_pairwise_task(
 def build_pairwise_eval_task(
     spec: str,
     *,
+    registrations: tuple[Callable[..., Solver], Callable[..., Scorer]],
     models: dict[str, object] | None = None,
     cache: bool | None = None,
     write_artifacts: bool = False,
@@ -444,7 +450,10 @@ def build_pairwise_eval_task(
     # One task serves the whole panel concurrently.
     check_distinct_local_servers(models if models is not None
                                  else load_run_spec(resolve_spec_ref(spec))[0]["models"])
-    return build_pairwise_task(spec, models=models, cache=cache, write_artifacts=write_artifacts)
+    return build_pairwise_task(
+        spec, models=models, cache=cache, write_artifacts=write_artifacts,
+        registrations=registrations,
+    )
 
 
 # Extensions

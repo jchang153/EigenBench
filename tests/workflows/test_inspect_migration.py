@@ -103,6 +103,17 @@ assert log.status == "success", log.error
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("module", ["inspect_pipeline.collect", "pipeline.config"])
+def test_legacy_import_from_native_task_directory(module):
+    pythonpath = os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH"))))
+    result = subprocess.run(
+        [sys.executable, "-c", "import importlib, sys; importlib.import_module(sys.argv[1])", module],
+        cwd=ROOT / "inspect_pipeline", env={**os.environ, "PYTHONPATH": pythonpath},
+        text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("script", ["run.py", "run_inspect.py"])
 @pytest.mark.parametrize("mode", ["direct_rating", "pairwise_btd"])
 @pytest.mark.parametrize("phased", [False, True])
