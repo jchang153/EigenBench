@@ -103,7 +103,7 @@ assert log.status == "success", log.error
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("module", ["inspect_pipeline.collect", "pipeline.config"])
+@pytest.mark.parametrize("module", ["inspect_pipeline.collect", "pipeline.config", "scripts.run_train"])
 def test_legacy_import_from_native_task_directory(module):
     pythonpath = os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH"))))
     result = subprocess.run(
