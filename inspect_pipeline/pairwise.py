@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Inspect loads task files outside their package.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
+if sys.path[:1] != [str(_REPO_ROOT)]:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from typing import Callable  # noqa: E402

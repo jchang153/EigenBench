@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Native Inspect loads task files outside their package.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
+if sys.path[:1] != [str(_REPO_ROOT)]:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from inspect_ai import Task, task

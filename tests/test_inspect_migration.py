@@ -82,6 +82,27 @@ def mock(nick):
     return path
 
 
+@pytest.mark.parametrize(("mode", "task"),
+                         [("direct_rating", "eigenbench.py@eigenbench"),
+                          ("pairwise_btd", "pairwise.py@eigenbench_pairwise")])
+def test_native_task_path_with_checkout_already_on_pythonpath(tmp_path, mode, task):
+    spec = _mock_spec(tmp_path, mode, False)
+    pythonpath = os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH"))))
+    command = """
+import sys
+from inspect_ai import eval
+
+task, spec, log_dir = sys.argv[1:]
+[log] = eval(task, task_args={"spec": spec}, display="none", log_dir=log_dir)
+assert log.status == "success", log.error
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", command, f"inspect_pipeline/{task}", str(spec), str(tmp_path / "logs")],
+        cwd=ROOT, env={**os.environ, "PYTHONPATH": pythonpath}, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("script", ["run.py", "run_inspect.py"])
 @pytest.mark.parametrize("mode", ["direct_rating", "pairwise_btd"])
 @pytest.mark.parametrize("phased", [False, True])
