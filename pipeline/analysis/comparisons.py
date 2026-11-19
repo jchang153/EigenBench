@@ -8,7 +8,7 @@ import json
 import re
 
 
-from eigenbench.protocol.pairwise import _contiguous_prefix_len, _extract_valid_criterion_scores
+from pipeline.protocol.pairwise import _contiguous_prefix_len, _extract_valid_criterion_scores
 
 
 def extract_comparisons_with_ties_criteria(

@@ -8,7 +8,7 @@ First collect runs/example_inspect/spec.py. Then:
 from copy import deepcopy
 from pathlib import Path
 
-from eigenbench.config import load_run_spec
+from pipeline.config import load_run_spec
 
 # Reuse the original model/evaluation settings. Redirect run-relative dataset
 # and output paths below; the constitution path is relative to the repository.

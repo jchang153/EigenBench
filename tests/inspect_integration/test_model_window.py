@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from pipeline import model_window
-from pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
+from inspect_pipeline import model_window
+from inspect_pipeline.model_window import DEFAULT_MAX_MODEL_LEN, resolve_max_model_len
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def test_shorter_window_wins_and_float_windows_are_read(configs):
 
 def test_mpt_window_caps_inspect_models(configs):
     from transformers import MptConfig
-    from inspect_pipeline.model_mapping import to_inspect_model
+    from inspect_pipeline.models import to_inspect_model
 
     model_id = "mosaicml/mpt-7b-instruct"
     configs[(model_id, None)] = MptConfig(max_seq_len=2048)

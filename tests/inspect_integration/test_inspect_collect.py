@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inspect_pipeline.model_mapping import to_inspect_model  # noqa: E402
+from inspect_pipeline.models import to_inspect_model  # noqa: E402
 
 NICKS = ["alpha", "beta", "gamma"]
 NUM_CRITERIA = 3
@@ -235,7 +235,7 @@ def test_programmatic_run_and_analysis(run_dir):
     tmp_path, write_spec = run_dir
     spec_path = write_spec(sampler_mode="balanced_unique_judge")
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 
     records = collect_direct_ratings_inspect(str(spec_path))
 
@@ -256,7 +256,7 @@ def test_programmatic_run_and_analysis(run_dir):
     # rerun short-circuits on the completed file
     assert len(collect_direct_ratings_inspect(str(spec_path))) == len(records)
 
-    from pipeline.train.direct_analysis import run_direct_analysis
+    from pipeline.analysis.direct_rating import run_direct_analysis
 
     run_direct_analysis(
         records=records,
@@ -275,7 +275,7 @@ def test_programmatic_run_and_analysis(run_dir):
 
 
 def test_model_mapping(monkeypatch):
-    from inspect_pipeline import model_mapping
+    from inspect_pipeline import models as model_mapping
 
     monkeypatch.setattr(model_mapping, "_root_adapter_base", lambda *_: None)
     monkeypatch.setattr(model_mapping, "resolve_max_model_len", lambda _model, _revision, cap: cap)
@@ -309,8 +309,8 @@ def test_model_mapping(monkeypatch):
 
 def test_vllm_phasing_follows_server_ownership(monkeypatch):
     from inspect_ai.model import get_model
-    from inspect_pipeline.eigenbench import has_local_models
-    from inspect_pipeline.model_mapping import check_distinct_local_servers
+    from inspect_pipeline.context import has_local_models
+    from inspect_pipeline.models import check_distinct_local_servers
 
     monkeypatch.delenv("VLLM_BASE_URL", raising=False)
     name = "vllm/org/test-base"
@@ -329,8 +329,8 @@ def test_vllm_phasing_follows_server_ownership(monkeypatch):
 
 def test_vllm_resolver_refuses_previously_connected_base(monkeypatch):
     from inspect_ai.model import get_model
-    from inspect_pipeline.eigenbench import _model_resolver
-    from inspect_pipeline.model_mapping import InspectModelRef, model_identity
+    from inspect_pipeline.context import _model_resolver
+    from inspect_pipeline.models import InspectModelRef, model_identity
 
     name = "vllm/org/shared-endpoint-test"
     url = "http://user:secret@vm-b/v1"
@@ -350,8 +350,8 @@ def test_vllm_resolver_refuses_previously_connected_base(monkeypatch):
 
 def test_direct_estimate_counts_the_actual_providers(run_dir, monkeypatch):
     from pipeline.config import load_run_spec
-    from inspect_pipeline.collect import estimate_direct_calls_for_spec
-    import inspect_pipeline.model_mapping as mapping
+    from inspect_pipeline.collection.direct_rating import estimate_direct_calls_for_spec
+    import inspect_pipeline.models as mapping
 
     folder, write_spec = run_dir
     spec, _ = load_run_spec(str(write_spec()))
@@ -385,7 +385,8 @@ def test_default_spec_builds_without_arguments(monkeypatch):
     """`inspect eval inspect_pipeline/eigenbench.py` needs no -T spec."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-key")
     import pipeline.config.airisk as airisk
-    from inspect_pipeline.eigenbench import DEFAULT_SPEC, _run_context, eigenbench
+    from inspect_pipeline.context import DEFAULT_SPEC, _run_context
+    from inspect_pipeline.eigenbench import eigenbench
 
     scenarios = [f"Dilemma {i}" for i in range(150)]
     monkeypatch.setattr(airisk, "load_airisk_scenarios", lambda: scenarios)
@@ -401,7 +402,7 @@ def test_default_spec_builds_without_arguments(monkeypatch):
     import contextvars
     from inspect_ai.model import get_model
     from inspect_ai.model._model import init_active_model
-    from inspect_pipeline.eigenbench import with_eval_model
+    from inspect_pipeline.context import with_eval_model
 
     def panel_with(model_name):
         def run():
@@ -454,8 +455,8 @@ def test_matching_eval_model_uses_requested_outputs(run_dir):
 
 def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
     from inspect_ai.model import get_model
-    import eigenbench.inspect.context as task_module
-    import inspect_pipeline.model_mapping as mapping
+    import inspect_pipeline.context as task_module
+    import inspect_pipeline.models as mapping
 
     monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
 
@@ -473,7 +474,7 @@ def test_eval_model_rejects_conflicting_local_settings(monkeypatch):
 
 def test_eval_model_keeps_panel_members_when_nicknames_collide(monkeypatch):
     from inspect_ai.model import get_model
-    import eigenbench.inspect.context as task_module
+    import inspect_pipeline.context as task_module
 
     under_test = get_model("mockllm/model", memoize=False)
     monkeypatch.setattr(task_module, "_eval_model", lambda: under_test)
@@ -529,8 +530,8 @@ def test_eval_model_joins_the_panel(run_dir):
 
 
 def test_local_models_preserve_vllm_defaults_and_overrides(monkeypatch):
-    import inspect_pipeline.model_mapping as mapping
-    from inspect_pipeline.model_mapping import VLLM_SERVER_DEFAULTS
+    import inspect_pipeline.models as mapping
+    from inspect_pipeline.models import VLLM_SERVER_DEFAULTS
 
     monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
 
@@ -581,7 +582,7 @@ def test_phased_matches_single_task(run_dir):
     tmp_path, write_spec = run_dir
     spec_path = write_spec(sampler_mode="all_to_all")
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 
     single = collect_direct_ratings_inspect(str(spec_path))
 
@@ -627,7 +628,7 @@ def test_direct_extension_covers_each_scenario_once(
 ):
     from collections import Counter
 
-    from inspect_pipeline.extend import plan_addition, projected_counts
+    from pipeline.protocol.extension import plan_addition, projected_counts
     from pipeline.protocol.direct_rating import build_direct_assignments
 
     names = [f"model_{i}" for i in range(8)]
@@ -675,11 +676,9 @@ def test_extend_adds_a_model(run_dir, monkeypatch):
     import numpy as np
     from inspect_ai.model import ModelOutput, get_model
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from inspect_pipeline.extend import (
-        count_matrix, detect_mode, extend_run, model_names, plan_addition,
-        projected_counts,
-    )
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
+    from pipeline.protocol.extension import count_matrix, detect_mode, model_names, plan_addition, projected_counts
 
     tmp_path, write_spec = run_dir
     spec_path = write_spec(sampler_mode="all_to_all")
@@ -746,9 +745,8 @@ def test_pairwise_extend_collects(tmp_path, monkeypatch, new_names, extra_count,
     import numpy as np
     from inspect_ai.model import ModelOutput, get_model
 
-    from inspect_pipeline.extend import (
-        PAIRWISE, count_matrix, extend_run, model_names, plan_addition,
-    )
+    from inspect_pipeline.collection.extension import extend_run
+    from pipeline.protocol.extension import PAIRWISE, count_matrix, model_names, plan_addition
 
     names = ["a", "b", "c"]
     scenarios = [f"Scenario {i}: what do you do?" for i in range(6)]
@@ -830,7 +828,7 @@ RUN_SPEC = {{
     if recurring:
         # The plan asks for its first comparison twice.
         import dataclasses
-        from eigenbench.protocol import extension as extend_module
+        from pipeline.protocol import extension as extend_module
 
         plan_pairwise = extend_module._plan_pairwise
         def with_repeat(plan, *args, **kwargs):
@@ -875,8 +873,8 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
     """A new spec extends source records without modifying the source run."""
     from collections import Counter
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from inspect_pipeline.extend import extend_run
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
     from inspect_pipeline.export import export_log
 
     tmp_path, write_spec = run_dir
@@ -914,7 +912,7 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
         rows, _ = export_log(log, evaluations_path=output, append=True)
         summary = {"collected": len(rows)}
     else:
-        from inspect_pipeline.extend import extend_run
+        from inspect_pipeline.collection.extension import extend_run
         summary = extend_run(str(spec))
     combined = [json.loads(line) for line in output.read_text().splitlines()]
     assert combined[:len(original)] == original
@@ -989,8 +987,8 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
 def test_joint_model_planner_and_pairwise_analysis():
     from collections import Counter
 
-    from inspect_pipeline.extend import plan_additions, projected_counts
-    from pipeline.utils.comparisons import handle_inconsistencies_with_ties_criteria
+    from pipeline.protocol.extension import plan_additions, projected_counts
+    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     names = ["a", "b", "c"]
     records = [
@@ -1016,8 +1014,9 @@ def test_joint_model_planner_and_pairwise_analysis():
 
 
 def test_extension_rejects_incompatible_inputs(run_dir):
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from inspect_pipeline.extend import extend_run, plan_additions
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.extension import extend_run
+    from pipeline.protocol.extension import plan_additions
 
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
@@ -1038,7 +1037,7 @@ def test_extension_rejects_incompatible_inputs(run_dir):
 @pytest.mark.parametrize("new_count", [2, 12])
 def test_many_new_models_share_one_population(include_self, new_count):
     from collections import Counter
-    from inspect_pipeline.extend import plan_additions, projected_counts
+    from pipeline.protocol.extension import plan_additions, projected_counts
 
     names = ["a", "b", "c"]
     records = [
@@ -1078,10 +1077,11 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
     import re
     import runpy
     from contextlib import contextmanager
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from inspect_pipeline.extend import extend_run, extend_model
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import extend_model
+    from inspect_pipeline.collection.extension import extend_run
     from inspect_pipeline.export import export_log
-    import inspect_pipeline.extension_phased as phased
+    import inspect_pipeline.collection.extension_phased as phased
 
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
@@ -1157,8 +1157,8 @@ def test_phased_extension_matches_single_and_closes_models(run_dir, monkeypatch)
 
 def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clients(monkeypatch):
     import inspect_ai
-    from eigenbench.inspect import context as inspect_context
-    from inspect_pipeline.execution import eval_phase, model_phase
+    from inspect_pipeline import context as inspect_context
+    from inspect_pipeline.collection.phased import eval_phase, model_phase
 
     context = {"models": {"a": "inspect:mockllm/model", "b": "inspect:mockllm/other"}}
     clients, closed = [], []
@@ -1194,8 +1194,8 @@ def test_single_model_phase_rejects_cross_model_resolution_and_closes_owned_clie
 
 
 def test_extension_phasing_defaults_to_local_models(monkeypatch):
-    import inspect_pipeline.model_mapping as mapping
-    from inspect_pipeline.extend import _use_phased_extension
+    import inspect_pipeline.models as mapping
+    from inspect_pipeline.collection.extension import _use_phased_extension
 
     monkeypatch.setattr(mapping, "_root_adapter_base", lambda repo_id, revision: None)
     prepared = {"spec": {"collection": {}}, "models": {"local": "hf_local:org/model"}}
@@ -1211,8 +1211,9 @@ def test_extension_phasing_defaults_to_local_models(monkeypatch):
 def test_extension_keeps_model_identities_across_exports(run_dir, layout):
     from inspect_ai import eval as inspect_eval
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from inspect_pipeline.extend import extend_model, extend_run
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from inspect_pipeline.extend import extend_model
+    from inspect_pipeline.collection.extension import extend_run
     from inspect_pipeline.export import export_log
 
     tmp_path, write_spec = run_dir
@@ -1262,7 +1263,7 @@ def test_extension_keeps_model_identities_across_exports(run_dir, layout):
 def test_appending_an_inspect_log_preserves_model_provenance(run_dir):
     from inspect_ai import eval as inspect_eval
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     from inspect_pipeline.eigenbench import eigenbench
     from inspect_pipeline.export import export_log, records_fingerprint
 
@@ -1295,7 +1296,7 @@ def test_appending_an_inspect_log_preserves_model_provenance(run_dir):
 def test_cli_refuses_a_saved_file_with_another_panels_scenario(run_dir):
     import json as _json
 
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     from scripts.run import main
 
     tmp_path, write_spec = run_dir

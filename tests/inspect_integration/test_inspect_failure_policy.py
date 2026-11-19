@@ -116,7 +116,7 @@ def counts(report):
 
 
 def collect(spec_path):
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 
     return collect_direct_ratings_inspect(spec_path)
 
@@ -253,7 +253,7 @@ def test_failed_responses_stop_the_run(write_spec, tmp_path, policy, phased):
 
 @pytest.mark.parametrize("policy", ["strict", "omit_invalid_judgments"])
 def test_phased_run_missing_a_judge_log_is_refused(write_spec, tmp_path, monkeypatch, policy):
-    import inspect_pipeline.collect as collect_module
+    import inspect_pipeline.collection.direct_rating as collect_module
 
     run_phased = collect_module._run_phased
     monkeypatch.setattr(collect_module, "_run_phased", lambda *args: run_phased(*args)[:-1])
@@ -264,7 +264,7 @@ def test_phased_run_missing_a_judge_log_is_refused(write_spec, tmp_path, monkeyp
 
 @pytest.mark.parametrize("policy", ["strict", "omit_invalid_judgments"])
 def test_single_task_log_short_of_the_plan_is_refused(write_spec, tmp_path, monkeypatch, policy):
-    import inspect_pipeline.collect as collect_module
+    import inspect_pipeline.collection.direct_rating as collect_module
 
     estimate = collect_module.write_call_estimate
     monkeypatch.setattr(collect_module, "write_call_estimate",
@@ -294,7 +294,7 @@ def test_refused_extension_is_added_to_the_report(write_spec, tmp_path, fault):
     import re
 
     from inspect_ai.model import ModelOutput, get_model
-    from inspect_pipeline.extend import extend_run
+    from inspect_pipeline.collection.extension import extend_run
 
     spec = write_spec(policy="strict")
     base = collect(spec)
@@ -488,7 +488,7 @@ def test_native_retry_counts_reused_scores_and_persistent_omission(write_spec, t
 def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeypatch, policy):
     from inspect_ai import eval as inspect_eval
     from inspect_ai.log import read_eval_log
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     from inspect_pipeline.eigenbench import eigenbench
 
     spec = Path(write_spec(fault="rating", policy=policy if policy != "interrupted" else "strict"))
@@ -579,7 +579,7 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
 
 
 def test_completed_resume_validates_prompts_and_rebuilds_analysis(write_spec, tmp_path, monkeypatch):
-    from eigenbench.inspect import provenance
+    from inspect_pipeline import provenance
     from scripts.run import main
 
     spec = Path(write_spec(policy="strict"))
@@ -636,7 +636,7 @@ def test_fatal_judgment_error_never_produces_rankings_or_artifacts(write_spec, t
 @pytest.mark.parametrize("phased", [False, True])
 def test_direct_collection_only_skips_panel_computation(write_spec, tmp_path, monkeypatch, phased):
     from inspect_ai.log import read_eval_log
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     import inspect_pipeline.metrics as metrics
 
     def forbidden(*args, **kwargs):

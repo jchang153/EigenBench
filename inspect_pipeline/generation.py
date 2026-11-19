@@ -5,26 +5,12 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, Sequence
 
-from inspect_ai.model import (
-    CachePolicy,
-    ChatMessageSystem,
-    ChatMessageUser,
-    GenerateConfig,
-    Model,
-    ModelOutput,
-)
-from inspect_ai.solver import Generate, Solver, TaskState
-
-from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
+from inspect_ai.model import CachePolicy, GenerateConfig, Model, ModelOutput
 
 STORE_RESPONSE = "eigenbench:response"
 
-
-# Truncated and filtered completions remain retryable.
 _RETRYABLE_STOP_REASONS = {"max_tokens", "model_length", "content_filter"}
 
-
-# Supported collection.failure_policy values.
 FAILURE_POLICIES = ("strict", "omit_invalid_judgments")
 
 
@@ -156,40 +142,3 @@ def phase_config(phase_cfg: dict, model: str | None = None) -> GenerateConfig:
         max_tokens=int(cfg["max_tokens"]),
         temperature=float(cfg["temperature"]),
     )
-
-
-def response_only_solver(
-    *,
-    resolve_model: Callable[[str], Model],
-    generation_cfg: dict,
-    max_attempts: int,
-    cache_enabled: bool,
-    cache_scope: Callable[[dict], str] | None = None,
-) -> Solver:
-    """Generate one evaluee response per sample, and nothing else."""
-
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        md = state.metadata
-        s_idx = int(md["scenario_index"])
-        eval_nick = md["eval_nick"]
-        config = phase_config(generation_cfg, eval_nick)
-        messages = [
-            ChatMessageSystem(content=RESPONSE_SYSTEM_MESSAGE),
-            ChatMessageUser(content=md["scenario"]),
-        ]
-        output = await generate_validated(
-            resolve_model(eval_nick),
-            messages,
-            config=config,
-            max_attempts=max_attempts,
-            cache_enabled=cache_enabled,
-            validator=None,
-            identity=f"response scenario_index={s_idx} evaluee={eval_nick}",
-            cache_scope=cache_scope(md) if cache_scope else None,
-        )
-        state.messages = messages + [output.message]
-        state.output = output
-        state.store.set(STORE_RESPONSE, output.completion)
-        return state
-
-    return solve

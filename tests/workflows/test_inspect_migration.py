@@ -103,15 +103,14 @@ assert log.status == "success", log.error
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("module", ["inspect_pipeline.collect", "pipeline.config", "scripts.run_train"])
-def test_legacy_import_from_native_task_directory(module):
-    pythonpath = os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH"))))
-    result = subprocess.run(
-        [sys.executable, "-c", "import importlib, sys; importlib.import_module(sys.argv[1])", module],
-        cwd=ROOT / "inspect_pipeline", env={**os.environ, "PYTHONPATH": pythonpath},
-        text=True, capture_output=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+def test_hosted_worker_patches_the_active_collection_and_scoring_modules():
+    import inspect_pipeline.collect as collect
+    from inspect_pipeline.collection import direct_rating as collection
+    from pipeline.analysis import direct_rating as analysis
+    from pipeline.train import direct_analysis
+
+    assert collect is collection
+    assert direct_analysis is analysis
 
 
 @pytest.mark.parametrize("script", ["run.py", "run_inspect.py"])
@@ -209,7 +208,7 @@ def test_historical_records_keep_frozen_analysis_and_bootstrap(tmp_path, mode, n
 
 
 def test_extension_dispatch_uses_the_inspect_extension(tmp_path, monkeypatch):
-    from eigenbench.inspect.collection import extension
+    from inspect_pipeline.collection import extension
     from scripts.run import main
     path = tmp_path / "spec.py"
     path.write_text("RUN_SPEC = {'extension': {'from_evaluations': 'old.jsonl'}, "
@@ -230,7 +229,7 @@ def test_extension_dispatch_uses_the_inspect_extension(tmp_path, monkeypatch):
 def test_runner_preserves_analysis_ownership(tmp_path, monkeypatch, mode, training_enabled,
                                             space_upload, artifacts_written, expect_scoring,
                                             expect_training):
-    from inspect_pipeline import collect, pairwise_collect
+    from inspect_pipeline.collection import direct_rating as collect, pairwise as pairwise_collect
     from scripts import run as runner, run_train
     import tempfile
 
@@ -248,7 +247,7 @@ def test_runner_preserves_analysis_ownership(tmp_path, monkeypatch, mode, traini
                    "secret": "offline-test-only", "git_commit": "test"},
     }
     monkeypatch.setattr(runner, "load_run_spec", lambda _: (spec, tmp_path))
-    monkeypatch.setattr(runner, "_write_space_safe_spec", lambda _: str(tmp_path / "space_spec.py"))
+    monkeypatch.setattr(runner, "write_space_safe_spec", lambda _: str(tmp_path / "space_spec.py"))
     named_temporary_file = tempfile.NamedTemporaryFile
     monkeypatch.setattr(tempfile, "NamedTemporaryFile",
                         lambda *args, **kwargs: named_temporary_file(*args, dir=tmp_path, **kwargs))

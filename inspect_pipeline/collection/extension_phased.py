@@ -10,7 +10,7 @@ from inspect_ai.dataset import MemoryDataset, Sample
 from ..context import _run_context, sanitize
 from .phased import eval_phase, model_phase
 from ..export import records_from_log
-from eigenbench.protocol.extension import DIRECT, response_index
+from pipeline.protocol.extension import DIRECT, response_index
 
 from .extension import _extension_task
 from ..pairwise import _group_responses, records_from_pairwise_log

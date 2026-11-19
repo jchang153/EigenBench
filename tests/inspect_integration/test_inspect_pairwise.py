@@ -25,8 +25,6 @@ from inspect_ai import eval as inspect_eval  # noqa: E402
 from inspect_ai.model import ModelOutput, ModelUsage, get_model  # noqa: E402
 
 from inspect_pipeline.pairwise import (  # noqa: E402
-    build_comparison_user,
-    build_reflection_user,
     eigenbench_pairwise,
     eigenbench_pairwise_extend,
     pairwise_cache_scope,
@@ -35,7 +33,8 @@ from inspect_pipeline.pairwise import (  # noqa: E402
     parse_pairwise_choices,
     records_from_pairwise_log,
 )
-from inspect_pipeline.pairwise_plan import (  # noqa: E402
+from pipeline.protocol.pairwise import build_comparison_user, build_reflection_user  # noqa: E402
+from pipeline.protocol.pairwise_plan import (  # noqa: E402
     PAIRWISE_GENERATION_DEFAULTS,
     PairwiseGroup,
     pairwise_call_counts,
@@ -100,7 +99,7 @@ def _with_global_seed(seed, fn):
 
 @pytest.mark.parametrize("num_models", [2, 3, 4, 5, 7])
 def test_samplers_replay_the_original_rng_stream(num_models):
-    """Same draws and the same RNG consumption as pipeline/eval/samplers.py,
+    """Same draws and RNG consumption as the original samplers,
     including the discarded padding sample inside random_groups."""
 
     from pipeline.protocol import samplers
@@ -241,7 +240,7 @@ def test_generation_profile_is_the_original_and_ignores_direct_settings():
 
 def test_prompts_are_byte_identical_to_the_original_collector():
     from pipeline.protocol.pairwise import build_comparison_prompt, build_reflection_prompt
-    from inspect_pipeline.phases import RESPONSE_SYSTEM_MESSAGE
+    from pipeline.protocol import RESPONSE_SYSTEM_MESSAGE
 
     assert build_reflection_user("C", "S", "R") == REFLECTION_USER_GOLDEN
     assert build_comparison_user("C", "S", "R1", "F1", "R2", "F2") == COMPARISON_USER_GOLDEN
@@ -252,7 +251,7 @@ def test_prompts_are_byte_identical_to_the_original_collector():
 
 
 def test_choice_parser_matches_the_analysis_extractor():
-    from pipeline.utils import extract_comparisons_with_ties_criteria
+    from pipeline.analysis.comparisons import extract_comparisons_with_ties_criteria
 
     cases = {
         "<criterion_1_choice>0</criterion_1_choice><criterion_2_choice>2</criterion_2_choice>":
@@ -366,7 +365,7 @@ def _expected_records(groups, cached=None):
 
 
 def _plan_for(spec_path, nicks=NICKS):
-    from inspect_pipeline.eigenbench import _run_context
+    from inspect_pipeline.context import _run_context
 
     ctx = _run_context(spec_path, dict.fromkeys(nicks, "inspect:mockllm/model"),
                        build_assignments=False)
@@ -403,7 +402,7 @@ def test_fresh_task_reproduces_golden_records_and_prompt_bytes(tmp_path):
                                                   first["eval1 response"]) for c in calls)
 
     # Ties survive export into the BTD comparison rows.
-    from pipeline.utils import extract_comparisons_with_ties_criteria
+    from pipeline.analysis.comparisons import extract_comparisons_with_ties_criteria
 
     rows, _ = extract_comparisons_with_ties_criteria(records, num_criteria=2)
     ties = [r for r in rows if r[0] == 0 and r[-1] == 0]
@@ -563,7 +562,7 @@ def _pairwise_records(names, scenarios):
 
 
 def test_extension_uses_pair_groups_and_the_pairwise_profile(tmp_path):
-    from inspect_pipeline.extend import plan_addition
+    from pipeline.protocol.extension import plan_addition
 
     records = _pairwise_records(NICKS, SCENARIOS)
     plan = plan_addition(records, "d", seed=3)
@@ -600,7 +599,7 @@ def test_cache_scopes_name_each_unit():
 
 
 def test_extension_partition_groups_keep_the_planner_identity():
-    from inspect_pipeline.extend import plan_additions
+    from pipeline.protocol.extension import plan_additions
 
     records = _pairwise_records(NICKS, SCENARIOS)
     plan = plan_additions(records, ["d"], new_scenarios={2: "Scenario two"}, seed=3,

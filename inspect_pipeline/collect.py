@@ -1,7 +1,7 @@
-"""Compatibility module for eigenbench.inspect.collection.direct_rating."""
+"""The collection module patched by the ValueArena worker."""
 
 import sys
 
-from eigenbench.inspect.collection import direct_rating
+from .collection import direct_rating
 
 sys.modules[__name__] = direct_rating

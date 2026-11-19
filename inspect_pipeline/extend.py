@@ -1,27 +1,19 @@
-"""Native Inspect entry point for extending a saved EigenBench run."""
+"""Collect the additional judgments in an EigenBench extension spec."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# Inspect loads this file with its directory on sys.path. Prefer the package over
-# the neighboring eigenbench.py, including when the checkout is already on PYTHONPATH.
+# Inspect loads task files outside their package.
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
-if sys.path[:1] != [_REPO_ROOT]:
+if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from inspect_ai import Task, task
 
-from eigenbench.inspect.collection.extension import (
-    _use_phased_extension, build_extension_task, check_spec_covers, edge_samples, eigenbench_extend,
-    extend_run,
-)
-from eigenbench.protocol.extension import (
-    DIRECT, PAIRWISE, Edge, Plan, count_matrix, detect_mode, model_names, plan_addition,
-    plan_additions, projected_counts, response_index, scenarios_of,
-)
-from inspect_pipeline.phases import direct_rating_scorer as direct_rating_scorer
+from inspect_pipeline.collection.extension import _extension_task, _prepare_extension, _use_phased_extension
+from inspect_pipeline.models import check_distinct_local_servers
 
 
 @task
@@ -30,6 +22,16 @@ def extend_model(
     additional_scenarios: int | None = None,
 ) -> Task:
     """Collect an extension spec, with optional legacy single-model arguments."""
-    return build_extension_task(
-        spec, new_model=new_model, model_id=model_id, additional_scenarios=additional_scenarios,
+    if (new_model is None) != (model_id is None):
+        raise ValueError("new_model and model_id must be supplied together")
+    additions = {new_model: model_id} if new_model is not None else None
+    prepared = _prepare_extension(
+        spec, additions, additional_scenarios=additional_scenarios,
     )
+    if _use_phased_extension(prepared):
+        raise ValueError(
+            "this extension requires phased execution; use scripts/extend_run.py "
+            "instead of the native Inspect task"
+        )
+    check_distinct_local_servers(prepared["models"])
+    return _extension_task(prepared)

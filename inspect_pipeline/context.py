@@ -9,16 +9,17 @@ from pathlib import Path
 
 from inspect_ai.model import Model, ModelName, get_model
 
-from eigenbench.config import (
+from pipeline.config import (
     get_criteria_from_spec,
     load_dataset_scenarios_from_spec,
     load_run_spec,
     select_scenarios,
 )
-from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
-from eigenbench.config.generation import resolve_direct_generation_settings
-from eigenbench.protocol.direct_rating import build_direct_assignments, resolve_direct_sampling_settings
-from eigenbench.protocol.response_cache import cached_seed
+from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
+from pipeline.protocol.direct_rating import (
+    build_direct_assignments, resolve_direct_generation_settings, resolve_direct_sampling_settings,
+)
+from pipeline.protocol.response_cache import cached_seed
 
 from .generation import FAILURE_POLICIES
 from .models import (
@@ -29,7 +30,7 @@ from .models import (
     with_effective_vllm_revision,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_MAX_ATTEMPTS = 4
 DEFAULT_SPEC = "runs/default/spec.py"
@@ -174,7 +175,7 @@ def _run_context_from_spec(
     if is_direct:
         generation = resolve_direct_generation_settings(collection_cfg)
     else:
-        from eigenbench.protocol.pairwise_plan import resolve_pairwise_generation_settings
+        from pipeline.protocol.pairwise_plan import resolve_pairwise_generation_settings
         generation = resolve_pairwise_generation_settings(collection_cfg)
     assignments = []
     if is_direct:

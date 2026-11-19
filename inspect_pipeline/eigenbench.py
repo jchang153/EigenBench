@@ -3,10 +3,8 @@
     inspect eval inspect_pipeline/eigenbench.py -T spec=runs/my_run/spec.py
     inspect eval inspect_pipeline/eigenbench.py   # runs/default/spec.py
 
-One sample per directed judge->evaluee edge. The sampling plan, prompts, and
-rating validation come from ``pipeline.protocol.direct_rating``; export the
-resulting log to the legacy ``evaluations.jsonl`` with
-``scripts/export_evaluations.py``.
+Each sample is one judge rating one response. Export the log to
+``evaluations.jsonl`` with ``scripts/export_evaluations.py``.
 """
 
 from __future__ import annotations
@@ -14,23 +12,102 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Inspect loads this file with its directory on sys.path. Prefer the package over
-# the neighboring eigenbench.py, including when the checkout is already on PYTHONPATH.
+# Inspect loads task files outside their package.
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
-if sys.path[:1] != [_REPO_ROOT]:
+if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from inspect_ai import Task, task
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.viewer import TaskSamplesColumn, TaskSamplesSort, TaskSamplesView, ViewerConfig
 
-from eigenbench.inspect.context import (
-    DEFAULT_MAX_ATTEMPTS, DEFAULT_SPEC, _eval_model, _model_resolver, _run_context,
-    _run_context_from_spec, has_local_models, load_selection, resolve_spec_ref, sanitize, with_eval_model,
-)
-from eigenbench.inspect.direct_rating import (
-    _edge_sample_id, _samples_view, build_direct_rating_task, build_edge_samples,
-)
-from inspect_pipeline.metrics import panel_scorer as panel_scorer
-from inspect_pipeline.phases import direct_rating_scorer as direct_rating_scorer
+from inspect_pipeline.collection.phased import prepared_run_context
+from inspect_pipeline.context import DEFAULT_SPEC, _run_context, with_eval_model
+from inspect_pipeline.generation import ResponsePool
+from inspect_pipeline.metrics import analysis_config, panel_scorer
+from inspect_pipeline.models import check_distinct_local_servers
+from inspect_pipeline.phases import criterion_key, criterion_label, direct_rating_scorer, direct_rating_solver
+from inspect_pipeline.provenance import direct_resume_identity
+
+
+def build_edge_samples(assignments: list[dict]) -> list[Sample]:
+    """Expand assignments into one sample per directed edge.
+
+    ``edge_index`` preserves legacy record ordering through the log.
+    """
+
+    samples: list[Sample] = []
+    for assignment in assignments:
+        s_idx = int(assignment["scenario_index"])
+        for eval_idx, eval_nick in zip(
+            assignment["eval_idxs"], assignment["eval_nicks"]
+        ):
+            samples.append(
+                Sample(
+                    input=assignment["scenario"],
+                    id=_edge_sample_id(
+                        {
+                            "scenario_index": s_idx,
+                            "sampling_round": assignment.get("sampling_round", 0),
+                            "judge_nick": assignment["judge_nick"],
+                            "eval_nick": eval_nick,
+                        }
+                    ),
+                    metadata={
+                        "edge_index": len(samples),
+                        "scenario_index": s_idx,
+                        "scenario": assignment["scenario"],
+                        "judge_idx": int(assignment["judge_idx"]),
+                        "judge_nick": assignment["judge_nick"],
+                        "eval_idx": int(eval_idx),
+                        "eval_nick": eval_nick,
+                        "sampler_mode": assignment.get("sampler_mode"),
+                        "sampling_round": int(assignment.get("sampling_round", 0)),
+                        "group_index": int(assignment.get("group_index", 0)),
+                    },
+                )
+            )
+    return samples
+
+
+def _edge_sample_id(edge: dict) -> str:
+    return (
+        f"s{int(edge['scenario_index']):04d} r{int(edge.get('sampling_round', 0))} · "
+        f"{edge['judge_nick']} → {edge['eval_nick']}"
+    )
+
+
+def _samples_view(criteria: list[str]) -> TaskSamplesView:
+    scorer_name = "direct_rating_scorer"
+    return TaskSamplesView(
+        name="Judgments",
+        columns=[
+            TaskSamplesColumn(id="sampleId"),
+            TaskSamplesColumn(id="answer"),
+            TaskSamplesColumn.score(scorer_name, "mean"),
+            *[
+                TaskSamplesColumn.score(scorer_name, criterion_key(i))
+                for i in range(len(criteria))
+            ],
+            TaskSamplesColumn(id="input", visible=False),
+            TaskSamplesColumn(id="tokens", visible=False),
+        ],
+        # Weakest judgments first: the point of reading these is finding where a
+        # judge broke from the pack, not admiring the middle of the scale.
+        sort=[TaskSamplesSort.score(scorer_name, "mean", dir="asc")],
+        multiline=False,
+        compact_scores=True,
+        color_scales_enabled=True,
+        score_labels={
+            "mean": "Mean",
+            **{criterion_key(i): criterion_label(i, c) for i, c in enumerate(criteria)},
+        },
+        score_color_scales={
+            "mean": "good-high",
+            **{criterion_key(i): "good-high" for i in range(len(criteria))},
+        },
+    )
+
 
 @task
 def eigenbench(
@@ -55,7 +132,45 @@ def eigenbench(
     is the spec's models alone.
     """
 
-    return build_direct_rating_task(
-        spec, models=models, cache=cache, panel_metrics=panel_metrics,
-        write_artifacts=write_artifacts, resolved_sampler_seed=resolved_sampler_seed,
+    ctx = prepared_run_context(spec, models)
+    if ctx is None:
+        ctx = _run_context(spec, with_eval_model(spec, models), cache,
+                           resolved_sampler_seed=resolved_sampler_seed)
+    elif cache is not None:
+        ctx = {**ctx, "cache_enabled": bool(cache),
+               "meta": {**ctx["meta"], "cache_enabled": bool(cache)}}
+    if not ctx["is_direct"]:
+        raise ValueError(
+            "inspect_pipeline.eigenbench supports evaluation.mode='direct_rating' "
+            "only; pairwise runs use inspect_pipeline.pairwise."
+        )
+    # One task serves the whole panel concurrently.
+    check_distinct_local_servers(ctx["models"])
+    criteria = ctx["criteria"]
+    samples = build_edge_samples(ctx["assignments"])
+    config = analysis_config(ctx, planned=len(samples), write_artifacts=write_artifacts) if panel_metrics else None
+    return Task(
+        dataset=MemoryDataset(
+            samples=samples,
+            name=f"eigenbench_{ctx['run_spec']['name']}",
+        ),
+        solver=direct_rating_solver(
+            criteria=criteria,
+            resolve_model=ctx["resolve_model"],
+            response_pool=ResponsePool(seed=ctx["seed"]),
+            generation=ctx["generation"],
+            max_attempts=ctx["max_attempts"],
+            cache_enabled=ctx["cache_enabled"],
+            scale_min=ctx["scale_min"],
+            scale_max=ctx["scale_max"],
+        ),
+        scorer=([direct_rating_scorer(), panel_scorer(config)] if config is not None
+                else direct_rating_scorer()),
+        viewer=ViewerConfig(task_samples_view=_samples_view(criteria)),
+        name=f"eigenbench_{ctx['run_spec']['name']}",
+        display_name=f"EigenBench direct rating — {ctx['run_spec']['name']}",
+        metadata={"eigenbench": {**ctx["meta"], "resume_identity": direct_resume_identity(ctx),
+                                 **({"analysis": config} if config is not None else {})}},
+        # Omitting invalid judgments needs the eval to survive a failed sample; export still vets each.
+        fail_on_error=(False if ctx["meta"]["failure_policy"] == "omit_invalid_judgments" else None),
     )

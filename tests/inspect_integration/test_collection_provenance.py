@@ -15,7 +15,7 @@ from inspect_ai.model import GenerateConfig, ModelOutput, get_model
 
 from tests.inspect_integration.test_inspect_collect import run_dir  # noqa: F401  (pytest fixture)
 
-from inspect_pipeline.collect import collect_direct_ratings_inspect
+from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 from inspect_pipeline.provenance import FINGERPRINT_FILE, check_reusable, collection_identity
 
 
@@ -39,8 +39,8 @@ def test_unchanged_rerun_reuses_and_records_a_fingerprint(run_dir):
 @pytest.mark.parametrize("phased", [False, True])
 def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased, monkeypatch):
     from inspect_ai.log import read_eval_log
-    import inspect_pipeline.collect as collect
-    from eigenbench.inspect import context as inspect_context
+    import inspect_pipeline.collection.direct_rating as collect
+    from inspect_pipeline import context as inspect_context
 
     calls = []
     build_assignments = inspect_context.build_direct_assignments
@@ -199,7 +199,7 @@ def test_a_changed_model_reference_is_named(tmp_path):
 
 @pytest.mark.parametrize("instance", [False, True], ids=["spec-string", "native-model"])
 def test_changed_vllm_endpoint_refuses_saved_export(tmp_path, monkeypatch, instance):
-    from inspect_pipeline.model_mapping import model_identity
+    from inspect_pipeline.models import model_identity
 
     value = get_model("vllm/org/endpoint-test", memoize=False) if instance else "inspect:vllm/org/endpoint-test"
     ctx = _ctx({"a": value})
@@ -271,8 +271,8 @@ def test_new_model_revision_does_not_reuse_old_generation_cache(run_dir, monkeyp
 
 
 def test_model_identity_does_not_consume_scripted_output_generators():
-    from inspect_pipeline.eigenbench import _model_resolver
-    from inspect_pipeline.model_mapping import model_identity
+    from inspect_pipeline.context import _model_resolver
+    from inspect_pipeline.models import model_identity
 
     outputs = (ModelOutput.from_content(model="mockllm/model", content=str(i)) for i in range(2))
     model = get_model("mockllm/model", custom_outputs=outputs, memoize=False)

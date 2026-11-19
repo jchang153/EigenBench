@@ -116,7 +116,7 @@ def lines(path):
 
 
 def collect(spec):
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 
     return collect_direct_ratings_inspect(spec)
 
@@ -193,7 +193,7 @@ def test_changed_cached_answers_refuse_completed_export(run, phased, change_path
 
 @pytest.mark.parametrize("local", [(), ("a",)], ids=["api", "mixed"])
 def test_phased_run_closes_only_local_models(run, local, monkeypatch):
-    from inspect_pipeline import execution
+    from inspect_pipeline.collection import phased as execution
 
     # Mark the mock vLLM clients whose close calls this fixture tracks.
     monkeypatch.setattr(execution, "_uses_vllm", lambda value: getattr(value, "_eb_local", False))
@@ -210,7 +210,7 @@ def test_direct_phase_releases_gpu_and_stops_on_failure(run, monkeypatch, failur
     from runpy import run_path
 
     import inspect_ai
-    from inspect_pipeline import collect as runner, execution
+    from inspect_pipeline.collection import direct_rating as runner, phased as execution
 
     folder, write = run
     spec = write(phased=True, local=("a",))

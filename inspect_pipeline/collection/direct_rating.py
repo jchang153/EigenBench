@@ -1,8 +1,4 @@
-"""Programmatic driver: build the task, run it, export evaluations.jsonl.
-
-Equivalent to ``inspect eval inspect_pipeline/eigenbench.py -T spec=...``
-followed by ``scripts/export_evaluations.py``; used by scripts/run_inspect.py.
-"""
+"""Collect direct ratings with Inspect and export the judgments."""
 
 from __future__ import annotations
 
@@ -15,22 +11,22 @@ from inspect_ai import eval as inspect_eval
 from inspect_ai import eval_retry
 from inspect_ai.log import EvalLog, read_eval_log
 
-from eigenbench.inspect.coverage import (
+from inspect_pipeline.coverage import (
     _exported_key, evaluations_sha256, judgment_key, planned_from_assignments, record_collection,
 )
-from eigenbench.inspect.provenance import (
+from inspect_pipeline.provenance import (
     check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint,
 )
-from eigenbench.config import load_run_spec
-from eigenbench.config.generation import resolve_direct_generation_settings
-from eigenbench.protocol.direct_rating import (
+from pipeline.config import load_run_spec
+from pipeline.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     build_direct_assignments,
     estimate_direct_calls,
+    resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
 )
-from eigenbench.protocol.response_cache import cached_seed
-from eigenbench.records import load_records
+from pipeline.protocol.response_cache import cached_seed
+from pipeline.records import load_records
 
 from ..context import _run_context_from_spec, has_local_models, load_selection, resolve_spec_ref
 from .phased import eval_phase, model_phase, use_run_context
@@ -170,7 +166,7 @@ def _persist_responses(ctx, responses, generated) -> None:
         and all(nick in responses[int(s_idx)] for nick in nicks)
     ]
     if path and rows:
-        from eigenbench.records import append_records
+        from pipeline.records import append_records
 
         append_records(path, rows)
 

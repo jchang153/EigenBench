@@ -31,11 +31,12 @@ def _response_cells(samples):
 
 
 def estimate_pairwise_calls(spec_ref: str, *, models=None) -> dict:
-    from eigenbench.config import load_run_spec
-    from ..context import cached_seed, load_selection, resolve_spec_ref
+    from pipeline.config import load_run_spec
+    from pipeline.protocol.response_cache import cached_seed
+    from ..context import load_selection, resolve_spec_ref
     from ..models import model_execution
     from ..pairwise import pairwise_comparison_samples, planned_pairwise_comparisons
-    from eigenbench.protocol.pairwise_plan import pairwise_call_counts, resolve_pairwise_generation_settings
+    from pipeline.protocol.pairwise_plan import pairwise_call_counts, resolve_pairwise_generation_settings
 
     spec, run_dir = load_run_spec(resolve_spec_ref(spec_ref))
     panel = models if models is not None else spec["models"]
@@ -117,8 +118,8 @@ def _persist_responses(path, records) -> None:
 
     if not path:
         return
-    from eigenbench.protocol.response_cache import load_cached_responses
-    from eigenbench.records import append_records
+    from pipeline.protocol.response_cache import load_cached_responses
+    from pipeline.records import append_records
 
     cached = load_cached_responses(path, merge_rows=False)
     scenarios, new = {}, defaultdict(dict)
@@ -141,7 +142,7 @@ def _persist_responses(path, records) -> None:
 def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dict | None = None,
                              scoring: bool = True) -> list[dict]:
     from inspect_ai import eval as inspect_eval
-    from eigenbench.config import load_run_spec
+    from pipeline.config import load_run_spec
     from ..pairwise import build_pairwise_task, records_from_pairwise_log
 
     if analysis_status is not None:
@@ -187,7 +188,7 @@ def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dic
                            log_dir=log_dir, before=before, failure_policy=failure_policy,
                            evaluations_path=output)
         raise
-    from eigenbench.inspect.coverage import record_collection
+    from inspect_pipeline.coverage import record_collection
     if phased and scoring:
         from ..metrics import finalize_panel_metrics
         panel_log = finalize_panel_metrics(context, logs=logs, records=records,

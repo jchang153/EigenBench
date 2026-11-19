@@ -19,7 +19,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from inspect_ai.log import list_eval_logs  # noqa: E402
 
-from eigenbench.inspect.export import export_log  # noqa: E402
+from inspect_pipeline.export import export_log  # noqa: E402
 
 
 def resolve_log(log_ref: str) -> str:

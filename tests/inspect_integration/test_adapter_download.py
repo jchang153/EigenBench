@@ -1,5 +1,5 @@
 """Focused regressions for this change."""
-from inspect_pipeline.model_mapping import to_inspect_model
+from inspect_pipeline.models import to_inspect_model
 
 def test_adapter_snapshot_download_is_limited_to_selected_subfolder(tmp_path, monkeypatch):
     import huggingface_hub

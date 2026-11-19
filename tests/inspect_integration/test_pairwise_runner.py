@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from inspect_ai.model import ModelOutput, get_model
-from inspect_pipeline.pairwise_collect import collect_pairwise_inspect, estimate_pairwise_calls
+from inspect_pipeline.collection.pairwise import collect_pairwise_inspect, estimate_pairwise_calls
 
 
 def write_spec(folder, *, phased=False, groups=2):
@@ -56,7 +56,7 @@ def panel(calls, *, invalid=False):
 
 @pytest.mark.parametrize("cached", [False, True])
 def test_pairwise_estimate_by_provider(tmp_path, monkeypatch, cached):
-    import inspect_pipeline.model_mapping as mapping
+    import inspect_pipeline.models as mapping
 
     spec = Path(write_spec(tmp_path))
     if cached:
@@ -203,7 +203,7 @@ def test_pairwise_refusal_keeps_a_concurrent_export_report(tmp_path, monkeypatch
 
 def test_pairwise_extension_checks_legacy_provenance_in_configured_log_dir(tmp_path):
     from inspect_pipeline.export import export_log, load_log
-    from inspect_pipeline.extend import extend_run
+    from inspect_pipeline.collection.extension import extend_run
 
     spec = Path(write_spec(tmp_path, groups=1))
     with spec.open("a") as handle:

@@ -12,7 +12,7 @@ from tests.inspect_integration.test_inspect_collect import run_dir, NICKS, SCENA
 @pytest.mark.parametrize("temperature", [float("nan"), float("inf"), float("-inf")])
 @pytest.mark.parametrize("per_model", [False, True])
 def test_generation_temperatures_must_be_finite(generation_key, temperature, per_model):
-    from inspect_pipeline.pairwise_plan import resolve_pairwise_generation_settings
+    from pipeline.protocol.pairwise_plan import resolve_pairwise_generation_settings
     from pipeline.protocol.direct_rating import resolve_direct_generation_settings
 
     resolve = (
@@ -86,7 +86,7 @@ def test_direct_sampler_alias_agrees_across_loading_planning_and_estimation(tmp_
 
 def test_per_model_budgets_are_resolved_and_validated():
     from pipeline.protocol.direct_rating import resolve_direct_generation_settings
-    from inspect_pipeline.phases import phase_config
+    from inspect_pipeline.generation import phase_config
     settings = resolve_direct_generation_settings({"generation": {"reflection": {
         "max_tokens": 512, "per_model": {"api": {"max_tokens": 2048}},
     }}})
@@ -107,6 +107,6 @@ def test_generation_budgets_reach_provider_in_both_collection_modes(run_dir, pha
     if phased:
         text = text.replace('"cache": False, "display": "none"', '"cache": False, "display": "none", "phased": True')
     path.write_text(text)
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     records = collect_direct_ratings_inspect(str(path))
     assert len(records) == SCENARIO_COUNT * len(NICKS)

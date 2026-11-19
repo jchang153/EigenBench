@@ -74,7 +74,7 @@ def test_stage_uses_bootstrap_artifacts_only_when_enabled(tmp_path, mode, output
 
 def test_pairwise_elo_matches_the_paper_and_native_analysis(tmp_path):
     import math
-    from pipeline.train.train import eigentrust_to_elo
+    from pipeline.analysis.fit import eigentrust_to_elo
 
     run = tmp_path / "run"
     analysis = run / "btd_d2"
@@ -194,7 +194,7 @@ def test_stage_does_not_replace_a_missing_configured_evaluations_file_with_defau
 
 def test_stage_rebuilds_report_only_for_matching_judgment_content(tmp_path):
     from inspect_pipeline.coverage import evaluations_sha256
-    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from inspect_pipeline.collection.pairwise import collect_pairwise_inspect
     from tests.inspect_integration.test_inspect_pairwise import _panel, _write_spec as write_pairwise_spec
 
     run = tmp_path / "run"

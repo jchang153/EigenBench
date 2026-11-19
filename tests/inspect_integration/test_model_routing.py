@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture
 def mapping(monkeypatch):
-    import inspect_pipeline.model_mapping as mm
+    import inspect_pipeline.models as mm
 
     monkeypatch.setattr(mm, "resolve_max_model_len", lambda *args, **kwargs: 8192)
     mm._root_adapter_base.cache_clear()
@@ -43,7 +43,7 @@ def test_vllm_revision_guard_uses_effective_provider_args(mapping, monkeypatch):
 @pytest.mark.parametrize("revision", ["commit-a", None])
 def test_vllm_spec_ignores_models_memoized_under_previous_defaults(mapping, monkeypatch, revision):
     from inspect_ai.model import get_model
-    from inspect_pipeline.eigenbench import _model_resolver
+    from inspect_pipeline.context import _model_resolver
 
     spec = {"provider": "hf_local", "repo_id": "org/memoized-base", "kind": "base"}
     monkeypatch.setenv("VLLM_DEFAULT_SERVER_ARGS", json.dumps({"revision": "commit-b"}))

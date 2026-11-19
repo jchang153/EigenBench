@@ -22,7 +22,7 @@ def direct(i, judge="judge", model="model"):
 
 
 def test_report_preserves_failure_details_and_counts_unstarted():
-    from eigenbench.inspect.coverage import collection_part
+    from inspect_pipeline.coverage import collection_part
 
     planned = [{"scenario_index": i, "judge_nick": "judge", "eval_nick": "model"} for i in range(4)]
     logs = [log("run.eval", [sample(0), sample(1, "reflection truncated"), sample(2)],
@@ -50,7 +50,7 @@ PAIR_PLAN = {"scenario_index": 1, "judge_nick": "j", "eval1_nick": "a", "eval2_n
 
 
 def test_recurring_pairs_are_counted_not_rejected():
-    from eigenbench.inspect.coverage import collection_part
+    from inspect_pipeline.coverage import collection_part
 
     # The plan asks for the same comparison twice; one of the two was exported.
     part = collection_part("extension", planned=[PAIR_PLAN, PAIR_PLAN],
@@ -73,7 +73,7 @@ def test_recurring_pairs_are_counted_not_rejected():
 
 
 def test_epochs_multiply_the_plan():
-    from eigenbench.inspect.coverage import collection_part
+    from inspect_pipeline.coverage import collection_part
 
     def epochs_log(name, samples, epochs):
         return NS(location=f"/logs/{name}", status="success", samples=samples,
@@ -97,7 +97,7 @@ def test_epochs_multiply_the_plan():
 
 
 def test_rounds_are_told_apart():
-    from eigenbench.inspect.coverage import collection_part
+    from inspect_pipeline.coverage import collection_part
 
     samples = [sample(0, sampling_round=0), NS(**{**vars(sample(0, sampling_round=1)), "id": "r1"})]
     records = [{**direct(0), "sampling": {"round": 1}}]
@@ -108,7 +108,7 @@ def test_rounds_are_told_apart():
 
 
 def test_unreconcilable_counts_are_unknown_never_zero():
-    from eigenbench.inspect.coverage import build_report, collection_part
+    from inspect_pipeline.coverage import build_report, collection_part
 
     logs = [log("run.eval", [sample(0), sample(1, "timed out"), sample(2)])]
     # The export holds a judgment no log accounts for: exported and omitted are unknown.
@@ -127,7 +127,7 @@ def test_unreconcilable_counts_are_unknown_never_zero():
 
 
 def test_extending_a_run_without_a_report_keeps_its_totals_unknown(tmp_path):
-    from eigenbench.inspect.coverage import collection_part, write_collection_report
+    from inspect_pipeline.coverage import collection_part, write_collection_report
 
     part = collection_part("extension", planned=[{"scenario_index": 0, "judge_nick": "judge", "eval_nick": "model"}],
                            logs=[log("extend.eval", [sample(0)], eigenbench={"judge": "judge"})], records=[direct(0)])
@@ -143,7 +143,7 @@ def test_extending_a_run_without_a_report_keeps_its_totals_unknown(tmp_path):
 
 
 def test_reexported_extension_replaces_its_part(tmp_path):
-    from eigenbench.inspect.coverage import collection_part, write_collection_report
+    from inspect_pipeline.coverage import collection_part, write_collection_report
 
     first = collection_part("collection", planned=None, logs=[log("run.eval", [sample(0)])], records=[direct(0)])
     write_collection_report(tmp_path, first, failure_policy="strict")
@@ -173,7 +173,7 @@ def test_upload_publishes_the_run_report_and_every_log(tmp_path):
 
     names = ["judge_a.eval", "judge_b.eval", "responses.eval"]
     run = _run_folder(tmp_path, log_file="judge_a.eval", log_files=names)
-    from eigenbench.inspect.coverage import evaluations_sha256
+    from inspect_pipeline.coverage import evaluations_sha256
 
     report = {"schema_version": 2, "source": "inspect_logs", "planned": 2,
               "collections": [{"logs": [{"file": name} for name in names]}],
@@ -199,7 +199,7 @@ def _mock_direct_export(monkeypatch):
 
 def test_old_run_gets_a_version_2_report_with_unknown_plan(tmp_path, monkeypatch):
     import inspect_ai.log
-    from eigenbench.inspect.coverage import report_from_run_dir
+    from inspect_pipeline.coverage import report_from_run_dir
     from scripts.upload_results import stage_run
 
     _mock_direct_export(monkeypatch)
@@ -226,7 +226,7 @@ def test_old_run_gets_a_version_2_report_with_unknown_plan(tmp_path, monkeypatch
 
 def test_upload_rebuilds_report_when_manifest_gains_a_failed_log(tmp_path, monkeypatch):
     import inspect_ai.log
-    from eigenbench.inspect.coverage import collection_part, write_collection_report
+    from inspect_pipeline.coverage import collection_part, write_collection_report
     from scripts.upload_results import stage_run
 
     _mock_direct_export(monkeypatch)

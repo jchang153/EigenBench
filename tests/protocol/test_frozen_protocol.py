@@ -8,7 +8,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "inspect_migration
 
 def test_shared_prompts_and_direct_plans_match_pre_migration_fixture():
     from pipeline.protocol import direct_rating as direct
-    from eigenbench.protocol.pairwise import (
+    from pipeline.protocol.pairwise import (
         build_comparison_prompt, build_comparison_user,
         build_reflection_prompt, build_reflection_user,
     )

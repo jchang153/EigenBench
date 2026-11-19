@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from inspect_ai import Task
-
-from eigenbench.protocol.extension import (
-    DIRECT, PAIRWISE, Plan, detect_mode, model_names, plan_additions, projected_counts,
-    response_index, scenarios_of,
+from pipeline.protocol.extension import (
+    DIRECT, PAIRWISE, Plan, detect_mode, model_names, plan_additions, scenarios_of,
 )
+
+from ..phases import direct_rating_scorer, direct_rating_solver
 
 
 def edge_samples(plan: Plan, scenarios: dict[int, str], order: list[str]) -> list:
@@ -67,8 +66,7 @@ def eigenbench_extend(
     from inspect_ai.viewer import ViewerConfig
 
     from ..context import _run_context
-    from inspect_pipeline.phases import direct_rating_scorer, direct_rating_solver
-    from ..direct_rating import _samples_view
+    from ..eigenbench import _samples_view
     from ..generation import ResponsePool
 
     ctx = context if context is not None else _run_context(spec, models, build_assignments=False)
@@ -114,8 +112,8 @@ def _source_model_identities(source: Path, records: list[dict], mode: str, *,
     """Read known contributors without inferring identities from a historical spec."""
     from inspect_ai.log import read_eval_log
 
-    from eigenbench.inspect.coverage import REPORT_FILE, evaluations_sha256
-    from eigenbench.inspect.provenance import FINGERPRINT_FILE
+    from inspect_pipeline.coverage import REPORT_FILE, evaluations_sha256
+    from inspect_pipeline.provenance import FINGERPRINT_FILE
     from ..export import panel_model_identities, records_fingerprint
 
     manifest = source.with_name("inspect_run.json")
@@ -162,10 +160,10 @@ def _source_model_identities(source: Path, records: list[dict], mode: str, *,
 def _prepare_extension(
     spec_ref, new_models=None, *, additional_scenarios=None, include_self=None, seed=42,
 ):
-    from eigenbench.config import load_run_spec
-    from eigenbench.records import load_records
+    from pipeline.config import load_run_spec
+    from pipeline.records import load_records
 
-    from eigenbench.inspect.provenance import changed_scenarios, constitution_differs
+    from inspect_pipeline.provenance import changed_scenarios, constitution_differs
     from ..context import load_selection, resolve_spec_ref
     from ..models import model_identity
 
@@ -340,7 +338,7 @@ def extend_run(
         if len(new_records) != len(plan.edges):
             raise RuntimeError("extension did not collect the complete plan; nothing appended")
         # Never overwrite concurrent changes to the source or an independently-created output.
-        from eigenbench.records import load_records
+        from pipeline.records import load_records
         if load_records(str(prepared["source"])) != prepared["records"]:
             raise RuntimeError("source records changed during collection; export the log manually")
         if prepared["output"] != prepared["source"] and prepared["output"].exists():
@@ -363,24 +361,3 @@ def extend_run(
         print(f"Add these models to the spec before analysis: {missing}")
     print(f"Added {len(new_records)} judgments to {prepared['output']}")
     return {**summary, "collected": len(new_records)}
-
-
-def build_extension_task(
-    spec: str, *, new_model: str | None = None, model_id: str | None = None,
-    additional_scenarios: int | None = None,
-) -> "Task":
-    """Collect an extension spec, with optional legacy single-model arguments."""
-    if (new_model is None) != (model_id is None):
-        raise ValueError("new_model and model_id must be supplied together")
-    additions = {new_model: model_id} if new_model is not None else None
-    prepared = _prepare_extension(
-        spec, additions, additional_scenarios=additional_scenarios,
-    )
-    if _use_phased_extension(prepared):
-        raise ValueError(
-            "this extension requires phased execution; use scripts/extend_run.py "
-            "instead of the native Inspect task"
-        )
-    from ..models import check_distinct_local_servers
-    check_distinct_local_servers(prepared["models"])
-    return _extension_task(prepared)

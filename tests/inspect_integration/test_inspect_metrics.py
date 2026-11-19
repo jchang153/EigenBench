@@ -57,7 +57,7 @@ def test_native_metrics_match_frozen_baseline(name, artifacts, tmp_path):
     prefix = "" if name == "direct" else "btd_d2/"
     folder = "direct_rating" if name == "direct" else "btd_d2"
     trust = np.fromstring(frozen[f"{folder}/eigentrust.txt"].split("[")[1].split("]")[0], sep=",")
-    from pipeline.train.train import eigentrust_to_elo
+    from pipeline.analysis.fit import eigentrust_to_elo
     elo = eigentrust_to_elo(trust, len(trust))
     if name == "direct":
         exact = sorted(frozen["direct_rating/summary.json"], key=lambda row: row["model_index"])
@@ -154,7 +154,7 @@ def test_repeated_comparisons_are_kept_by_cleaning(tmp_path):
 
 
 def test_rectangular_criteria_fails_before_fitting(tmp_path, monkeypatch):
-    import pipeline.train.pairwise_analysis as analysis
+    import pipeline.analysis.pairwise as analysis
     rows, config = _fixture("pairwise", tmp_path)
     config["training"]["separate_criteria"] = True
     def forbidden(*args, **kwargs):
@@ -169,7 +169,7 @@ def test_real_pairwise_inspect_metrics_and_phased_coverage(tmp_path, phased):
     from inspect_ai.log import read_eval_log
     from tests.inspect_integration.test_inspect_pairwise import _write_spec, _panel
     from inspect_pipeline.export import export_log
-    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from inspect_pipeline.collection.pairwise import collect_pairwise_inspect
     from inspect_pipeline.coverage import report_from_run_dir
     calls = []
     path = Path(_write_spec(tmp_path, groups=1))
@@ -200,7 +200,7 @@ def test_real_pairwise_inspect_metrics_and_phased_coverage(tmp_path, phased):
 
 def test_pairwise_model_coverage_refuses_ranking_and_preserves_export(tmp_path):
     from inspect_ai.log import read_eval_log
-    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from inspect_pipeline.collection.pairwise import collect_pairwise_inspect
     from scripts.run_train import main
     from tests.inspect_integration.test_inspect_pairwise import _panel, _write_spec
 
@@ -235,8 +235,8 @@ RUN_SPEC["training"] = {"enabled": True, "max_epochs": 1, "dims": [2]}
 @pytest.mark.parametrize("ambiguous", [False, True])
 def test_real_direct_metrics_match_export(tmp_path, ambiguous):
     from inspect_ai.log import read_eval_log
-    from inspect_pipeline.collect import collect_direct_ratings_inspect
-    from pipeline.trust.eigentrust import NonUniqueStationaryError
+    from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
+    from pipeline.analysis.eigentrust import NonUniqueStationaryError
     from scripts.run_train import main
 
     # A minimal callable mock exercises persistence without external providers.
@@ -429,7 +429,7 @@ def test_public_rescore_preserves_requested_epochs_and_coverage(tmp_path):
 def test_pairwise_collection_only_bypasses_fitting_and_invalid_training(tmp_path, monkeypatch, phased):
     from inspect_ai.log import read_eval_log
     import inspect_pipeline.metrics as metrics
-    from inspect_pipeline.pairwise_collect import collect_pairwise_inspect
+    from inspect_pipeline.collection.pairwise import collect_pairwise_inspect
     from tests.inspect_integration.test_inspect_pairwise import _write_spec, _panel
     path = Path(_write_spec(tmp_path, groups=1))
     path.write_text(path.read_text() + f"\nRUN_SPEC['collection']['inspect']['phased'] = {phased!r}\n" +
