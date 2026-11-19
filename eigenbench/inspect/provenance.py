@@ -14,10 +14,10 @@ from collections import Counter
 from pathlib import Path
 
 from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
-from inspect_pipeline.export import records_fingerprint
-from inspect_pipeline.extend import scenarios_of
-from inspect_pipeline.model_mapping import model_identity
-from pipeline.protocol.direct_rating import (
+from .export import records_fingerprint
+from eigenbench.protocol.extension import scenarios_of
+from .models import model_identity
+from eigenbench.protocol.direct_rating import (
     DIRECT_PROMPT_VERSION,
     build_direct_rating_prompt,
     build_direct_rating_user_prompt,

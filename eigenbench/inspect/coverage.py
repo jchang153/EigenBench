@@ -288,8 +288,8 @@ def report_from_run_dir(run_dir: str | Path, evaluations_path: str | Path | None
     with evaluations.open(encoding="utf-8") as handle:
         records = [json.loads(line) for line in handle if line.strip()]
     if verify_records:
-        from inspect_pipeline.export import records_fingerprint, records_from_log
-        from inspect_pipeline.pairwise import records_from_pairwise_log
+        from .export import records_fingerprint, records_from_log
+        from .pairwise import records_from_pairwise_log
 
         # Coverage keys omit the response, reflection and judgment. For publication,
         # an unbound log must reproduce the actual payload, including repeated rows.
