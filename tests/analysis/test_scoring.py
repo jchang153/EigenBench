@@ -8,7 +8,7 @@ import torch
 
 
 def planned_rows(prefer):
-    from pipeline.protocol.pairwise_plan import pairwise_comparisons, plan_pairwise_groups
+    from eigenbench.protocol.pairwise_plan import pairwise_comparisons, plan_pairwise_groups
 
     groups = plan_pairwise_groups([(0, "s0")], ["a", "b"], sampler_mode="uniform",
                                   group_size=2, groups=3, sampler_seed=42)
@@ -18,7 +18,7 @@ def planned_rows(prefer):
 
 
 def test_repeated_rounds_of_one_pair_are_all_kept():
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     rows, groups = planned_rows(lambda p: 1 if p["eval1_idx"] == 0 else 2)
     assert len(rows) == 6
@@ -28,7 +28,7 @@ def test_repeated_rounds_of_one_pair_are_all_kept():
 
 
 def test_strict_inconsistency_ties_only_its_own_round():
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     rows, groups = planned_rows(lambda p: 1 if p["eval1_idx"] == 0 else 2)
     first = groups[0]
@@ -41,14 +41,14 @@ def test_strict_inconsistency_ties_only_its_own_round():
 
 
 def test_same_order_repeats_are_not_turned_into_ties():
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     rows = [[0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 1, 1]]
     assert handle_inconsistencies_with_ties_criteria(rows) == rows
 
 
 def test_order_rule_matches_the_paper_for_one_pair():
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     def clean(first, second):
         return [row[-1] for row in handle_inconsistencies_with_ties_criteria(
@@ -62,7 +62,7 @@ def test_order_rule_matches_the_paper_for_one_pair():
 
 
 def test_gaps_in_model_ids_keep_their_comparisons():
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     rows = [[0, 5, 0, 0, 2, 1], [0, 5, 0, 2, 0, 2]]
     assert handle_inconsistencies_with_ties_criteria(rows) == rows
@@ -72,7 +72,7 @@ def test_exported_pairwise_records_carry_their_group():
     from inspect_pipeline.pairwise import (STORE_EVAL1_REFLECTION, STORE_EVAL1_RESPONSE,
                                            STORE_EVAL2_REFLECTION, STORE_EVAL2_RESPONSE,
                                            STORE_JUDGE_RESPONSE, pairwise_record)
-    from pipeline.analysis.comparisons import extract_comparisons_with_ties_criteria
+    from eigenbench.analysis.comparisons import extract_comparisons_with_ties_criteria
 
     md = {"scenario": "s", "scenario_index": 0, "eval1_idx": 0, "eval1_nick": "a",
           "eval2_idx": 1, "eval2_nick": "b", "judge_idx": 0, "judge_nick": "a",
@@ -98,7 +98,7 @@ def _legacy(e1, e2, choice, draw, *, group=None, epoch=None):
 
 
 def _clean(records):
-    from pipeline.analysis.comparisons import (
+    from eigenbench.analysis.comparisons import (
         extract_comparisons_with_ties_criteria, handle_inconsistencies_with_ties_criteria,
     )
 
@@ -134,7 +134,7 @@ def test_ambiguous_draws_are_kept_and_counted():
 
 
 def test_pairwise_analysis_refuses_gaps_in_model_indices():
-    from pipeline.analysis.pairwise import run_pairwise_analysis
+    from eigenbench.analysis.pairwise import run_pairwise_analysis
 
     records = [_legacy(0, 2, 1, s) for s in "abc"] + [_legacy(2, 0, 2, s) for s in "abc"]
     for n, record in enumerate(records):
@@ -164,7 +164,7 @@ def _stationary(T):
 
 @pytest.mark.parametrize("T", [CYCLING, _weak_blocks()], ids=["periodic", "slow"])
 def test_eigentrust_returns_the_stationary_vector_when_iteration_stalls(T, recwarn):
-    from pipeline.analysis.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     at_1000 = eigentrust(T, max_iter=1000, verbose=False)
     assert torch.allclose(at_1000, eigentrust(T, max_iter=1001, verbose=False), atol=1e-9)
@@ -174,14 +174,14 @@ def test_eigentrust_returns_the_stationary_vector_when_iteration_stalls(T, recwa
 
 
 def test_eigentrust_is_unchanged_when_it_converges():
-    from pipeline.analysis.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     T = torch.tensor([[0.5, 0.3, 0.2], [0.2, 0.6, 0.2], [0.3, 0.3, 0.4]], dtype=torch.float64)
     assert torch.norm(eigentrust(T, verbose=False) @ T - eigentrust(T, verbose=False), p=1) < 1e-6
 
 
 def test_eigentrust_refuses_a_matrix_without_a_unique_answer():
-    from pipeline.analysis.eigentrust import eigentrust
+    from eigenbench.analysis.eigentrust import eigentrust
 
     # Two closed classes, {0, 1} and {2, 3}, each cycling; model 4 feeds the second.
     split = torch.tensor([[0, 1, 0, 0, 0], [1, 0, 0, 0, 0], [0, 0, 0, 1, 0],
@@ -191,7 +191,7 @@ def test_eigentrust_refuses_a_matrix_without_a_unique_answer():
 
 
 def test_direct_minmax_refuses_converged_nonunique_eigentrust():
-    from pipeline.analysis.direct_trust import build_direct_trust
+    from eigenbench.analysis.direct_trust import build_direct_trust
 
     rows = [
         {"record_type": "direct_rating", "scenario_index": 0,
@@ -209,13 +209,13 @@ def test_direct_minmax_refuses_converged_nonunique_eigentrust():
 
 
 def test_bootstrap_refuses_plain_bt():
-    from pipeline.analysis.pairwise_bootstrap import _build_model_and_loader
+    from eigenbench.analysis.pairwise_bootstrap import _build_model_and_loader
 
     with pytest.raises(ValueError, match="btd_ties"):
         _build_model_and_loader([[0, 0, 0, 0, 1, 1]], "bt", 1, 2, 2, 4)
 
 
-@pytest.mark.parametrize("module", ["pipeline.analysis.pairwise_bootstrap", "pipeline.analysis.direct_rating"])
+@pytest.mark.parametrize("module", ["eigenbench.analysis.pairwise_bootstrap", "eigenbench.analysis.direct_rating"])
 def test_bootstrap_plot_accepts_a_mean_outside_its_interval(tmp_path, module):
     import importlib
 
@@ -227,7 +227,7 @@ def test_bootstrap_plot_accepts_a_mean_outside_its_interval(tmp_path, module):
 
 
 def test_empty_grouped_holdout_is_reported_not_scored():
-    from pipeline.analysis.fit import group_split_comparisons
+    from eigenbench.analysis.fit import group_split_comparisons
 
     comparisons = [[0, s, 0, 0, 1, 1] for s in range(4)]
     with pytest.warns(RuntimeWarning, match="leaves no test groups"):
@@ -236,7 +236,7 @@ def test_empty_grouped_holdout_is_reported_not_scored():
 
 
 def test_direct_analysis_refuses_records_from_another_panel():
-    from pipeline.analysis.fit import check_model_order
+    from eigenbench.analysis.fit import check_model_order
 
     check_model_order([(0, "a"), (1, "b"), (1, None)], ["a", "b", "c"])
     for observed in ([(0, "b"), (1, "a")], [(0, "c"), (1, "d")]):

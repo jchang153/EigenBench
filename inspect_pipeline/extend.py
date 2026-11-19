@@ -5,9 +5,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Inspect loads task files outside their package.
+# Inspect puts this directory on sys.path. Prefer the eigenbench package.
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
-if _REPO_ROOT not in sys.path:
+if sys.path[:1] != [_REPO_ROOT]:
     sys.path.insert(0, _REPO_ROOT)
 
 from inspect_ai import Task, task

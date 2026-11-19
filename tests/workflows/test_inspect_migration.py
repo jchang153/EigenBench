@@ -103,16 +103,6 @@ assert log.status == "success", log.error
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_hosted_worker_patches_the_active_collection_and_scoring_modules():
-    import inspect_pipeline.collect as collect
-    from inspect_pipeline.collection import direct_rating as collection
-    from pipeline.analysis import direct_rating as analysis
-    from pipeline.train import direct_analysis
-
-    assert collect is collection
-    assert direct_analysis is analysis
-
-
 @pytest.mark.parametrize("script", ["run.py", "run_inspect.py"])
 @pytest.mark.parametrize("mode", ["direct_rating", "pairwise_btd"])
 @pytest.mark.parametrize("phased", [False, True])

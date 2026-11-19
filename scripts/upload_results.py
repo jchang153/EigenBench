@@ -20,9 +20,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from pipeline.analysis.elo import elo_scores
-from pipeline.config.run_spec import _resolve_path_for_run
-from pipeline.records import load_records, save_records
+from eigenbench.analysis.elo import elo_scores
+from eigenbench.config.run_spec import _resolve_path_for_run
+from eigenbench.records import load_records, save_records
 
 
 def _space_safe_model_id(model_ref: object) -> str:

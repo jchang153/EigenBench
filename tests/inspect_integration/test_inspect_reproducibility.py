@@ -15,7 +15,7 @@ from scripts.prepare_inspect_log import prepare_log
 
 
 def test_default_task_records_pinned_assets_and_resolved_settings():
-    from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
+    from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
     task = eigenbench(cache=False)
     metadata = task.metadata["eigenbench"]
     assert metadata["dataset"]["source"] == DATASET_ID

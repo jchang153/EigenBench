@@ -130,7 +130,7 @@ PARTIAL = [
 
 @pytest.mark.parametrize("phased", [False, True])
 def test_a_partial_cache_generates_only_the_missing_responses(run, phased, monkeypatch):
-    from pipeline.protocol import response_cache
+    from eigenbench.protocol import response_cache
 
     tmp_path, write = run
     cache_path = tmp_path / "responses.jsonl"

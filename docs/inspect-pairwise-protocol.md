@@ -2,7 +2,7 @@
 
 The compatibility reference is Jonathan Chang's OpenRouter group collector at
 EigenBench commit [`38dcca0fc50815eb273cf548f1a4855d265b70f9`](https://github.com/jchang153/EigenBench/tree/38dcca0fc50815eb273cf548f1a4855d265b70f9).
-The original prompt and sampler functions now live in `pipeline/protocol/`.
+The original prompt and sampler functions now live in `eigenbench/protocol/`.
 Inspect executes the original grouped protocol.
 The later mixed local collector is a different collection protocol.
 

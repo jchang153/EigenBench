@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from pipeline.records import load_records
+from eigenbench.records import load_records
 
 
 def load_cached_responses(

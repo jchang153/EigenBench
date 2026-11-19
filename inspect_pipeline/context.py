@@ -9,17 +9,17 @@ from pathlib import Path
 
 from inspect_ai.model import Model, ModelName, get_model
 
-from pipeline.config import (
+from eigenbench.config import (
     get_criteria_from_spec,
     load_dataset_scenarios_from_spec,
     load_run_spec,
     select_scenarios,
 )
-from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
-from pipeline.protocol.direct_rating import (
+from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
+from eigenbench.protocol.direct_rating import (
     build_direct_assignments, resolve_direct_generation_settings, resolve_direct_sampling_settings,
 )
-from pipeline.protocol.response_cache import cached_seed
+from eigenbench.protocol.response_cache import cached_seed
 
 from .generation import FAILURE_POLICIES
 from .models import (
@@ -175,7 +175,7 @@ def _run_context_from_spec(
     if is_direct:
         generation = resolve_direct_generation_settings(collection_cfg)
     else:
-        from pipeline.protocol.pairwise_plan import resolve_pairwise_generation_settings
+        from eigenbench.protocol.pairwise_plan import resolve_pairwise_generation_settings
         generation = resolve_pairwise_generation_settings(collection_cfg)
     assignments = []
     if is_direct:

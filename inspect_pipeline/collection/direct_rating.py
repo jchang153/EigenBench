@@ -17,16 +17,16 @@ from inspect_pipeline.coverage import (
 from inspect_pipeline.provenance import (
     check_reusable, direct_resume_identity, read_resolved_sampler_seed, write_fingerprint,
 )
-from pipeline.config import load_run_spec
-from pipeline.protocol.direct_rating import (
+from eigenbench.config import load_run_spec
+from eigenbench.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     build_direct_assignments,
     estimate_direct_calls,
     resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
 )
-from pipeline.protocol.response_cache import cached_seed
-from pipeline.records import load_records
+from eigenbench.protocol.response_cache import cached_seed
+from eigenbench.records import load_records
 
 from ..context import _run_context_from_spec, has_local_models, load_selection, resolve_spec_ref
 from .phased import eval_phase, model_phase, use_run_context
@@ -166,7 +166,7 @@ def _persist_responses(ctx, responses, generated) -> None:
         and all(nick in responses[int(s_idx)] for nick in nicks)
     ]
     if path and rows:
-        from pipeline.records import append_records
+        from eigenbench.records import append_records
 
         append_records(path, rows)
 

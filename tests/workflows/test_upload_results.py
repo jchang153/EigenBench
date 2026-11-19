@@ -74,7 +74,7 @@ def test_stage_uses_bootstrap_artifacts_only_when_enabled(tmp_path, mode, output
 
 def test_pairwise_elo_matches_the_paper_and_native_analysis(tmp_path):
     import math
-    from pipeline.analysis.fit import eigentrust_to_elo
+    from eigenbench.analysis.fit import eigentrust_to_elo
 
     run = tmp_path / "run"
     analysis = run / "btd_d2"

@@ -2,7 +2,7 @@ import pytest
 from inspect_ai.log import EvalLog, EvalSpec
 
 from inspect_pipeline.export import export_log, write_evaluations_atomic
-from pipeline.records import append_records, load_records, save_records
+from eigenbench.records import append_records, load_records, save_records
 
 
 @pytest.mark.parametrize("suffix", [".JSONL", ".json"])

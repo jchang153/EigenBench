@@ -31,12 +31,12 @@ def _response_cells(samples):
 
 
 def estimate_pairwise_calls(spec_ref: str, *, models=None) -> dict:
-    from pipeline.config import load_run_spec
-    from pipeline.protocol.response_cache import cached_seed
+    from eigenbench.config import load_run_spec
+    from eigenbench.protocol.response_cache import cached_seed
     from ..context import load_selection, resolve_spec_ref
     from ..models import model_execution
     from ..pairwise import pairwise_comparison_samples, planned_pairwise_comparisons
-    from pipeline.protocol.pairwise_plan import pairwise_call_counts, resolve_pairwise_generation_settings
+    from eigenbench.protocol.pairwise_plan import pairwise_call_counts, resolve_pairwise_generation_settings
 
     spec, run_dir = load_run_spec(resolve_spec_ref(spec_ref))
     panel = models if models is not None else spec["models"]
@@ -118,8 +118,8 @@ def _persist_responses(path, records) -> None:
 
     if not path:
         return
-    from pipeline.protocol.response_cache import load_cached_responses
-    from pipeline.records import append_records
+    from eigenbench.protocol.response_cache import load_cached_responses
+    from eigenbench.records import append_records
 
     cached = load_cached_responses(path, merge_rows=False)
     scenarios, new = {}, defaultdict(dict)
@@ -142,7 +142,7 @@ def _persist_responses(path, records) -> None:
 def collect_pairwise_inspect(spec_ref: str, *, models=None, analysis_status: dict | None = None,
                              scoring: bool = True) -> list[dict]:
     from inspect_ai import eval as inspect_eval
-    from pipeline.config import load_run_spec
+    from eigenbench.config import load_run_spec
     from ..pairwise import build_pairwise_task, records_from_pairwise_log
 
     if analysis_status is not None:

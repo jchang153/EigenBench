@@ -490,9 +490,9 @@ Default locations inside the run folder:
 
 | Path | What lives here |
 | --- | --- |
-| `pipeline/config/` | Run specs, datasets, and constitutions. |
-| `pipeline/protocol/` | Prompts, verdict parsing, and schedules for direct ratings, pairwise comparisons, and extensions. |
-| `pipeline/records.py`, `pipeline/analysis/` | The judgment record format and the code that turns those records into trust scores and rankings. |
+| `eigenbench/config/` | Run specs, datasets, and constitutions. |
+| `eigenbench/protocol/` | Prompts, verdict parsing, and schedules for direct ratings, pairwise comparisons, and extensions. |
+| `eigenbench/records.py`, `eigenbench/analysis/` | The judgment record format and the code that turns those records into trust scores and rankings. |
 | `inspect_pipeline/` | Native Inspect tasks, solvers, scorers, model routing, and log export. The `collection/` directory runs full panels and extensions. |
 | `scripts/` | Commands to run, extend, export, and publish evaluations. |
 | `runs/`, `data/`, `tests/` | Runnable specs, benchmark inputs, and tests grouped by behavior. |

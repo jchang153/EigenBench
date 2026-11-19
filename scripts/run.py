@@ -11,7 +11,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from pipeline.config import load_run_spec
+from eigenbench.config import load_run_spec
 from scripts.upload_results import resolve_upload_backend, submit_to_space, write_space_safe_spec
 
 
@@ -72,7 +72,7 @@ def main(spec_ref: str, collection_enabled: bool | None = None, *, resume_log: s
 
     if bool(training_cfg.get("enabled", True)) or upload_to_space:
         from inspect_pipeline.collection.extension import check_spec_covers
-        from pipeline.records import load_records
+        from eigenbench.records import load_records
 
         records = load_records(collection_cfg["evaluations_path"])
         if records:

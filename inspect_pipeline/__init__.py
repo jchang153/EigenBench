@@ -9,7 +9,7 @@ def __getattr__(name):
 
         return eigenbench
     if name == "collect_direct_ratings_inspect":
-        from .collect import collect_direct_ratings_inspect
+        from .collection.direct_rating import collect_direct_ratings_inspect
 
         return collect_direct_ratings_inspect
     if name == "export_log":

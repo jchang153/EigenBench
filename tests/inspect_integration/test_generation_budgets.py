@@ -12,8 +12,8 @@ from tests.inspect_integration.test_inspect_collect import run_dir, NICKS, SCENA
 @pytest.mark.parametrize("temperature", [float("nan"), float("inf"), float("-inf")])
 @pytest.mark.parametrize("per_model", [False, True])
 def test_generation_temperatures_must_be_finite(generation_key, temperature, per_model):
-    from pipeline.protocol.pairwise_plan import resolve_pairwise_generation_settings
-    from pipeline.protocol.direct_rating import resolve_direct_generation_settings
+    from eigenbench.protocol.pairwise_plan import resolve_pairwise_generation_settings
+    from eigenbench.protocol.direct_rating import resolve_direct_generation_settings
 
     resolve = (
         resolve_direct_generation_settings
@@ -30,7 +30,7 @@ def test_generation_temperatures_must_be_finite(generation_key, temperature, per
 def test_hosted_worker_can_load_config_tools_without_importing_the_package(tmp_path):
     # ValueArena's worker verifies the runner source by executing only these entry points.
     root = Path(__file__).resolve().parents[2]
-    direct_source = root / "pipeline/protocol/direct_rating.py"
+    direct_source = root / "eigenbench/protocol/direct_rating.py"
     tree = ast.parse(direct_source.read_text())
     function = next(
         node for node in tree.body
@@ -52,7 +52,7 @@ def test_hosted_worker_can_load_config_tools_without_importing_the_package(tmp_p
     }
 
     module_spec = importlib.util.spec_from_file_location(
-        "upstream_run_spec", root / "pipeline/config/run_spec.py"
+        "upstream_run_spec", root / "eigenbench/config/run_spec.py"
     )
     run_spec = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(run_spec)
@@ -66,8 +66,8 @@ def test_hosted_worker_can_load_config_tools_without_importing_the_package(tmp_p
 
 
 def test_direct_sampler_alias_agrees_across_loading_planning_and_estimation(tmp_path):
-    from pipeline.config import apply_run_defaults
-    from pipeline.protocol.direct_rating import build_direct_assignments, estimate_direct_calls
+    from eigenbench.config import apply_run_defaults
+    from eigenbench.protocol.direct_rating import build_direct_assignments, estimate_direct_calls
 
     models = dict.fromkeys(["a", "b", "c"])
     sampling = {"sampler_mode": " Random_Partition ", "group_size": 2, "sampler_seed": 17}
@@ -85,7 +85,7 @@ def test_direct_sampler_alias_agrees_across_loading_planning_and_estimation(tmp_
 
 
 def test_per_model_budgets_are_resolved_and_validated():
-    from pipeline.protocol.direct_rating import resolve_direct_generation_settings
+    from eigenbench.protocol.direct_rating import resolve_direct_generation_settings
     from inspect_pipeline.generation import phase_config
     settings = resolve_direct_generation_settings({"generation": {"reflection": {
         "max_tokens": 512, "per_model": {"api": {"max_tokens": 2048}},

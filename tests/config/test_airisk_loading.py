@@ -6,8 +6,8 @@ import pytest
 def test_airisk_id_downloads_once_and_selects_unique_questions(tmp_path, monkeypatch):
     import huggingface_hub
     from huggingface_hub.errors import LocalEntryNotFoundError
-    from pipeline.config import datasets as loaders
-    from pipeline.config.airisk import DATASET_ID, DATASET_REVISION
+    from eigenbench.config import datasets as loaders
+    from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
     from scripts import prepare_airiskdilemmas
 
     source = tmp_path / "model_eval.jsonl"
@@ -55,7 +55,7 @@ def test_airisk_id_downloads_once_and_selects_unique_questions(tmp_path, monkeyp
     ([{"dilemma": ""}, {"dilemma": ""}], "empty"),
 ])
 def test_airisk_rejects_malformed_action_pairs(rows, message):
-    from pipeline.config.airisk import paired_dilemmas
+    from eigenbench.config.airisk import paired_dilemmas
 
     with pytest.raises(ValueError, match=message):
         paired_dilemmas(rows)
@@ -63,7 +63,7 @@ def test_airisk_rejects_malformed_action_pairs(rows, message):
 
 def test_airisk_does_not_redownload_malformed_cached_data(tmp_path, monkeypatch):
     import huggingface_hub
-    from pipeline.config.airisk import load_airisk_scenarios
+    from eigenbench.config.airisk import load_airisk_scenarios
 
     source = tmp_path / "model_eval.jsonl"
     source.write_text('{"dilemma": "unpaired"}\n')

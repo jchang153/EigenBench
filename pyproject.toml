@@ -37,7 +37,7 @@ Paper = "https://arxiv.org/abs/2509.01938"
 Repository = "https://github.com/jchang153/eigenbench"
 
 [tool.setuptools.packages.find]
-include = ["pipeline*", "inspect_pipeline*", "scripts*"]
+include = ["eigenbench*", "inspect_pipeline*", "scripts*"]
 
 [tool.uv]
 # uv also resolves optional extras. vLLM source builds require CUDA.

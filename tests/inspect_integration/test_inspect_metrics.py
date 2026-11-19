@@ -57,7 +57,7 @@ def test_native_metrics_match_frozen_baseline(name, artifacts, tmp_path):
     prefix = "" if name == "direct" else "btd_d2/"
     folder = "direct_rating" if name == "direct" else "btd_d2"
     trust = np.fromstring(frozen[f"{folder}/eigentrust.txt"].split("[")[1].split("]")[0], sep=",")
-    from pipeline.analysis.fit import eigentrust_to_elo
+    from eigenbench.analysis.fit import eigentrust_to_elo
     elo = eigentrust_to_elo(trust, len(trust))
     if name == "direct":
         exact = sorted(frozen["direct_rating/summary.json"], key=lambda row: row["model_index"])
@@ -154,7 +154,7 @@ def test_repeated_comparisons_are_kept_by_cleaning(tmp_path):
 
 
 def test_rectangular_criteria_fails_before_fitting(tmp_path, monkeypatch):
-    import pipeline.analysis.pairwise as analysis
+    import eigenbench.analysis.pairwise as analysis
     rows, config = _fixture("pairwise", tmp_path)
     config["training"]["separate_criteria"] = True
     def forbidden(*args, **kwargs):
@@ -236,7 +236,7 @@ RUN_SPEC["training"] = {"enabled": True, "max_epochs": 1, "dims": [2]}
 def test_real_direct_metrics_match_export(tmp_path, ambiguous):
     from inspect_ai.log import read_eval_log
     from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
-    from pipeline.analysis.eigentrust import NonUniqueStationaryError
+    from eigenbench.analysis.eigentrust import NonUniqueStationaryError
     from scripts.run_train import main
 
     # A minimal callable mock exercises persistence without external providers.

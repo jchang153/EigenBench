@@ -6,7 +6,7 @@ import random
 import re
 from typing import Callable
 
-from pipeline.config.run_spec import (
+from eigenbench.config.run_spec import (
     DIRECT_SAMPLER_ALIASES as DIRECT_SAMPLER_ALIASES,
     DIRECT_SAMPLER_ALL_TO_ALL,
     DIRECT_SAMPLER_BALANCED,

@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-# Inspect loads task files outside their package.
+# Inspect puts this directory on sys.path. Prefer the eigenbench package.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
+if sys.path[:1] != [str(_REPO_ROOT)]:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from inspect_ai import Task, task  # noqa: E402
@@ -23,8 +23,8 @@ from inspect_ai.model import ChatMessageSystem, ChatMessageUser, Model  # noqa: 
 from inspect_ai.scorer import Score, Target, mean, scorer  # noqa: E402
 from inspect_ai.solver import Generate, Solver, TaskState, solver  # noqa: E402
 
-from pipeline.protocol import RESPONSE_SYSTEM_MESSAGE
-from pipeline.protocol.pairwise import (
+from eigenbench.protocol import RESPONSE_SYSTEM_MESSAGE
+from eigenbench.protocol.pairwise import (
     build_comparison_prompt,
     build_reflection_prompt,
     build_reflection_user,
@@ -33,7 +33,7 @@ from pipeline.protocol.pairwise import (
     _extract_valid_criterion_scores,
     validate_partial_criteria_response,
 )
-from pipeline.protocol.pairwise_plan import (
+from eigenbench.protocol.pairwise_plan import (
     PAIRWISE_PLAN_VERSION,
     pairwise_comparisons,
     plan_pairwise_groups,
@@ -444,7 +444,7 @@ def eigenbench_pairwise(
 
     from inspect_pipeline.context import resolve_spec_ref, with_eval_model
     from inspect_pipeline.models import check_distinct_local_servers
-    from pipeline.config import load_run_spec
+    from eigenbench.config import load_run_spec
 
     models = with_eval_model(spec, models)
     # One task serves the whole panel concurrently.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pipeline.protocol.extension import (
+from eigenbench.protocol.extension import (
     DIRECT, PAIRWISE, Plan, detect_mode, model_names, plan_additions, scenarios_of,
 )
 
@@ -160,8 +160,8 @@ def _source_model_identities(source: Path, records: list[dict], mode: str, *,
 def _prepare_extension(
     spec_ref, new_models=None, *, additional_scenarios=None, include_self=None, seed=42,
 ):
-    from pipeline.config import load_run_spec
-    from pipeline.records import load_records
+    from eigenbench.config import load_run_spec
+    from eigenbench.records import load_records
 
     from inspect_pipeline.provenance import changed_scenarios, constitution_differs
     from ..context import load_selection, resolve_spec_ref
@@ -338,7 +338,7 @@ def extend_run(
         if len(new_records) != len(plan.edges):
             raise RuntimeError("extension did not collect the complete plan; nothing appended")
         # Never overwrite concurrent changes to the source or an independently-created output.
-        from pipeline.records import load_records
+        from eigenbench.records import load_records
         if load_records(str(prepared["source"])) != prepared["records"]:
             raise RuntimeError("source records changed during collection; export the log manually")
         if prepared["output"] != prepared["source"] and prepared["output"].exists():

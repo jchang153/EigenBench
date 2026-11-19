@@ -220,7 +220,7 @@ def test_changed_vllm_endpoint_refuses_saved_export(tmp_path, monkeypatch, insta
     ({"config": GenerateConfig(seed=1)}, {"config": GenerateConfig(seed=2)}),
 ], ids=["revision", "backend", "config"])
 def test_changed_model_instance_settings_refuse_completed_export(run_dir, before, after):
-    from pipeline.config import load_run_spec
+    from eigenbench.config import load_run_spec
 
     _, write_spec = run_dir
     spec = write_spec()

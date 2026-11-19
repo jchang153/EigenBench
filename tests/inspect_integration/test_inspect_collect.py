@@ -256,7 +256,7 @@ def test_programmatic_run_and_analysis(run_dir):
     # rerun short-circuits on the completed file
     assert len(collect_direct_ratings_inspect(str(spec_path))) == len(records)
 
-    from pipeline.analysis.direct_rating import run_direct_analysis
+    from eigenbench.analysis.direct_rating import run_direct_analysis
 
     run_direct_analysis(
         records=records,
@@ -349,7 +349,7 @@ def test_vllm_resolver_refuses_previously_connected_base(monkeypatch):
 
 
 def test_direct_estimate_counts_the_actual_providers(run_dir, monkeypatch):
-    from pipeline.config import load_run_spec
+    from eigenbench.config import load_run_spec
     from inspect_pipeline.collection.direct_rating import estimate_direct_calls_for_spec
     import inspect_pipeline.models as mapping
 
@@ -384,7 +384,7 @@ def test_direct_estimate_counts_the_actual_providers(run_dir, monkeypatch):
 def test_default_spec_builds_without_arguments(monkeypatch):
     """`inspect eval inspect_pipeline/eigenbench.py` needs no -T spec."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-key")
-    import pipeline.config.airisk as airisk
+    import eigenbench.config.airisk as airisk
     from inspect_pipeline.context import DEFAULT_SPEC, _run_context
     from inspect_pipeline.eigenbench import eigenbench
 
@@ -628,8 +628,8 @@ def test_direct_extension_covers_each_scenario_once(
 ):
     from collections import Counter
 
-    from pipeline.protocol.extension import plan_addition, projected_counts
-    from pipeline.protocol.direct_rating import build_direct_assignments
+    from eigenbench.protocol.extension import plan_addition, projected_counts
+    from eigenbench.protocol.direct_rating import build_direct_assignments
 
     names = [f"model_{i}" for i in range(8)]
     scenarios = [(i, f"Scenario {i}") for i in range(scenario_count)]
@@ -678,7 +678,7 @@ def test_extend_adds_a_model(run_dir, monkeypatch):
 
     from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     from inspect_pipeline.collection.extension import extend_run
-    from pipeline.protocol.extension import count_matrix, detect_mode, model_names, plan_addition, projected_counts
+    from eigenbench.protocol.extension import count_matrix, detect_mode, model_names, plan_addition, projected_counts
 
     tmp_path, write_spec = run_dir
     spec_path = write_spec(sampler_mode="all_to_all")
@@ -746,7 +746,7 @@ def test_pairwise_extend_collects(tmp_path, monkeypatch, new_names, extra_count,
     from inspect_ai.model import ModelOutput, get_model
 
     from inspect_pipeline.collection.extension import extend_run
-    from pipeline.protocol.extension import PAIRWISE, count_matrix, model_names, plan_addition
+    from eigenbench.protocol.extension import PAIRWISE, count_matrix, model_names, plan_addition
 
     names = ["a", "b", "c"]
     scenarios = [f"Scenario {i}: what do you do?" for i in range(6)]
@@ -828,7 +828,7 @@ RUN_SPEC = {{
     if recurring:
         # The plan asks for its first comparison twice.
         import dataclasses
-        from pipeline.protocol import extension as extend_module
+        from eigenbench.protocol import extension as extend_module
 
         plan_pairwise = extend_module._plan_pairwise
         def with_repeat(plan, *args, **kwargs):
@@ -987,8 +987,8 @@ def test_extension_spec_models_and_scenarios(run_dir, new_names, native):
 def test_joint_model_planner_and_pairwise_analysis():
     from collections import Counter
 
-    from pipeline.protocol.extension import plan_additions, projected_counts
-    from pipeline.analysis.comparisons import handle_inconsistencies_with_ties_criteria
+    from eigenbench.protocol.extension import plan_additions, projected_counts
+    from eigenbench.analysis.comparisons import handle_inconsistencies_with_ties_criteria
 
     names = ["a", "b", "c"]
     records = [
@@ -1016,7 +1016,7 @@ def test_joint_model_planner_and_pairwise_analysis():
 def test_extension_rejects_incompatible_inputs(run_dir):
     from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
     from inspect_pipeline.collection.extension import extend_run
-    from pipeline.protocol.extension import plan_additions
+    from eigenbench.protocol.extension import plan_additions
 
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
@@ -1037,7 +1037,7 @@ def test_extension_rejects_incompatible_inputs(run_dir):
 @pytest.mark.parametrize("new_count", [2, 12])
 def test_many_new_models_share_one_population(include_self, new_count):
     from collections import Counter
-    from pipeline.protocol.extension import plan_additions, projected_counts
+    from eigenbench.protocol.extension import plan_additions, projected_counts
 
     names = ["a", "b", "c"]
     records = [

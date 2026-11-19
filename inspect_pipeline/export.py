@@ -1,7 +1,7 @@
 """Convert an Inspect eval log into the legacy ``evaluations.jsonl`` contract.
 
 Record construction preserves the historical collector schema so that
-``pipeline.analysis.direct_trust.aggregate_direct_records`` and the ValueArena
+``eigenbench.analysis.direct_trust.aggregate_direct_records`` and the ValueArena
 Space consume Inspect-collected output unchanged.
 """
 
@@ -15,8 +15,8 @@ from pathlib import Path
 
 from inspect_ai.log import EvalLog, read_eval_log
 
-from pipeline.protocol.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
-from pipeline.records import write_records
+from eigenbench.protocol.direct_rating import DIRECT_SAMPLER_ALL_TO_ALL, parse_direct_ratings
+from eigenbench.records import write_records
 
 from .phases import STORE_JUDGMENT_RAW, STORE_REFLECTION
 from .generation import FAILURE_POLICIES, STORE_RESPONSE, InvalidJudgmentError
@@ -390,7 +390,7 @@ def write_evaluations_atomic(path: str | Path, records: list[dict]) -> None:
 
 def _appended_model_identities(target: Path, existing: list[dict], records: list[dict],
                                panel: list[dict], *, direct: bool, log_dir: Path) -> dict[str, dict]:
-    from pipeline.protocol.extension import DIRECT, PAIRWISE
+    from eigenbench.protocol.extension import DIRECT, PAIRWISE
 
     from .collection.extension import _source_model_identities
 
@@ -475,7 +475,7 @@ def export_log(
     combined = records
     model_identities = None
     if append:
-        from pipeline.records import load_records
+        from eigenbench.records import load_records
 
         source = Path(meta["extension_source"]) if meta.get("extension_source") else None
         if source:
@@ -526,7 +526,7 @@ def export_log(
 
     cache_target = cached_responses_path or meta.get("cached_responses_path")
     if cache_target:
-        from pipeline.records import append_records, load_records
+        from eigenbench.records import append_records, load_records
 
         existing = {
             int(row["scenario_index"]): row.get("responses")

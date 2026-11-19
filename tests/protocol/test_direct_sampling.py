@@ -20,7 +20,7 @@ def _judges_per_evaluee(plan, scenario):
     (14, False, 5, 11), # some judges must score both full and remainder groups
 ])
 def test_partitioned_planning_finds_a_schedule(models, include_self, group_size, redundancy):
-    from pipeline.protocol.direct_rating import build_direct_assignments
+    from eigenbench.protocol.direct_rating import build_direct_assignments
 
     plan = build_direct_assignments([(0, "s0"), (1, "s1")], dict.fromkeys(range(models)),
                                     include_self=include_self, sampler_mode="partitioned_random_judge",
@@ -42,7 +42,7 @@ def test_partitioned_planning_finds_a_schedule(models, include_self, group_size,
 
 @pytest.mark.parametrize("models,group_size,redundancy", [(6, 3, 4), (9, 7, 8), (14, 5, 12)])
 def test_partitioned_planning_reports_insufficient_judge_capacity(models, group_size, redundancy):
-    from pipeline.protocol.direct_rating import build_direct_assignments
+    from eigenbench.protocol.direct_rating import build_direct_assignments
 
     with pytest.raises(ValueError, match="exceed the capacity of distinct non-self judges"):
         build_direct_assignments([(0, "s0")], dict.fromkeys(range(models)), include_self=False,

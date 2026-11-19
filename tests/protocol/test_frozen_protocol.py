@@ -7,8 +7,8 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "inspect_migration
 
 
 def test_shared_prompts_and_direct_plans_match_pre_migration_fixture():
-    from pipeline.protocol import direct_rating as direct
-    from pipeline.protocol.pairwise import (
+    from eigenbench.protocol import direct_rating as direct
+    from eigenbench.protocol.pairwise import (
         build_comparison_prompt, build_comparison_user,
         build_reflection_prompt, build_reflection_user,
     )
@@ -33,7 +33,7 @@ def test_shared_prompts_and_direct_plans_match_pre_migration_fixture():
 
 
 def test_shared_cache_reader_preserves_both_historical_row_policies(tmp_path):
-    from pipeline.protocol.response_cache import load_cached_responses, count_cached_responses
+    from eigenbench.protocol.response_cache import load_cached_responses, count_cached_responses
 
     path = tmp_path / "responses.jsonl"
     path.write_text('\n'.join(json.dumps(row) for row in [

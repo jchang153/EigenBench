@@ -14,7 +14,7 @@ def _btd(scores, log_lambda):
 
 
 def test_trust_matrix_is_unchanged_by_a_score_shift():
-    from pipeline.analysis.eigentrust import compute_trust_matrix, compute_trust_matrix_ties, row_normalize
+    from eigenbench.analysis.eigentrust import compute_trust_matrix, compute_trust_matrix_ties, row_normalize
 
     scores = torch.tensor([[0.2, 1.0, -0.5], [0.0, 0.3, 0.9], [1.2, -0.4, 0.1]])
     log_lambda = torch.full((3, 1), 0.2)
@@ -26,7 +26,7 @@ def test_trust_matrix_is_unchanged_by_a_score_shift():
 
 
 def test_trust_matrix_keeps_ties_that_outweigh_an_underflowing_win():
-    from pipeline.analysis.eigentrust import compute_trust_matrix_ties
+    from eigenbench.analysis.eigentrust import compute_trust_matrix_ties
 
     # Row 0: s = [e^120, 1], lambda = e^60, so S = [1.5, 0.5] * e^120.
     scores = torch.tensor([[120.0, 0.0], [0.0, 0.0]])
@@ -37,7 +37,7 @@ def test_trust_matrix_keeps_ties_that_outweigh_an_underflowing_win():
 
 
 def test_trust_matrix_keeps_ties_when_the_other_strength_rounds_away():
-    from pipeline.analysis.eigentrust import compute_trust_matrix_ties
+    from eigenbench.analysis.eigentrust import compute_trust_matrix_ties
 
     scores = torch.tensor([[20.0, -20.0], [0.0, 0.0]])
     trust = compute_trust_matrix_ties(_btd(scores, torch.tensor([[20.0], [0.0]])))
