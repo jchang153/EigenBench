@@ -17,7 +17,8 @@ from eigenbench.config import (
 )
 from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
 from eigenbench.protocol.direct_rating import (
-    build_direct_assignments, resolve_direct_generation_settings, resolve_direct_sampling_settings,
+    build_direct_assignments, direct_input_sha256, direct_response_keys,
+    resolve_direct_generation_settings, resolve_direct_sampling_settings,
 )
 from eigenbench.protocol.response_cache import cached_seed
 
@@ -178,6 +179,7 @@ def _run_context_from_spec(
         from eigenbench.protocol.pairwise_plan import resolve_pairwise_generation_settings
         generation = resolve_pairwise_generation_settings(collection_cfg)
     assignments = []
+    assignments_path = collection_cfg.get("assignments_path")
     if is_direct:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
@@ -186,8 +188,11 @@ def _run_context_from_spec(
             plan_sampling = sampling if resolved_sampler_seed is None else {
                 **sampling, "sampler_seed": resolved_sampler_seed,
             }
+            if assignments_path and set(spec_models) != set(run_spec["models"]):
+                raise ValueError("Explicit assignments cannot add or remove models from the spec panel")
             assignments = build_direct_assignments(
-                selected, spec_models, include_self=include_self, **plan_sampling
+                selected, spec_models, include_self=include_self,
+                assignments_path=assignments_path, criteria=criteria, **plan_sampling,
             )
     else:
         sampling = {"sampler_mode": collection_cfg.get("sampler_mode")}
@@ -209,6 +214,11 @@ def _run_context_from_spec(
 
     seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, spec_models,
                        merge_rows=is_direct)
+    plan_meta = {}
+    if assignments_path and build_assignments:
+        needed = direct_response_keys(assignments)
+        seed = {key: answer for key, answer in seed.items() if key in needed}
+        plan_meta["assignments_sha256"] = direct_input_sha256(assignments)
 
     return {
         "is_direct": is_direct,
@@ -228,6 +238,7 @@ def _run_context_from_spec(
         "resolve_model": _model_resolver(spec_models),
         "seed": seed,
         "meta": {
+            **plan_meta,
             "run_name": run_spec["name"],
             "criteria": criteria,
             "model_order": list(spec_models),
@@ -244,12 +255,12 @@ def _run_context_from_spec(
                       for nick, value in spec_models.items()],
             "dataset": {
                 **{key: value for key, value in run_spec["dataset"].items() if key != "path"},
-                "selected_sha256": hashlib.sha256(json.dumps(selected).encode()).hexdigest(),
+                "selected_sha256": direct_input_sha256(selected),
                 **({"source": DATASET_ID, "revision": DATASET_REVISION}
                    if not run_spec["dataset"].get("path")
                    and str(run_spec["dataset"].get("id", "")).strip().lower() == "airisk" else {}),
             },
-            "criteria_sha256": hashlib.sha256(json.dumps(criteria).encode()).hexdigest(),
+            "criteria_sha256": direct_input_sha256(criteria),
             "sampling": sampling,
             "generation": generation,
             "max_attempts": max_attempts,

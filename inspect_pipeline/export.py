@@ -273,15 +273,35 @@ def responses_from_log(log: str | Path | EvalLog) -> list[dict]:
     rows = []
     for s_idx in sorted(responses):
         complete = responses[s_idx]
-        if all(nick in complete for nick in model_order):
+        if ("assignments_sha256" in meta or all(nick in complete for nick in model_order)):
             rows.append(
                 {
                     "scenario": scenarios[s_idx],
                     "scenario_index": s_idx,
-                    "responses": {nick: complete[nick] for nick in model_order},
+                    "responses": {nick: complete[nick] for nick in model_order if nick in complete},
                 }
             )
     return rows
+
+
+def append_response_updates(path: str | Path, rows: list[dict]) -> None:
+    """Append cumulative response rows, so readers of the last row see the full cache."""
+    if not rows:
+        return
+    from eigenbench.records import append_records, load_records
+
+    existing: dict[int, dict] = {}
+    for row in load_records(str(path)):
+        if isinstance(row, dict) and "scenario_index" in row and isinstance(row.get("responses"), dict):
+            existing.setdefault(int(row["scenario_index"]), {}).update(row["responses"])
+    updates = []
+    for row in rows:
+        previous = existing.setdefault(row["scenario_index"], {})
+        if any(previous.get(nick) != text for nick, text in row["responses"].items()):
+            previous.update(row["responses"])
+            updates.append({**row, "responses": dict(previous)})
+    if updates:
+        append_records(str(path), updates)
 
 
 def write_inspect_run_info(run_dir: str | Path, log: EvalLog | list, *, append: bool = False,
@@ -526,19 +546,6 @@ def export_log(
 
     cache_target = cached_responses_path or meta.get("cached_responses_path")
     if cache_target:
-        from eigenbench.records import append_records, load_records
-
-        existing = {
-            int(row["scenario_index"]): row.get("responses")
-            for row in load_records(str(cache_target))
-            if isinstance(row, dict) and "scenario_index" in row
-        }
-        new_rows = [
-            row
-            for row in responses_from_log(log)
-            if existing.get(row["scenario_index"]) != row["responses"]
-        ]
-        if new_rows:
-            append_records(str(cache_target), new_rows)
+        append_response_updates(cache_target, responses_from_log(log))
 
     return records, target

@@ -35,6 +35,7 @@ from .phased import eval_phase, model_phase, use_run_context
 from inspect_pipeline.eigenbench import eigenbench
 from inspect_pipeline.phased import eigenbench_judge, eigenbench_responses
 from ..export import (
+    append_response_updates,
     check_complete,
     export_log,
     records_from_log,
@@ -160,21 +161,25 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
 
 
 def _persist_responses(ctx, responses, generated) -> None:
-    """Append scenarios with new responses, once every model has one, to the response cache."""
+    """Append newly generated responses to the shared cache."""
 
     path = ctx["collection_cfg"].get("cached_responses_path")
     nicks = list(ctx["models"])
+    explicit = ctx["sampling"]["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT
     rows = [
         {"scenario": scenario, "scenario_index": int(s_idx),
-         "responses": {nick: responses[int(s_idx)][nick] for nick in nicks}}
+         "responses": dict(responses[int(s_idx)])}
         for s_idx, scenario in ctx["selected"]
         if any((int(s_idx), nick) in generated for nick in nicks)
-        and all(nick in responses[int(s_idx)] for nick in nicks)
+        and (explicit or all(nick in responses[int(s_idx)] for nick in nicks))
     ]
     if path and rows:
-        from eigenbench.records import append_records
+        if explicit:
+            append_response_updates(path, rows)
+        else:
+            from eigenbench.records import append_records
 
-        append_records(path, rows)
+            append_records(path, rows)
 
 
 def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | None = None) -> list[dict]:
@@ -195,11 +200,16 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     judge_logs = []
     response_errors: dict[tuple[int, str], str] = {}
+    needed_cells = direct_response_keys(ctx["assignments"])
+    explicit = ctx["sampling"]["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
     for nick in nicks:
-        missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
+        missing = [
+            int(s) for s, _ in ctx["selected"]
+            if nick not in responses[int(s)] and (not explicit or (s, nick) in needed_cells)
+        ]
         if not missing:
             continue
         with model_phase(ctx, nick, reuse_resolver=True) as phase:
@@ -220,12 +230,7 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     _persist_responses(ctx, responses, generated)
 
     # Every policy needs every response: a judgment cannot be made without one.
-    needed = sorted({
-        (int(a["scenario_index"]), eval_nick)
-        for a in ctx["assignments"]
-        for eval_nick in a["eval_nicks"]
-        if eval_nick not in responses[int(a["scenario_index"])]
-    })
+    needed = sorted((s, nick) for s, nick in needed_cells if nick not in responses[s])
     if needed:
         shown = "\n  ".join(
             f"scenario_index={s} evaluee={nick}: {response_errors.get((s, nick), 'no response in the log')}"
@@ -379,7 +384,7 @@ def collect_direct_ratings_inspect(
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
     existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
-    if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
+    if (collection_cfg.get("sampler_mode") not in (DIRECT_SAMPLER_ALL_TO_ALL, DIRECT_SAMPLER_EXPLICIT)
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
             resolved_seed = (previous.eval.task_args_passed or {}).get("resolved_sampler_seed")

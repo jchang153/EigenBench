@@ -6,7 +6,10 @@ import pytest
 
 from eigenbench.config import load_run_spec
 from eigenbench.protocol.direct_rating import direct_input_sha256
+from eigenbench.protocol.response_cache import load_cached_responses
+from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 from inspect_pipeline.context import load_selection
+from inspect_pipeline.eigenbench import eigenbench
 from scripts.run import estimate_calls
 from tests.inspect_integration.test_inspect_collect import run_dir  # noqa: F401
 
@@ -36,6 +39,35 @@ def frozen(run_dir):
     manifest = tmp / "assignments.json"
     manifest.write_text(json.dumps(plan))
     return str(path), manifest, plan
+
+
+@pytest.mark.parametrize("phased", [False, True])
+def test_sparse_frozen_plan_estimates_collects_and_caches_exact_edges(frozen, phased):
+    spec, manifest, plan = frozen
+    with open(spec, "a") as handle:
+        handle.write(f'\nRUN_SPEC["collection"]["inspect"]["phased"] = {phased!r}\n')
+    cache = manifest.with_name("responses.jsonl")
+    cache.write_text(json.dumps({"scenario_index": 3, "responses": {"gamma": "already cached"}}) + "\n")
+    rows = plan["judgments"]
+    expected = {(r["scenario_index"], r["judge"], r["evaluee"], r["sampling_round"]) for r in rows}
+    task = eigenbench(spec, panel_metrics=False)
+    assert {tuple(s.metadata[k] for k in ("scenario_index", "judge_nick", "eval_nick", "sampling_round"))
+            for s in task.dataset} == expected
+    estimate = estimate_calls(spec)
+    assert estimate["num_scenarios"] == 2
+    assert (estimate["response_tasks"], estimate["rating_tasks"], estimate["total_logical_generations"]) == (
+        2, 3, 8
+    )
+    output = collect_direct_ratings_inspect(spec, scoring=False)
+    assert {(r["scenario_index"], r["judge"]["name"], r["evaluee"]["name"], r["sampling"]["round"])
+            for r in output} == expected
+    assert len({r["response"] for r in output if r["scenario_index"] == 3}) == 1
+    cached = load_cached_responses(str(cache), merge_rows=False)
+    assert {index: set(responses) for index, responses in cached.items()} == {
+        1: {"alpha"}, 3: {"alpha", "gamma"}
+    }
+    assert estimate_calls(spec)["response_tasks"] == 0
+    assert collect_direct_ratings_inspect(spec, scoring=False) == output
 
 
 @pytest.mark.parametrize(("mutation", "message"), [
