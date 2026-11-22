@@ -18,10 +18,11 @@ from tests.inspect_integration.test_inspect_collect import run_dir  # noqa: F401
 @pytest.fixture
 def frozen(run_dir):
     tmp, write_spec = run_dir
-    path = write_spec(sampler_mode="explicit")
+    path = write_spec()
     with path.open("a") as spec:
         spec.write(
-            '\nRUN_SPEC["collection"]["assignments_path"] = "assignments.json"\n'
+            '\nRUN_SPEC["collection"].pop("sampler_mode")\n'
+            'RUN_SPEC["collection"]["assignments_path"] = "assignments.json"\n'
             'RUN_SPEC["collection"]["cached_responses_path"] = '
             f'{str(tmp / "responses.jsonl")!r}\n'
             'RUN_SPEC["dataset"]["start"] = 1\n'
@@ -40,6 +41,17 @@ def frozen(run_dir):
     manifest = tmp / "assignments.json"
     manifest.write_text(json.dumps(plan))
     return str(path), manifest, plan
+
+
+@pytest.mark.parametrize("with_manifest", [True, False])
+def test_explicit_is_not_a_sampler(run_dir, with_manifest):
+    _, write_spec = run_dir
+    path = write_spec(sampler_mode="explicit")
+    if with_manifest:
+        with path.open("a") as spec:
+            spec.write('\nRUN_SPEC["collection"]["assignments_path"] = "assignments.json"\n')
+    with pytest.raises(ValueError, match="sampler"):
+        load_run_spec(str(path))
 
 
 @pytest.mark.parametrize("phased", [False, True])

@@ -23,22 +23,24 @@ DIRECT_SAMPLER_ALIASES = {
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
     "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
     DIRECT_SAMPLER_PAIR_BALANCED: DIRECT_SAMPLER_PAIR_BALANCED,
-    "explicit": DIRECT_SAMPLER_EXPLICIT,
 }
 
 
 def normalize_direct_sampling_settings(collection: dict) -> dict:
     """Read direct sampler settings independently of the model panel."""
+    if collection.get("assignments_path"):
+        if {"sampler_mode", "sampler_seed", "group_size", "response_redundancy"} & collection.keys():
+            raise ValueError("collection.assignments_path cannot be combined with sampler settings")
+        # Label imported judgments in reports; this is not a selectable sampler.
+        return {"sampler_mode": DIRECT_SAMPLER_EXPLICIT}
     raw_mode = str(collection.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL)).strip().lower()
     mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
     if mode is None:
         raise ValueError(
             "direct collection.sampler_mode must be 'all_to_all', "
-            "'partitioned_random_judge', 'balanced_unique_judge', "
-            "'pair_balanced_random_matching', or 'explicit'"
+            "'partitioned_random_judge', 'balanced_unique_judge', or "
+            "'pair_balanced_random_matching'"
         )
-    if mode == DIRECT_SAMPLER_EXPLICIT:
-        return {"sampler_mode": mode}
     if mode == DIRECT_SAMPLER_PAIR_BALANCED:
         for key in ("response_redundancy", "group_size"):
             value = collection.get(key, 1)
@@ -201,23 +203,18 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
             raise ValueError("collection.assignments_path requires a non-extension direct-rating spec")
         if not isinstance(assignments_path, str) or not assignments_path.strip():
             raise ValueError("collection.assignments_path must be a nonempty path")
-        if (collection.get("sampler_mode", DIRECT_SAMPLER_EXPLICIT) != DIRECT_SAMPLER_EXPLICIT
-                or {"sampler_seed", "group_size", "response_redundancy"} & collection.keys()):
-            raise ValueError("collection.assignments_path cannot be combined with sampler settings")
         collection["assignments_path"] = str((run_dir / Path(assignments_path).expanduser()).resolve())
-        collection["sampler_mode"] = DIRECT_SAMPLER_EXPLICIT
     if mode == "direct_rating":
         sampling = normalize_direct_sampling_settings(collection)
         if sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED and normalized.get("extension"):
             raise ValueError("pair_balanced_random_matching does not support extension runs")
-        if sampling["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT and assignments_path is None:
-            raise ValueError("sampler_mode='explicit' requires collection.assignments_path")
         num_models = len(normalized.get("models", {}))
         if num_models:
             validate_direct_sampling_panel(
                 sampling, num_models=num_models, include_self=direct["include_self"]
             )
-        collection.update(sampling)
+        if assignments_path is None:
+            collection.update(sampling)
 
     if "extension" in normalized:
         extension = normalized["extension"]

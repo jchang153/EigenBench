@@ -404,7 +404,6 @@ def build_direct_assignments(
     group_size: int | None = None,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
-    assignments_path: str | None = None,
     criteria: list[str] | None = None,
 ) -> list[dict]:
     """Materialize direct judge/evaluee assignments.
@@ -431,15 +430,7 @@ def build_direct_assignments(
         include_self=include_self,
     )
     mode = sampling["sampler_mode"]
-    if mode == DIRECT_SAMPLER_EXPLICIT:
-        if not assignments_path or criteria is None:
-            raise ValueError("Explicit assignments require a manifest and criteria")
-        return load_direct_assignments(
-            assignments_path, selected_scenarios, criteria, models, include_self=include_self
-        )
     if mode == DIRECT_SAMPLER_PAIR_BALANCED:
-        if assignments_path is not None:
-            raise ValueError("pair_balanced_random_matching cannot be combined with assignments_path")
         return _pair_balanced_assignments(
             selected_scenarios, model_nicks, include_self, sampling["sampler_seed"], criteria,
         )
@@ -651,12 +642,15 @@ def estimate_direct_calls(
         raise ValueError("num_scenarios and num_models must be non-negative")
     if num_openrouter_models is not None and not 0 <= num_openrouter_models <= num_models:
         raise ValueError("num_openrouter_models must be between zero and num_models")
-    sampling = normalize_direct_sampling_settings({
-        "sampler_mode": sampler_mode,
-        **({"group_size": group_size} if group_size is not None else {}),
-        "response_redundancy": response_redundancy,
-        "sampler_seed": sampler_seed,
-    })
+    if sampler_mode == DIRECT_SAMPLER_EXPLICIT:
+        sampling = {"sampler_mode": sampler_mode}
+    else:
+        sampling = normalize_direct_sampling_settings({
+            "sampler_mode": sampler_mode,
+            **({"group_size": group_size} if group_size is not None else {}),
+            "response_redundancy": response_redundancy,
+            "sampler_seed": sampler_seed,
+        })
     mode = sampling["sampler_mode"]
     sampled = mode in (
         DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_BALANCED, DIRECT_SAMPLER_PAIR_BALANCED,

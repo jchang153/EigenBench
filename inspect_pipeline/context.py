@@ -19,7 +19,7 @@ from eigenbench.config import (
 from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
 from eigenbench.protocol.direct_rating import (
     DIRECT_SAMPLER_PAIR_BALANCED,
-    build_direct_assignments, direct_input_sha256, direct_response_keys,
+    build_direct_assignments, direct_input_sha256, direct_response_keys, load_direct_assignments,
     resolve_direct_generation_settings, resolve_direct_sampling_settings,
 )
 from eigenbench.protocol.response_cache import cached_seed
@@ -175,12 +175,14 @@ def direct_plan(spec, selected, criteria, models, include_self, sampling, *,
             raise ValueError("Preview before collection or choose a new output directory")
         if not selected:
             raise ValueError("Cannot preview an empty scenario selection")
+    if external:
+        return load_direct_assignments(external, selected, criteria, models, include_self=include_self), None
     if (sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED
             and sampling["sampler_seed"] is None and resolved_seed is None):
         resolved_seed = randbits(64)
     seed = sampling.get("sampler_seed") if resolved_seed is None else resolved_seed
     assignments = build_direct_assignments(
-        selected, models, include_self=include_self, assignments_path=external,
+        selected, models, include_self=include_self,
         criteria=criteria, **{**sampling, "sampler_seed": seed},
     )
     if preview:

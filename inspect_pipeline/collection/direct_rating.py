@@ -378,7 +378,8 @@ def collect_direct_ratings_inspect(
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
     existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
-    if (collection_cfg.get("sampler_mode") not in (DIRECT_SAMPLER_ALL_TO_ALL, DIRECT_SAMPLER_EXPLICIT)
+    if (not collection_cfg.get("assignments_path")
+            and collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
             resolved_seed = (previous.eval.task_args_passed or {}).get("resolved_sampler_seed")

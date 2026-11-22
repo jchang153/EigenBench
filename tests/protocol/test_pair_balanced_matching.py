@@ -119,7 +119,7 @@ def test_singleton_panel_and_invalid_plans():
     with pytest.raises(ValueError, match="criteria"):
         plan(criteria=())
     with pytest.raises(ValueError, match="assignments_path"):
-        plan(assignments_path="manifest.json")
+        normalize_direct_sampling_settings({"assignments_path": "manifest.json", "sampler_mode": MODE})
     spec = {"evaluation": {"mode": "direct"}, "collection": {"sampler_mode": MODE},
             "extension": {"from_evaluations": "prior.jsonl"}}
     with pytest.raises(ValueError, match="extension"):
