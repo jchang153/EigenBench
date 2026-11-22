@@ -13,6 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
 DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
 DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
+DIRECT_SAMPLER_EXPLICIT = "explicit"
 DIRECT_SAMPLER_ALIASES = {
     "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
     "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
@@ -20,6 +21,7 @@ DIRECT_SAMPLER_ALIASES = {
     "random_partition": DIRECT_SAMPLER_PARTITIONED,
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
     "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
+    "explicit": DIRECT_SAMPLER_EXPLICIT,
 }
 
 
@@ -30,8 +32,10 @@ def normalize_direct_sampling_settings(collection: dict) -> dict:
     if mode is None:
         raise ValueError(
             "direct collection.sampler_mode must be 'all_to_all', "
-            "'partitioned_random_judge', or 'balanced_unique_judge'"
+            "'partitioned_random_judge', 'balanced_unique_judge', or 'explicit'"
         )
+    if mode == DIRECT_SAMPLER_EXPLICIT:
+        return {"sampler_mode": mode}
     group_size = int(collection.get("group_size", 4))
     if group_size <= 0:
         raise ValueError("direct collection.group_size must be positive")
@@ -51,6 +55,8 @@ def validate_direct_sampling_panel(settings: dict, *, num_models: int, include_s
     """Check settings against the model panel used to plan judgments."""
     if num_models <= 0:
         raise ValueError("direct sampling requires at least one model")
+    if settings["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT:
+        return
     max_redundancy = num_models if include_self else num_models - 1
     if settings["response_redundancy"] > max_redundancy:
         raise ValueError(
@@ -181,8 +187,21 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         # Keep explicit null if user sets it intentionally.
         collection["cached_responses_path"] = None
 
+    assignments_path = collection.get("assignments_path")
+    if assignments_path is not None:
+        if mode != "direct_rating" or normalized.get("extension"):
+            raise ValueError("collection.assignments_path requires a non-extension direct-rating spec")
+        if not isinstance(assignments_path, str) or not assignments_path.strip():
+            raise ValueError("collection.assignments_path must be a nonempty path")
+        if (collection.get("sampler_mode", DIRECT_SAMPLER_EXPLICIT) != DIRECT_SAMPLER_EXPLICIT
+                or {"sampler_seed", "group_size", "response_redundancy"} & collection.keys()):
+            raise ValueError("collection.assignments_path cannot be combined with sampler settings")
+        collection["assignments_path"] = str((run_dir / Path(assignments_path).expanduser()).resolve())
+        collection["sampler_mode"] = DIRECT_SAMPLER_EXPLICIT
     if mode == "direct_rating":
         sampling = normalize_direct_sampling_settings(collection)
+        if sampling["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT and assignments_path is None:
+            raise ValueError("sampler_mode='explicit' requires collection.assignments_path")
         num_models = len(normalized.get("models", {}))
         if num_models:
             validate_direct_sampling_panel(

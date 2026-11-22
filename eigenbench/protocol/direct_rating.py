@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 import random
 import re
 from typing import Callable
@@ -10,6 +13,7 @@ from eigenbench.config.run_spec import (
     DIRECT_SAMPLER_ALIASES as DIRECT_SAMPLER_ALIASES,
     DIRECT_SAMPLER_ALL_TO_ALL,
     DIRECT_SAMPLER_BALANCED,
+    DIRECT_SAMPLER_EXPLICIT,
     DIRECT_SAMPLER_PARTITIONED,
     normalize_direct_sampling_settings,
     validate_direct_sampling_panel,
@@ -224,7 +228,8 @@ def resolve_direct_sampling_settings(
 ) -> dict:
     settings = normalize_direct_sampling_settings(collection_cfg)
     validate_direct_sampling_panel(settings, num_models=num_models, include_self=include_self)
-    settings["group_size"] = min(settings["group_size"], num_models)
+    if "group_size" in settings:
+        settings["group_size"] = min(settings["group_size"], num_models)
     return settings
 
 
@@ -358,6 +363,8 @@ def build_direct_assignments(
     group_size: int = 4,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
+    assignments_path: str | None = None,
+    criteria: list[str] | None = None,
 ) -> list[dict]:
     """Materialize direct judge/evaluee assignments.
 
@@ -382,6 +389,12 @@ def build_direct_assignments(
         include_self=include_self,
     )
     mode = sampling["sampler_mode"]
+    if mode == DIRECT_SAMPLER_EXPLICIT:
+        if not assignments_path or criteria is None:
+            raise ValueError("Explicit assignments require a manifest and criteria")
+        return load_direct_assignments(
+            assignments_path, selected_scenarios, criteria, models, include_self=include_self
+        )
     group_size = sampling["group_size"]
     response_redundancy = sampling["response_redundancy"]
 
@@ -500,6 +513,64 @@ def build_direct_assignments(
             )
         assignments.extend(scenario_assignments)
     return assignments
+
+
+def direct_input_sha256(value: list) -> str:
+    return hashlib.sha256(json.dumps(value).encode()).hexdigest()
+
+
+def load_direct_assignments(path: str, selected, criteria, models, *, include_self: bool) -> list[dict]:
+    """Validate a frozen list of directed judgments before constructing Inspect samples."""
+    try:
+        plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read direct assignments at {path}: {exc}") from exc
+    if not isinstance(plan, dict) or plan.get("dataset_sha256") != direct_input_sha256(selected):
+        raise ValueError(f"{path}: dataset_sha256 does not match the selected scenarios")
+    # Constitutions can select different, overlapping subsets of the same dataset.
+    # A shared scenario index identifies the prompt, not which rubric's judges to use.
+    if plan.get("criteria_sha256") != direct_input_sha256(criteria):
+        raise ValueError(f"{path}: criteria_sha256 does not match the selected rubric")
+    rows = plan.get("judgments")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{path}: judgments must be a nonempty list")
+    scenarios = dict(selected)
+    indices = {nick: index for index, nick in enumerate(models)}
+    assignments = []
+    seen = set()
+    for line, row in enumerate(rows, 1):
+        label = f"{path}: judgment {line}"
+        if not isinstance(row, dict):
+            raise ValueError(f"{label} must be an object")
+        index, judge, evaluee, round_ = (
+            row.get("scenario_index"), row.get("judge"), row.get("evaluee"), row.get("sampling_round")
+        )
+        if type(index) is not int or index not in scenarios:
+            raise ValueError(f"{label}: scenario_index must name a selected scenario")
+        if any(not isinstance(nick, str) or nick not in indices for nick in (judge, evaluee)):
+            raise ValueError(f"{label}: judge and evaluee must both be in the model panel")
+        if type(round_) is not int or round_ < 0:
+            raise ValueError(f"{label}: sampling_round must be a non-negative integer")
+        if judge == evaluee and not include_self:
+            raise ValueError(f"{label}: self-judging is disabled")
+        key = (index, judge, evaluee)
+        if key in seen:
+            raise ValueError(f"{label}: duplicate judgment {key}")
+        seen.add(key)
+        assignments.append({
+            "scenario_index": index, "scenario": scenarios[index],
+            "judge_idx": indices[judge], "judge_nick": judge,
+            "eval_idxs": [indices[evaluee]], "eval_nicks": [evaluee],
+            "sampling_round": round_, "sampler_mode": DIRECT_SAMPLER_EXPLICIT,
+        })
+    return assignments
+
+
+def direct_response_keys(assignments) -> set[tuple[int, str]]:
+    return {
+        (row["scenario_index"], nick)
+        for row in assignments for nick in row["eval_nicks"]
+    }
 
 
 def estimate_direct_calls(
