@@ -484,8 +484,10 @@ def test_native_retry_counts_reused_scores_and_persistent_omission(write_spec, t
         assert native.metrics["a/elo"].value == native.metrics["b/elo"].value == 1500
 
 
-@pytest.mark.parametrize("policy", ["strict", "omit_invalid_judgments", "interrupted"])
-def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeypatch, policy):
+@pytest.mark.parametrize(("policy", "frozen"), [
+    ("strict", False), ("omit_invalid_judgments", False), ("interrupted", False), ("strict", True),
+])
+def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeypatch, policy, frozen):
     from inspect_ai import eval as inspect_eval
     from inspect_ai.log import read_eval_log
     from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
@@ -515,6 +517,24 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     # Force the first attempt's invalid completion into Inspect's generation cache.
     source += 'RUN_SPEC["collection"]["inspect"]["cache"] = True\n'
     source += f'with Path({str(spec_reads)!r}).open("a") as f:\n    f.write("loaded\\n")\n'
+    if frozen:
+        from eigenbench.config import load_run_spec
+        from eigenbench.protocol.direct_rating import direct_input_sha256
+        from inspect_pipeline.context import load_selection
+
+        manifest = tmp_path / "assignments.json"
+        selected, criteria = load_selection(*load_run_spec(str(spec)))
+        plan = {
+            "dataset_sha256": direct_input_sha256(selected),
+            "criteria_sha256": direct_input_sha256(criteria),
+            "judgments": [
+                {"scenario_index": i, "judge": judge, "evaluee": nick, "sampling_round": 0}
+                for i in range(SCENARIOS) for judge in NICKS for nick in NICKS
+            ],
+        }
+        manifest.write_text(json.dumps(plan))
+        source += 'RUN_SPEC["collection"].pop("sampler_mode", None)\n'
+        source += 'RUN_SPEC["collection"]["assignments_path"] = "assignments.json"\n'
     spec.write_text(source)
 
     out = tmp_path / "evaluations.jsonl"
@@ -542,6 +562,14 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     # Replacing the response under an existing judgment must be refused before inference.
     previous_export = out.read_bytes() if out.exists() else None
     original = cache.read_text()
+    if frozen:
+        plan["judgments"].reverse()
+        manifest.write_text(json.dumps(plan))
+        with pytest.raises(ValueError, match="explicit judgment plan changed"):
+            collect_direct_ratings_inspect(str(spec), resume_log=log)
+        assert not trace.exists()
+        plan["judgments"].reverse()
+        manifest.write_text(json.dumps(plan))
     cache.write_text(original.replace("[b] answer 0", "[b] answer 0 changed"))
     with pytest.raises(ValueError, match="cached answer"):
         collect_direct_ratings_inspect(str(spec), resume_log=log)

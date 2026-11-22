@@ -63,7 +63,7 @@ def _prompts_identity() -> str:
 def collection_identity(ctx: dict) -> dict:
     """Everything that shapes a collection that its records do not carry."""
 
-    return {
+    identity = {
         "models": [
             {"nick": nick, **model_identity(value)} for nick, value in ctx["models"].items()
         ],
@@ -76,6 +76,9 @@ def collection_identity(ctx: dict) -> dict:
             "scale": [ctx["scale_min"], ctx["scale_max"]],
         },
     }
+    if digest := ctx.get("meta", {}).get("assignments_sha256"):
+        identity["assignments_sha256"] = digest
+    return identity
 
 
 def direct_resume_identity(ctx: dict) -> str:
@@ -175,6 +178,8 @@ def _fingerprint_problems(path: Path, ctx: dict) -> list[str]:
             problems.append(f"{label} changed: {', '.join(keys)}")
     if stored.get("protocol") != current["protocol"]:
         problems.append("the judging protocol or its prompts changed")
+    if stored.get("assignments_sha256") != current.get("assignments_sha256"):
+        problems.append("the explicit judgment plan changed")
     return problems
 
 
@@ -212,6 +217,8 @@ def check_reusable(evaluations_path: str | Path, records: list[dict], ctx: dict,
     fingerprint = path.with_name(FINGERPRINT_FILE)
     if fingerprint.exists():
         problems += _fingerprint_problems(fingerprint, ctx)
+    elif ctx.get("meta", {}).get("assignments_sha256"):
+        problems.append(f"the explicit judgment plan cannot be verified without {FINGERPRINT_FILE}")
     if problems:
         listed = "\n  - ".join(problems)
         raise RuntimeError(

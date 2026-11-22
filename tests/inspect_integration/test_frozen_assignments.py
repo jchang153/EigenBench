@@ -10,6 +10,7 @@ from eigenbench.protocol.response_cache import load_cached_responses
 from inspect_pipeline.collection.direct_rating import collect_direct_ratings_inspect
 from inspect_pipeline.context import load_selection
 from inspect_pipeline.eigenbench import eigenbench
+from inspect_pipeline.provenance import FINGERPRINT_FILE
 from scripts.run import estimate_calls
 from tests.inspect_integration.test_inspect_collect import run_dir  # noqa: F401
 
@@ -68,6 +69,13 @@ def test_sparse_frozen_plan_estimates_collects_and_caches_exact_edges(frozen, ph
     }
     assert estimate_calls(spec)["response_tasks"] == 0
     assert collect_direct_ratings_inspect(spec, scoring=False) == output
+    rows.reverse()
+    manifest.write_text(json.dumps(plan))
+    with pytest.raises(RuntimeError, match="explicit judgment plan changed"):
+        collect_direct_ratings_inspect(spec, scoring=False)
+    manifest.with_name(FINGERPRINT_FILE).unlink()
+    with pytest.raises(RuntimeError, match="explicit judgment plan cannot be verified"):
+        collect_direct_ratings_inspect(spec, scoring=False)
 
 
 @pytest.mark.parametrize(("mutation", "message"), [

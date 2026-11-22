@@ -290,6 +290,8 @@ def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dic
                 "scale_max", "sampling", "generation")
     if any(key not in old_meta or old_meta[key] != ctx["meta"][key] for key in identity):
         raise ValueError("Cannot resume: the log's dataset, rubric, model panel or settings differ")
+    if old_meta.get("assignments_sha256") != ctx["meta"].get("assignments_sha256"):
+        raise ValueError("Cannot resume: the explicit judgment plan changed")
     config = log.eval.config
     if (config.limit is not None or config.sample_id is not None or config.sample_shuffle
             or config.epochs not in (None, 1)):
