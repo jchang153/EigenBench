@@ -20,7 +20,9 @@ from inspect_pipeline.provenance import (
 from eigenbench.config import load_run_spec
 from eigenbench.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
+    DIRECT_SAMPLER_EXPLICIT,
     build_direct_assignments,
+    direct_response_keys,
     estimate_direct_calls,
     resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
@@ -55,18 +57,22 @@ def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
         (evaluation_cfg.get("direct_rating", {}) or {}).get("include_self", True)
     )
     resolve_direct_generation_settings(collection_cfg)
-    selected, _criteria = load_selection(spec, run_dir)
+    selected, criteria = load_selection(spec, run_dir)
     sampling = resolve_direct_sampling_settings(
         collection_cfg, num_models=len(models), include_self=include_self
     )
     assignments = build_direct_assignments(
-        selected, models, include_self=include_self, **sampling
+        selected, models, include_self=include_self,
+        assignments_path=collection_cfg.get("assignments_path"), criteria=criteria, **sampling,
     )
     seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, models, merge_rows=True)
     return _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed)
 
 
 def _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed) -> dict:
+    if sampling["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT:
+        needed = direct_response_keys(assignments)
+        seed = {key: answer for key, answer in seed.items() if key in needed}
     routes = {nick: model_execution(value) for nick, value in models.items()}
     cached_routes = Counter(routes[nick] for _, nick in seed)
     openrouter_indices = {i for i, route in enumerate(routes.values()) if route == "openrouter"}

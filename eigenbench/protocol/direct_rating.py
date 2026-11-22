@@ -601,11 +601,19 @@ def estimate_direct_calls(
         "sampler_seed": sampler_seed,
     })
     mode = sampling["sampler_mode"]
-    group_size = min(sampling["group_size"], num_models)
-    response_redundancy = sampling["response_redundancy"]
+    sampled = mode in (DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_BALANCED)
+    group_size = min(sampling["group_size"], num_models) if mode == DIRECT_SAMPLER_PARTITIONED else None
+    response_redundancy = sampling.get("response_redundancy") if sampled else None
     # An exhaustive count is defined even for an empty panel and has no redundancy parameter.
     if mode != DIRECT_SAMPLER_ALL_TO_ALL:
         validate_direct_sampling_panel(sampling, num_models=num_models, include_self=include_self)
+    response_cells = None
+    if mode == DIRECT_SAMPLER_EXPLICIT:
+        if not assignments:
+            raise ValueError("Explicit call estimates require the loaded assignments")
+        response_cells = {
+            (row["scenario_index"], index) for row in assignments for index in row["eval_idxs"]
+        }
     if assignments is not None:
         total_edges = sum(len(assignment["eval_idxs"]) for assignment in assignments)
     elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
@@ -615,23 +623,24 @@ def estimate_direct_calls(
     else:
         total_edges = num_scenarios * num_models * response_redundancy
     edges_per_scenario = total_edges // num_scenarios if num_scenarios else 0
-    total_possible_responses = num_scenarios * num_models
+    total_possible_responses = (
+        len(response_cells) if response_cells is not None else num_scenarios * num_models
+    )
     response_tasks = total_possible_responses - min(
         max(0, int(cached_responses)), total_possible_responses
     )
     reflection_tasks = total_edges
     rating_tasks = reflection_tasks
     result = {
-        "num_scenarios": num_scenarios,
+        "num_scenarios": (len({scenario for scenario, _ in response_cells})
+                          if response_cells is not None else num_scenarios),
         "num_models": num_models,
         "include_self": include_self,
         "sampler_mode": mode,
-        "group_size": group_size if mode == DIRECT_SAMPLER_PARTITIONED else None,
-        "response_redundancy": (
-            response_redundancy if mode != DIRECT_SAMPLER_ALL_TO_ALL else None
-        ),
-        "sampler_seed": sampling["sampler_seed"] if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
-        "directed_edges_per_scenario": edges_per_scenario,
+        "group_size": group_size,
+        "response_redundancy": response_redundancy,
+        "sampler_seed": sampling["sampler_seed"] if sampled else None,
+        "directed_edges_per_scenario": edges_per_scenario if response_cells is None else None,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
         "reflection_tasks": reflection_tasks,
@@ -639,8 +648,15 @@ def estimate_direct_calls(
         "total_logical_generations": response_tasks + reflection_tasks + rating_tasks,
     }
     if num_openrouter_models is not None:
+        def responses_for(count: int, indices: set[int] | None) -> int:
+            if response_cells is None:
+                return num_scenarios * count
+            if indices is None:
+                raise ValueError("Explicit provider call estimates require model indices")
+            return sum(index in indices for _, index in response_cells)
+
         def calls_for(count: int, indices: set[int] | None, cached: int) -> int:
-            responses = num_scenarios * count
+            responses = responses_for(count, indices)
             responses -= min(max(0, cached), responses)
             if assignments is not None and indices is not None:
                 judge_tasks = sum(
@@ -655,7 +671,8 @@ def estimate_direct_calls(
 
         result["num_openrouter_models"] = num_openrouter_models
         result["cached_openrouter_response_hits"] = min(
-            max(0, int(cached_openrouter_responses)), num_scenarios * num_openrouter_models
+            max(0, int(cached_openrouter_responses)),
+            responses_for(num_openrouter_models, openrouter_model_indices),
         )
         result["openrouter_requests"] = calls_for(
             num_openrouter_models, openrouter_model_indices, cached_openrouter_responses
