@@ -202,6 +202,38 @@ For pairwise runs, use `evaluation.mode="pairwise_btd"` with
 collector's adaptive and mixed `all_to_all` pairwise protocols are not supported
 by Inspect. See the [protocol reference](docs/inspect-pairwise-protocol.md).
 
+### Frozen direct-rating assignments
+
+Set `collection.assignments_path` (relative to the run directory or absolute)
+instead of setting a sampler or seed. The JSON file contains
+`dataset_sha256`, `criteria_sha256`, and a nonempty `judgments` list. Each judgment names one
+directed edge, for example:
+
+```json
+{"scenario_index": 12, "judge": "model_a", "evaluee": "model_b", "sampling_round": 0}
+```
+
+Use zero-based source indices, before any slicing or shuffling. Get
+`selected, criteria = load_selection(spec, run_dir)` from `inspect_pipeline.context`
+and pass each list to `eigenbench.protocol.direct_rating.direct_input_sha256`
+for the two hashes, respectively. The collector rejects unknown models,
+duplicate judge/evaluee pairs on the same scenario (even across rounds),
+disallowed self-judgments, and a changed dataset or rubric.
+It does not fill or rebalance the plan.
+Run `--estimate-calls` to check the exact judgment count and uncached answers
+before collecting.
+
+For example, **Pair-Balanced Random Matching** draws a one-to-one judge assignment
+for each prompt while keeping judge/answerer pair counts within one of each other
+per constitution. This is an example of a schedule prepared outside Inspect, not
+a built-in sampler mode. Constitutions can select different, overlapping prompt
+sets: count source scenario IDs once for run-wide coverage, but separately for
+each constitution's coverage.
+
+To keep second judgments out of the primary ranking, put them in a separate
+spec and output directory with `training.enabled=False`. Use the same source
+indices and frozen `collection.cached_responses_path` in both specs.
+
 ### Optional bootstrap
 
 ```python
