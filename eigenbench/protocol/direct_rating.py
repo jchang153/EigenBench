@@ -14,6 +14,7 @@ from eigenbench.config.run_spec import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     DIRECT_SAMPLER_BALANCED,
     DIRECT_SAMPLER_EXPLICIT,
+    DIRECT_SAMPLER_PAIR_BALANCED,
     DIRECT_SAMPLER_PARTITIONED,
     normalize_direct_sampling_settings,
     validate_direct_sampling_panel,
@@ -354,13 +355,51 @@ def _rotation_schedule(rng, model_nicks, scenario_index, scenario, mode, group_s
     ]
 
 
+def _pair_balanced_assignments(selected, model_nicks, include_self, seed, criteria):
+    """Draw one perfect matching per prompt under rubric-wide directed pair quotas."""
+    from scipy.optimize import linear_sum_assignment
+
+    if not criteria:
+        raise ValueError("pair_balanced_random_matching requires the ordered rubric criteria")
+    rng = random.Random(None if seed is None else f"{seed}:primary:{direct_input_sha256(criteria)}")
+    n = len(model_nicks)
+    shifts = range(0 if include_self else 1, n)
+    base, extras = divmod(len(selected), len(shifts))
+    remaining = [[base if include_self or a != j else 0 for j in range(n)] for a in range(n)]
+
+    # Use disjoint shifts only to allocate the ceiling quotas. Without self-judging,
+    # share the shuffled ordering so that the omitted zero shift is exactly the diagonal.
+    answerers = rng.sample(range(n), n)
+    judges = rng.sample(range(n), n) if include_self else answerers
+    for shift in rng.sample(shifts, extras):
+        for i, a in enumerate(answerers):
+            remaining[a][judges[(i + shift) % n]] += 1
+
+    by_prompt = [[] for _ in selected]
+    for pos in rng.sample(range(len(selected)), len(selected)):
+        item = selected[pos]
+        index, scenario = item if isinstance(item, (tuple, list)) else (pos, item)
+        # Equal residual row and column sums guarantee another perfect matching.
+        costs = [[rng.random() if count else float("inf") for count in row] for row in remaining]
+        answerer_idxs, judge_idxs = linear_sum_assignment(costs)
+        for a, j in zip(answerer_idxs.tolist(), judge_idxs.tolist()):
+            remaining[a][j] -= 1
+            by_prompt[pos].append({
+                "scenario_index": index, "scenario": scenario,
+                "judge_idx": j, "judge_nick": model_nicks[j],
+                "eval_idxs": [a], "eval_nicks": [model_nicks[a]],
+                "sampler_mode": DIRECT_SAMPLER_PAIR_BALANCED, "sampling_round": 0, "group_index": a,
+            })
+    return [row for prompt in by_prompt for row in prompt]
+
+
 def build_direct_assignments(
     selected_scenarios: list,
     models: dict[str, object],
     *,
     include_self: bool = True,
     sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
-    group_size: int = 4,
+    group_size: int | None = None,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
     assignments_path: str | None = None,
@@ -373,7 +412,8 @@ def build_direct_assignments(
     one random judge to each group. The balanced sampler rotates one-to-one
     judge/evaluee assignments across scenarios. Repeating either sampled design
     ``response_redundancy`` times makes every response receive exactly that many
-    ratings, always from distinct judges within a scenario.
+    ratings, always from distinct judges within a scenario. Pair-balanced random
+    matching instead draws one matching per prompt under a single rubric's pair quotas.
     """
 
     model_nicks = list(models)
@@ -381,7 +421,7 @@ def build_direct_assignments(
     sampling = resolve_direct_sampling_settings(
         {
             "sampler_mode": sampler_mode,
-            "group_size": group_size,
+            **({"group_size": group_size} if group_size is not None else {}),
             "response_redundancy": response_redundancy,
             "sampler_seed": sampler_seed,
         },
@@ -394,6 +434,12 @@ def build_direct_assignments(
             raise ValueError("Explicit assignments require a manifest and criteria")
         return load_direct_assignments(
             assignments_path, selected_scenarios, criteria, models, include_self=include_self
+        )
+    if mode == DIRECT_SAMPLER_PAIR_BALANCED:
+        if assignments_path is not None:
+            raise ValueError("pair_balanced_random_matching cannot be combined with assignments_path")
+        return _pair_balanced_assignments(
+            selected_scenarios, model_nicks, include_self, sampling["sampler_seed"], criteria,
         )
     group_size = sampling["group_size"]
     response_redundancy = sampling["response_redundancy"]
@@ -525,6 +571,15 @@ def load_direct_assignments(path: str, selected, criteria, models, *, include_se
         plan = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ValueError(f"Cannot read direct assignments at {path}: {exc}") from exc
+    return validate_direct_assignments(
+        plan, selected, criteria, models, include_self=include_self, path=path,
+    )
+
+
+def validate_direct_assignments(
+    plan, selected, criteria, models, *, include_self: bool, path: str | Path,
+) -> list[dict]:
+    """Validate and materialize an already parsed manifest; path labels diagnostics only."""
     if not isinstance(plan, dict) or plan.get("dataset_sha256") != direct_input_sha256(selected):
         raise ValueError(f"{path}: dataset_sha256 does not match the selected scenarios")
     # Constitutions can select different, overlapping subsets of the same dataset.
@@ -582,7 +637,7 @@ def estimate_direct_calls(
     cached_responses: int = 0,
     cached_openrouter_responses: int = 0,
     sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
-    group_size: int = 4,
+    group_size: int | None = None,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
     assignments: list[dict] | None = None,
@@ -596,13 +651,18 @@ def estimate_direct_calls(
         raise ValueError("num_openrouter_models must be between zero and num_models")
     sampling = normalize_direct_sampling_settings({
         "sampler_mode": sampler_mode,
-        "group_size": group_size,
+        **({"group_size": group_size} if group_size is not None else {}),
         "response_redundancy": response_redundancy,
         "sampler_seed": sampler_seed,
     })
     mode = sampling["sampler_mode"]
-    sampled = mode in (DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_BALANCED)
-    group_size = min(sampling["group_size"], num_models) if mode == DIRECT_SAMPLER_PARTITIONED else None
+    sampled = mode in (
+        DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_BALANCED, DIRECT_SAMPLER_PAIR_BALANCED,
+    )
+    group_size = (
+        min(sampling["group_size"], num_models)
+        if mode in (DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_PAIR_BALANCED) else None
+    )
     response_redundancy = sampling.get("response_redundancy") if sampled else None
     # An exhaustive count is defined even for an empty panel and has no redundancy parameter.
     if mode != DIRECT_SAMPLER_ALL_TO_ALL:
@@ -665,6 +725,8 @@ def estimate_direct_calls(
             elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
                 evaluees = num_models if include_self else max(0, num_models - 1)
                 judge_tasks = num_scenarios * count * evaluees
+            elif mode == DIRECT_SAMPLER_PAIR_BALANCED:
+                judge_tasks = num_scenarios * count
             else:
                 judge_tasks = int(round(total_edges * count / num_models)) if num_models else 0
             return responses + 2 * judge_tasks

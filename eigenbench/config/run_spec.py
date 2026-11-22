@@ -13,6 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
 DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
 DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
+DIRECT_SAMPLER_PAIR_BALANCED = "pair_balanced_random_matching"
 DIRECT_SAMPLER_EXPLICIT = "explicit"
 DIRECT_SAMPLER_ALIASES = {
     "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
@@ -21,6 +22,7 @@ DIRECT_SAMPLER_ALIASES = {
     "random_partition": DIRECT_SAMPLER_PARTITIONED,
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
     "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
+    DIRECT_SAMPLER_PAIR_BALANCED: DIRECT_SAMPLER_PAIR_BALANCED,
     "explicit": DIRECT_SAMPLER_EXPLICIT,
 }
 
@@ -32,11 +34,17 @@ def normalize_direct_sampling_settings(collection: dict) -> dict:
     if mode is None:
         raise ValueError(
             "direct collection.sampler_mode must be 'all_to_all', "
-            "'partitioned_random_judge', 'balanced_unique_judge', or 'explicit'"
+            "'partitioned_random_judge', 'balanced_unique_judge', "
+            "'pair_balanced_random_matching', or 'explicit'"
         )
     if mode == DIRECT_SAMPLER_EXPLICIT:
         return {"sampler_mode": mode}
-    group_size = int(collection.get("group_size", 4))
+    if mode == DIRECT_SAMPLER_PAIR_BALANCED:
+        for key in ("response_redundancy", "group_size"):
+            value = collection.get(key, 1)
+            if isinstance(value, bool) or value not in (1, "1"):
+                raise ValueError(f"{mode} requires {key}=1")
+    group_size = int(collection.get("group_size", 1 if mode == DIRECT_SAMPLER_PAIR_BALANCED else 4))
     if group_size <= 0:
         raise ValueError("direct collection.group_size must be positive")
     redundancy = int(collection.get("response_redundancy", 1))
@@ -200,6 +208,8 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         collection["sampler_mode"] = DIRECT_SAMPLER_EXPLICIT
     if mode == "direct_rating":
         sampling = normalize_direct_sampling_settings(collection)
+        if sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED and normalized.get("extension"):
+            raise ValueError("pair_balanced_random_matching does not support extension runs")
         if sampling["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT and assignments_path is None:
             raise ValueError("sampler_mode='explicit' requires collection.assignments_path")
         num_models = len(normalized.get("models", {}))
