@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 import random
 import re
 from typing import Callable
@@ -10,6 +13,8 @@ from eigenbench.config.run_spec import (
     DIRECT_SAMPLER_ALIASES as DIRECT_SAMPLER_ALIASES,
     DIRECT_SAMPLER_ALL_TO_ALL,
     DIRECT_SAMPLER_BALANCED,
+    DIRECT_SAMPLER_EXPLICIT,
+    DIRECT_SAMPLER_PAIR_BALANCED,
     DIRECT_SAMPLER_PARTITIONED,
     normalize_direct_sampling_settings,
     validate_direct_sampling_panel,
@@ -224,7 +229,8 @@ def resolve_direct_sampling_settings(
 ) -> dict:
     settings = normalize_direct_sampling_settings(collection_cfg)
     validate_direct_sampling_panel(settings, num_models=num_models, include_self=include_self)
-    settings["group_size"] = min(settings["group_size"], num_models)
+    if "group_size" in settings:
+        settings["group_size"] = min(settings["group_size"], num_models)
     return settings
 
 
@@ -349,15 +355,56 @@ def _rotation_schedule(rng, model_nicks, scenario_index, scenario, mode, group_s
     ]
 
 
+def _pair_balanced_assignments(selected, model_nicks, include_self, seed, criteria):
+    """Draw one perfect matching per prompt under rubric-wide directed pair quotas."""
+    from scipy.optimize import linear_sum_assignment
+
+    if not criteria:
+        raise ValueError("pair_balanced_random_matching requires the ordered rubric criteria")
+    # Rubrics can select overlapping prompt sets. Reuse the answer, not a fixed
+    # judge lineup: balance the pairs over each rubric's own selected prompts.
+    rng = random.Random(None if seed is None else f"{seed}:primary:{direct_input_sha256(criteria)}")
+    n = len(model_nicks)
+    shifts = range(0 if include_self else 1, n)
+    base, extras = divmod(len(selected), len(shifts))
+    remaining = [[base if include_self or a != j else 0 for j in range(n)] for a in range(n)]
+
+    # Use disjoint shifts only to allocate the ceiling quotas. Without self-judging,
+    # share the shuffled ordering so that the omitted zero shift is exactly the diagonal.
+    answerers = rng.sample(range(n), n)
+    judges = rng.sample(range(n), n) if include_self else answerers
+    for shift in rng.sample(shifts, extras):
+        for i, a in enumerate(answerers):
+            remaining[a][judges[(i + shift) % n]] += 1
+
+    by_prompt = [[] for _ in selected]
+    for pos in rng.sample(range(len(selected)), len(selected)):
+        item = selected[pos]
+        index, scenario = item if isinstance(item, (tuple, list)) else (pos, item)
+        # Equal residual row and column sums guarantee another perfect matching.
+        costs = [[rng.random() if count else float("inf") for count in row] for row in remaining]
+        answerer_idxs, judge_idxs = linear_sum_assignment(costs)
+        for a, j in zip(answerer_idxs.tolist(), judge_idxs.tolist()):
+            remaining[a][j] -= 1
+            by_prompt[pos].append({
+                "scenario_index": index, "scenario": scenario,
+                "judge_idx": j, "judge_nick": model_nicks[j],
+                "eval_idxs": [a], "eval_nicks": [model_nicks[a]],
+                "sampler_mode": DIRECT_SAMPLER_PAIR_BALANCED, "sampling_round": 0, "group_index": a,
+            })
+    return [row for prompt in by_prompt for row in prompt]
+
+
 def build_direct_assignments(
     selected_scenarios: list,
     models: dict[str, object],
     *,
     include_self: bool = True,
     sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
-    group_size: int = 4,
+    group_size: int | None = None,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
+    criteria: list[str] | None = None,
 ) -> list[dict]:
     """Materialize direct judge/evaluee assignments.
 
@@ -366,7 +413,8 @@ def build_direct_assignments(
     one random judge to each group. The balanced sampler rotates one-to-one
     judge/evaluee assignments across scenarios. Repeating either sampled design
     ``response_redundancy`` times makes every response receive exactly that many
-    ratings, always from distinct judges within a scenario.
+    ratings, always from distinct judges within a scenario. Pair-balanced random
+    matching instead draws one matching per prompt under a single rubric's pair quotas.
     """
 
     model_nicks = list(models)
@@ -374,7 +422,7 @@ def build_direct_assignments(
     sampling = resolve_direct_sampling_settings(
         {
             "sampler_mode": sampler_mode,
-            "group_size": group_size,
+            **({"group_size": group_size} if group_size is not None else {}),
             "response_redundancy": response_redundancy,
             "sampler_seed": sampler_seed,
         },
@@ -382,6 +430,10 @@ def build_direct_assignments(
         include_self=include_self,
     )
     mode = sampling["sampler_mode"]
+    if mode == DIRECT_SAMPLER_PAIR_BALANCED:
+        return _pair_balanced_assignments(
+            selected_scenarios, model_nicks, include_self, sampling["sampler_seed"], criteria,
+        )
     group_size = sampling["group_size"]
     response_redundancy = sampling["response_redundancy"]
 
@@ -502,6 +554,73 @@ def build_direct_assignments(
     return assignments
 
 
+def direct_input_sha256(value: object) -> str:
+    return hashlib.sha256(json.dumps(value).encode()).hexdigest()
+
+
+def load_direct_assignments(path: str, selected, criteria, models, *, include_self: bool) -> list[dict]:
+    """Validate a frozen list of directed judgments before constructing Inspect samples."""
+    try:
+        plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read direct assignments at {path}: {exc}") from exc
+    return validate_direct_assignments(
+        plan, selected, criteria, models, include_self=include_self, path=path,
+    )
+
+
+def validate_direct_assignments(
+    plan, selected, criteria, models, *, include_self: bool, path: str | Path,
+) -> list[dict]:
+    """Validate and materialize an already parsed manifest; path labels diagnostics only."""
+    if not isinstance(plan, dict) or plan.get("dataset_sha256") != direct_input_sha256(selected):
+        raise ValueError(f"{path}: dataset_sha256 does not match the selected scenarios")
+    # Constitutions can select different, overlapping subsets of the same dataset.
+    # A shared scenario index identifies the prompt, not which rubric's judges to use.
+    if plan.get("criteria_sha256") != direct_input_sha256(criteria):
+        raise ValueError(f"{path}: criteria_sha256 does not match the selected rubric")
+    rows = plan.get("judgments")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{path}: judgments must be a nonempty list")
+    scenarios = dict(selected)
+    indices = {nick: index for index, nick in enumerate(models)}
+    assignments = []
+    seen = set()
+    for line, row in enumerate(rows, 1):
+        label = f"{path}: judgment {line}"
+        if not isinstance(row, dict):
+            raise ValueError(f"{label} must be an object")
+        index, judge, evaluee, round_ = (
+            row.get("scenario_index"), row.get("judge"), row.get("evaluee"), row.get("sampling_round")
+        )
+        if type(index) is not int or index not in scenarios:
+            raise ValueError(f"{label}: scenario_index must name a selected scenario")
+        if any(not isinstance(nick, str) or nick not in indices for nick in (judge, evaluee)):
+            raise ValueError(f"{label}: judge and evaluee must both be in the model panel")
+        if type(round_) is not int or round_ < 0:
+            raise ValueError(f"{label}: sampling_round must be a non-negative integer")
+        if judge == evaluee and not include_self:
+            raise ValueError(f"{label}: self-judging is disabled")
+        key = (index, judge, evaluee)
+        if key in seen:
+            raise ValueError(f"{label}: duplicate judgment {key}")
+        seen.add(key)
+        assignments.append({
+            "scenario_index": index, "scenario": scenarios[index],
+            "judge_idx": indices[judge], "judge_nick": judge,
+            "eval_idxs": [indices[evaluee]], "eval_nicks": [evaluee],
+            "sampling_round": round_, "sampler_mode": DIRECT_SAMPLER_EXPLICIT,
+        })
+    return assignments
+
+
+def direct_response_keys(assignments) -> set[tuple[int, str]]:
+    return {
+        (row["scenario_index"], nick)
+        for row in assignments for nick in row["eval_nicks"]
+    }
+
+
 def estimate_direct_calls(
     *,
     num_scenarios: int,
@@ -511,7 +630,7 @@ def estimate_direct_calls(
     cached_responses: int = 0,
     cached_openrouter_responses: int = 0,
     sampler_mode: str = DIRECT_SAMPLER_ALL_TO_ALL,
-    group_size: int = 4,
+    group_size: int | None = None,
     response_redundancy: int = 1,
     sampler_seed: int | None = None,
     assignments: list[dict] | None = None,
@@ -523,18 +642,34 @@ def estimate_direct_calls(
         raise ValueError("num_scenarios and num_models must be non-negative")
     if num_openrouter_models is not None and not 0 <= num_openrouter_models <= num_models:
         raise ValueError("num_openrouter_models must be between zero and num_models")
-    sampling = normalize_direct_sampling_settings({
-        "sampler_mode": sampler_mode,
-        "group_size": group_size,
-        "response_redundancy": response_redundancy,
-        "sampler_seed": sampler_seed,
-    })
+    if sampler_mode == DIRECT_SAMPLER_EXPLICIT:
+        sampling = {"sampler_mode": sampler_mode}
+    else:
+        sampling = normalize_direct_sampling_settings({
+            "sampler_mode": sampler_mode,
+            **({"group_size": group_size} if group_size is not None else {}),
+            "response_redundancy": response_redundancy,
+            "sampler_seed": sampler_seed,
+        })
     mode = sampling["sampler_mode"]
-    group_size = min(sampling["group_size"], num_models)
-    response_redundancy = sampling["response_redundancy"]
+    sampled = mode in (
+        DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_BALANCED, DIRECT_SAMPLER_PAIR_BALANCED,
+    )
+    group_size = (
+        min(sampling["group_size"], num_models)
+        if mode in (DIRECT_SAMPLER_PARTITIONED, DIRECT_SAMPLER_PAIR_BALANCED) else None
+    )
+    response_redundancy = sampling.get("response_redundancy") if sampled else None
     # An exhaustive count is defined even for an empty panel and has no redundancy parameter.
     if mode != DIRECT_SAMPLER_ALL_TO_ALL:
         validate_direct_sampling_panel(sampling, num_models=num_models, include_self=include_self)
+    response_cells = None
+    if mode == DIRECT_SAMPLER_EXPLICIT:
+        if not assignments:
+            raise ValueError("Explicit call estimates require the loaded assignments")
+        response_cells = {
+            (row["scenario_index"], index) for row in assignments for index in row["eval_idxs"]
+        }
     if assignments is not None:
         total_edges = sum(len(assignment["eval_idxs"]) for assignment in assignments)
     elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
@@ -544,23 +679,24 @@ def estimate_direct_calls(
     else:
         total_edges = num_scenarios * num_models * response_redundancy
     edges_per_scenario = total_edges // num_scenarios if num_scenarios else 0
-    total_possible_responses = num_scenarios * num_models
+    total_possible_responses = (
+        len(response_cells) if response_cells is not None else num_scenarios * num_models
+    )
     response_tasks = total_possible_responses - min(
         max(0, int(cached_responses)), total_possible_responses
     )
     reflection_tasks = total_edges
     rating_tasks = reflection_tasks
     result = {
-        "num_scenarios": num_scenarios,
+        "num_scenarios": (len({scenario for scenario, _ in response_cells})
+                          if response_cells is not None else num_scenarios),
         "num_models": num_models,
         "include_self": include_self,
         "sampler_mode": mode,
-        "group_size": group_size if mode == DIRECT_SAMPLER_PARTITIONED else None,
-        "response_redundancy": (
-            response_redundancy if mode != DIRECT_SAMPLER_ALL_TO_ALL else None
-        ),
-        "sampler_seed": sampling["sampler_seed"] if mode != DIRECT_SAMPLER_ALL_TO_ALL else None,
-        "directed_edges_per_scenario": edges_per_scenario,
+        "group_size": group_size,
+        "response_redundancy": response_redundancy,
+        "sampler_seed": sampling["sampler_seed"] if sampled else None,
+        "directed_edges_per_scenario": edges_per_scenario if response_cells is None else None,
         "cached_response_hits": min(max(0, int(cached_responses)), total_possible_responses),
         "response_tasks": response_tasks,
         "reflection_tasks": reflection_tasks,
@@ -568,8 +704,15 @@ def estimate_direct_calls(
         "total_logical_generations": response_tasks + reflection_tasks + rating_tasks,
     }
     if num_openrouter_models is not None:
+        def responses_for(count: int, indices: set[int] | None) -> int:
+            if response_cells is None:
+                return num_scenarios * count
+            if indices is None:
+                raise ValueError("Explicit provider call estimates require model indices")
+            return sum(index in indices for _, index in response_cells)
+
         def calls_for(count: int, indices: set[int] | None, cached: int) -> int:
-            responses = num_scenarios * count
+            responses = responses_for(count, indices)
             responses -= min(max(0, cached), responses)
             if assignments is not None and indices is not None:
                 judge_tasks = sum(
@@ -578,13 +721,16 @@ def estimate_direct_calls(
             elif mode == DIRECT_SAMPLER_ALL_TO_ALL:
                 evaluees = num_models if include_self else max(0, num_models - 1)
                 judge_tasks = num_scenarios * count * evaluees
+            elif mode == DIRECT_SAMPLER_PAIR_BALANCED:
+                judge_tasks = num_scenarios * count
             else:
                 judge_tasks = int(round(total_edges * count / num_models)) if num_models else 0
             return responses + 2 * judge_tasks
 
         result["num_openrouter_models"] = num_openrouter_models
         result["cached_openrouter_response_hits"] = min(
-            max(0, int(cached_openrouter_responses)), num_scenarios * num_openrouter_models
+            max(0, int(cached_openrouter_responses)),
+            responses_for(num_openrouter_models, openrouter_model_indices),
         )
         result["openrouter_requests"] = calls_for(
             num_openrouter_models, openrouter_model_indices, cached_openrouter_responses

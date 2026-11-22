@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from secrets import randbits
 
 from inspect_ai.model import Model, ModelName, get_model
 
@@ -17,10 +18,13 @@ from eigenbench.config import (
 )
 from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
 from eigenbench.protocol.direct_rating import (
-    build_direct_assignments, resolve_direct_generation_settings, resolve_direct_sampling_settings,
+    DIRECT_SAMPLER_PAIR_BALANCED,
+    build_direct_assignments, direct_input_sha256, direct_response_keys, load_direct_assignments,
+    resolve_direct_generation_settings, resolve_direct_sampling_settings,
 )
 from eigenbench.protocol.response_cache import cached_seed
 
+from .assignment_preview import judgment_rows, preview_path, read_preview, save_preview
 from .generation import FAILURE_POLICIES
 from .models import (
     check_vllm_endpoint,
@@ -144,6 +148,48 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
     )
 
 
+def direct_plan(spec, selected, criteria, models, include_self, sampling, *,
+                resolved_seed=None, preview=False):
+    collection = spec["collection"]
+    external = collection.get("assignments_path")
+    if external and set(models) != set(spec["models"]):
+        raise ValueError("Explicit assignments cannot add or remove models from the spec panel")
+    path = preview_path(collection)
+    saved = path.exists() and not (external and Path(external).resolve() == path.resolve())
+    if preview or saved:
+        if sampling["sampler_mode"] != DIRECT_SAMPLER_PAIR_BALANCED or spec.get("extension"):
+            raise ValueError(f"{path}: preview requires a {DIRECT_SAMPLER_PAIR_BALANCED} direct-rating run")
+        if spec["dataset"].get("shuffle") and spec["dataset"].get("shuffle_seed") is None:
+            raise ValueError("Set dataset.shuffle_seed to preview shuffled scenarios")
+        panel = [(nick, value if isinstance(value, str) else model_identity(value))
+                 for nick, value in models.items()]
+        inputs = {"dataset_sha256": direct_input_sha256(selected),
+                  "criteria_sha256": direct_input_sha256(criteria), "panel_sha256": direct_input_sha256(panel),
+                  "include_self": include_self, "sampling": sampling}
+        if saved:
+            assignments, seed = read_preview(path, inputs, selected, criteria, models, include_self)
+            if resolved_seed is not None and resolved_seed != seed:
+                raise ValueError(f"{path}: saved sampler seed differs from the original run")
+            return assignments, seed if sampling["sampler_seed"] is None else resolved_seed
+        if Path(collection["evaluations_path"]).exists():
+            raise ValueError("Preview before collection or choose a new output directory")
+        if not selected:
+            raise ValueError("Cannot preview an empty scenario selection")
+    if external:
+        return load_direct_assignments(external, selected, criteria, models, include_self=include_self), None
+    if (sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED
+            and sampling["sampler_seed"] is None and resolved_seed is None):
+        resolved_seed = randbits(64)
+    seed = sampling.get("sampler_seed") if resolved_seed is None else resolved_seed
+    assignments = build_direct_assignments(
+        selected, models, include_self=include_self,
+        criteria=criteria, **{**sampling, "sampler_seed": seed},
+    )
+    if preview:
+        save_preview(path, inputs, seed, assignments)
+    return assignments, resolved_seed
+
+
 def _run_context_from_spec(
     run_spec: dict,
     run_dir: Path,
@@ -178,16 +224,17 @@ def _run_context_from_spec(
         from eigenbench.protocol.pairwise_plan import resolve_pairwise_generation_settings
         generation = resolve_pairwise_generation_settings(collection_cfg)
     assignments = []
+    assignments_path = collection_cfg.get("assignments_path")
+    if not is_direct and preview_path(collection_cfg).exists():
+        raise ValueError("This directory has a direct-rating preview; use a new output directory")
     if is_direct:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
         )
         if build_assignments:
-            plan_sampling = sampling if resolved_sampler_seed is None else {
-                **sampling, "sampler_seed": resolved_sampler_seed,
-            }
-            assignments = build_direct_assignments(
-                selected, spec_models, include_self=include_self, **plan_sampling
+            assignments, resolved_sampler_seed = direct_plan(
+                run_spec, selected, criteria, spec_models, include_self, sampling,
+                resolved_seed=resolved_sampler_seed,
             )
     else:
         sampling = {"sampler_mode": collection_cfg.get("sampler_mode")}
@@ -209,6 +256,15 @@ def _run_context_from_spec(
 
     seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, spec_models,
                        merge_rows=is_direct)
+    plan_meta = {}
+    if assignments_path and build_assignments:
+        needed = direct_response_keys(assignments)
+        seed = {key: answer for key, answer in seed.items() if key in needed}
+        plan_meta["assignments_sha256"] = direct_input_sha256(assignments)
+    elif sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED and build_assignments:
+        plan_meta["assignments_sha256"] = direct_input_sha256(judgment_rows(assignments))
+        if resolved_sampler_seed is not None:
+            plan_meta["resolved_sampler_seed"] = resolved_sampler_seed
 
     return {
         "is_direct": is_direct,
@@ -217,6 +273,7 @@ def _run_context_from_spec(
         "selected": selected,
         "criteria": criteria,
         "assignments": assignments,
+        "resolved_sampler_seed": resolved_sampler_seed,
         "generation": generation,
         "sampling": sampling,
         "include_self": include_self,
@@ -228,6 +285,7 @@ def _run_context_from_spec(
         "resolve_model": _model_resolver(spec_models),
         "seed": seed,
         "meta": {
+            **plan_meta,
             "run_name": run_spec["name"],
             "criteria": criteria,
             "model_order": list(spec_models),
@@ -244,12 +302,12 @@ def _run_context_from_spec(
                       for nick, value in spec_models.items()],
             "dataset": {
                 **{key: value for key, value in run_spec["dataset"].items() if key != "path"},
-                "selected_sha256": hashlib.sha256(json.dumps(selected).encode()).hexdigest(),
+                "selected_sha256": direct_input_sha256(selected),
                 **({"source": DATASET_ID, "revision": DATASET_REVISION}
                    if not run_spec["dataset"].get("path")
                    and str(run_spec["dataset"].get("id", "")).strip().lower() == "airisk" else {}),
             },
-            "criteria_sha256": hashlib.sha256(json.dumps(criteria).encode()).hexdigest(),
+            "criteria_sha256": direct_input_sha256(criteria),
             "sampling": sampling,
             "generation": generation,
             "max_attempts": max_attempts,

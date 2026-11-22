@@ -39,7 +39,6 @@ def test_unchanged_rerun_reuses_and_records_a_fingerprint(run_dir):
 @pytest.mark.parametrize("phased", [False, True])
 def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased, monkeypatch):
     from inspect_ai.log import read_eval_log
-    import inspect_pipeline.collection.direct_rating as collect
     from inspect_pipeline import context as inspect_context
 
     calls = []
@@ -51,7 +50,6 @@ def test_unseeded_sampled_run_reuses_its_realized_plan(run_dir, phased, monkeypa
         return result
 
     monkeypatch.setattr(inspect_context, "build_direct_assignments", tracked_assignments)
-    monkeypatch.setattr(collect, "build_direct_assignments", tracked_assignments)
     tmp_path, write_spec = run_dir
     spec = write_spec(sampler_mode="balanced_unique_judge")
     with spec.open("a") as handle:

@@ -202,6 +202,50 @@ For pairwise runs, use `evaluation.mode="pairwise_btd"` with
 collector's adaptive and mixed `all_to_all` pairwise protocols are not supported
 by Inspect. See the [protocol reference](docs/inspect-pairwise-protocol.md).
 
+### Preview a judge draw
+
+Set `collection.sampler_mode="pair_balanced_random_matching"` for one primary
+rating per answer. On each prompt, every model judges once. Across the selected
+prompts for one constitution, each eligible judge rates each answerer equally
+often, to within one. Unlike `balanced_unique_judge`, the lineup is not a fixed
+rotation. Self-ratings are eligible unless `direct_rating.include_self=False`.
+
+```sh
+python scripts/run.py runs/my_run/spec.py --preview-assignments
+python scripts/run.py runs/my_run/spec.py
+```
+
+The first command saves `judge_assignments.json` next to the evaluations file
+without calling models. Inspect the rows, then run the same spec: it uses that
+file, even with an unset seed. A different panel, sampler setting, rubric, or
+selected dataset requires a new output directory. Each constitution can use a
+different set of prompts; sharing a prompt does not fix its judges across rubrics.
+
+### Import an external judge schedule
+
+Set `collection.assignments_path` (relative to the run directory or absolute)
+instead of setting a sampler or seed. The JSON file contains
+`dataset_sha256`, `criteria_sha256`, and a nonempty `judgments` list. Each judgment names one
+directed edge, for example:
+
+```json
+{"scenario_index": 12, "judge": "model_a", "evaluee": "model_b", "sampling_round": 0}
+```
+
+Use zero-based source indices, before any slicing or shuffling. Get
+`selected, criteria = load_selection(spec, run_dir)` from `inspect_pipeline.context`
+and pass each list to `eigenbench.protocol.direct_rating.direct_input_sha256`
+for the two hashes, respectively. The collector rejects unknown models,
+duplicate judge/evaluee pairs on the same scenario (even across rounds),
+disallowed self-judgments, and a changed dataset or rubric.
+It does not fill or rebalance the plan.
+Run `--estimate-calls` to check the exact judgment count and uncached answers
+before collecting.
+
+To keep second judgments out of the primary ranking, put them in a separate
+spec and output directory with `training.enabled=False`. Use the same source
+indices and frozen `collection.cached_responses_path` in both specs.
+
 ### Optional bootstrap
 
 ```python

@@ -13,6 +13,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DIRECT_SAMPLER_ALL_TO_ALL = "all_to_all"
 DIRECT_SAMPLER_PARTITIONED = "partitioned_random_judge"
 DIRECT_SAMPLER_BALANCED = "balanced_unique_judge"
+DIRECT_SAMPLER_PAIR_BALANCED = "pair_balanced_random_matching"
+DIRECT_SAMPLER_EXPLICIT = "explicit"
 DIRECT_SAMPLER_ALIASES = {
     "exhaustive": DIRECT_SAMPLER_ALL_TO_ALL,
     "all_to_all": DIRECT_SAMPLER_ALL_TO_ALL,
@@ -20,19 +22,31 @@ DIRECT_SAMPLER_ALIASES = {
     "random_partition": DIRECT_SAMPLER_PARTITIONED,
     "partitioned_random_judge": DIRECT_SAMPLER_PARTITIONED,
     "balanced_unique_judge": DIRECT_SAMPLER_BALANCED,
+    DIRECT_SAMPLER_PAIR_BALANCED: DIRECT_SAMPLER_PAIR_BALANCED,
 }
 
 
 def normalize_direct_sampling_settings(collection: dict) -> dict:
     """Read direct sampler settings independently of the model panel."""
+    if collection.get("assignments_path"):
+        if {"sampler_mode", "sampler_seed", "group_size", "response_redundancy"} & collection.keys():
+            raise ValueError("collection.assignments_path cannot be combined with sampler settings")
+        # Label imported judgments in reports; this is not a selectable sampler.
+        return {"sampler_mode": DIRECT_SAMPLER_EXPLICIT}
     raw_mode = str(collection.get("sampler_mode", DIRECT_SAMPLER_ALL_TO_ALL)).strip().lower()
     mode = DIRECT_SAMPLER_ALIASES.get(raw_mode)
     if mode is None:
         raise ValueError(
             "direct collection.sampler_mode must be 'all_to_all', "
-            "'partitioned_random_judge', or 'balanced_unique_judge'"
+            "'partitioned_random_judge', 'balanced_unique_judge', or "
+            "'pair_balanced_random_matching'"
         )
-    group_size = int(collection.get("group_size", 4))
+    if mode == DIRECT_SAMPLER_PAIR_BALANCED:
+        for key in ("response_redundancy", "group_size"):
+            value = collection.get(key, 1)
+            if isinstance(value, bool) or value not in (1, "1"):
+                raise ValueError(f"{mode} requires {key}=1")
+    group_size = int(collection.get("group_size", 1 if mode == DIRECT_SAMPLER_PAIR_BALANCED else 4))
     if group_size <= 0:
         raise ValueError("direct collection.group_size must be positive")
     redundancy = int(collection.get("response_redundancy", 1))
@@ -51,6 +65,8 @@ def validate_direct_sampling_panel(settings: dict, *, num_models: int, include_s
     """Check settings against the model panel used to plan judgments."""
     if num_models <= 0:
         raise ValueError("direct sampling requires at least one model")
+    if settings["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT:
+        return
     max_redundancy = num_models if include_self else num_models - 1
     if settings["response_redundancy"] > max_redundancy:
         raise ValueError(
@@ -181,14 +197,24 @@ def apply_run_defaults(spec_ref: str, module_file: str, spec: dict) -> tuple[dic
         # Keep explicit null if user sets it intentionally.
         collection["cached_responses_path"] = None
 
+    assignments_path = collection.get("assignments_path")
+    if assignments_path is not None:
+        if mode != "direct_rating" or normalized.get("extension"):
+            raise ValueError("collection.assignments_path requires a non-extension direct-rating spec")
+        if not isinstance(assignments_path, str) or not assignments_path.strip():
+            raise ValueError("collection.assignments_path must be a nonempty path")
+        collection["assignments_path"] = str((run_dir / Path(assignments_path).expanduser()).resolve())
     if mode == "direct_rating":
         sampling = normalize_direct_sampling_settings(collection)
+        if sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED and normalized.get("extension"):
+            raise ValueError("pair_balanced_random_matching does not support extension runs")
         num_models = len(normalized.get("models", {}))
         if num_models:
             validate_direct_sampling_panel(
                 sampling, num_models=num_models, include_self=direct["include_self"]
             )
-        collection.update(sampling)
+        if assignments_path is None:
+            collection.update(sampling)
 
     if "extension" in normalized:
         extension = normalized["extension"]

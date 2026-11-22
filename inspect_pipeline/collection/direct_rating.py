@@ -20,7 +20,8 @@ from inspect_pipeline.provenance import (
 from eigenbench.config import load_run_spec
 from eigenbench.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
-    build_direct_assignments,
+    DIRECT_SAMPLER_EXPLICIT,
+    direct_response_keys,
     estimate_direct_calls,
     resolve_direct_generation_settings,
     resolve_direct_sampling_settings,
@@ -28,11 +29,13 @@ from eigenbench.protocol.direct_rating import (
 from eigenbench.protocol.response_cache import cached_seed
 from eigenbench.records import load_records
 
-from ..context import _run_context_from_spec, has_local_models, load_selection, resolve_spec_ref
+from ..assignment_preview import preview_path
+from ..context import _run_context_from_spec, direct_plan, has_local_models, load_selection, resolve_spec_ref
 from .phased import eval_phase, model_phase, use_run_context
 from inspect_pipeline.eigenbench import eigenbench
 from inspect_pipeline.phased import eigenbench_judge, eigenbench_responses
 from ..export import (
+    append_response_updates,
     check_complete,
     export_log,
     records_from_log,
@@ -45,28 +48,24 @@ from ..models import model_execution
 from ..generation import STORE_RESPONSE
 
 
-def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
-    """Count planned generations without collecting or writing artifacts."""
-
-    models = spec["models"]
-    collection_cfg = spec.get("collection", {})
-    evaluation_cfg = spec.get("evaluation", {})
-    include_self = bool(
-        (evaluation_cfg.get("direct_rating", {}) or {}).get("include_self", True)
-    )
-    resolve_direct_generation_settings(collection_cfg)
-    selected, _criteria = load_selection(spec, run_dir)
-    sampling = resolve_direct_sampling_settings(
-        collection_cfg, num_models=len(models), include_self=include_self
-    )
-    assignments = build_direct_assignments(
-        selected, models, include_self=include_self, **sampling
-    )
-    seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, models, merge_rows=True)
-    return _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed)
+def estimate_direct_calls_for_spec(spec: dict, run_dir: Path, *, preview: bool = False) -> dict:
+    """Count planned generations offline, optionally saving the draw for review."""
+    models, cfg = spec["models"], spec["collection"]
+    include_self = bool((spec["evaluation"].get("direct_rating") or {}).get("include_self", True))
+    resolve_direct_generation_settings(cfg)
+    selected, criteria = load_selection(spec, run_dir)
+    sampling = resolve_direct_sampling_settings(cfg, num_models=len(models), include_self=include_self)
+    assignments, seed = direct_plan(spec, selected, criteria, models, include_self, sampling, preview=preview)
+    cached = cached_seed(cfg.get("cached_responses_path"), selected, models, merge_rows=True)
+    if seed is not None:
+        sampling = {**sampling, "sampler_seed": seed}
+    return _estimate_direct_plan(selected, models, include_self, sampling, assignments, cached)
 
 
 def _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed) -> dict:
+    if sampling["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT:
+        needed = direct_response_keys(assignments)
+        seed = {key: answer for key, answer in seed.items() if key in needed}
     routes = {nick: model_execution(value) for nick, value in models.items()}
     cached_routes = Counter(routes[nick] for _, nick in seed)
     openrouter_indices = {i for i, route in enumerate(routes.values()) if route == "openrouter"}
@@ -154,21 +153,25 @@ def record_refusal(run_dir: Path, kind: str, exc: BaseException, *, planned, log
 
 
 def _persist_responses(ctx, responses, generated) -> None:
-    """Append scenarios with new responses, once every model has one, to the response cache."""
+    """Append newly generated responses to the shared cache."""
 
     path = ctx["collection_cfg"].get("cached_responses_path")
     nicks = list(ctx["models"])
+    explicit = ctx["sampling"]["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT
     rows = [
         {"scenario": scenario, "scenario_index": int(s_idx),
-         "responses": {nick: responses[int(s_idx)][nick] for nick in nicks}}
+         "responses": dict(responses[int(s_idx)])}
         for s_idx, scenario in ctx["selected"]
         if any((int(s_idx), nick) in generated for nick in nicks)
-        and all(nick in responses[int(s_idx)] for nick in nicks)
+        and (explicit or all(nick in responses[int(s_idx)] for nick in nicks))
     ]
     if path and rows:
-        from eigenbench.records import append_records
+        if explicit:
+            append_response_updates(path, rows)
+        else:
+            from eigenbench.records import append_records
 
-        append_records(path, rows)
+            append_records(path, rows)
 
 
 def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | None = None) -> list[dict]:
@@ -189,11 +192,16 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
 
     judge_logs = []
     response_errors: dict[tuple[int, str], str] = {}
+    needed_cells = direct_response_keys(ctx["assignments"])
+    explicit = ctx["sampling"]["sampler_mode"] == DIRECT_SAMPLER_EXPLICIT
 
     print(f"Phase 1/2: responses, {len(nicks)} model(s), one at a time")
     generated: set[tuple[int, str]] = set()
     for nick in nicks:
-        missing = [int(s) for s, _ in ctx["selected"] if nick not in responses[int(s)]]
+        missing = [
+            int(s) for s, _ in ctx["selected"]
+            if nick not in responses[int(s)] and (not explicit or (s, nick) in needed_cells)
+        ]
         if not missing:
             continue
         with model_phase(ctx, nick, reuse_resolver=True) as phase:
@@ -214,12 +222,7 @@ def _run_phased(spec_ref: str, models, ctx, eval_kw: dict, seen_logs: list | Non
     _persist_responses(ctx, responses, generated)
 
     # Every policy needs every response: a judgment cannot be made without one.
-    needed = sorted({
-        (int(a["scenario_index"]), eval_nick)
-        for a in ctx["assignments"]
-        for eval_nick in a["eval_nicks"]
-        if eval_nick not in responses[int(a["scenario_index"])]
-    })
+    needed = sorted((s, nick) for s, nick in needed_cells if nick not in responses[s])
     if needed:
         shown = "\n  ".join(
             f"scenario_index={s} evaluee={nick}: {response_errors.get((s, nick), 'no response in the log')}"
@@ -279,6 +282,8 @@ def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dic
                 "scale_max", "sampling", "generation")
     if any(key not in old_meta or old_meta[key] != ctx["meta"][key] for key in identity):
         raise ValueError("Cannot resume: the log's dataset, rubric, model panel or settings differ")
+    if old_meta.get("assignments_sha256") != ctx["meta"].get("assignments_sha256"):
+        raise ValueError("Cannot resume: the judgment plan changed")
     config = log.eval.config
     if (config.limit is not None or config.sample_id is not None or config.sample_shuffle
             or config.epochs not in (None, 1)):
@@ -373,16 +378,21 @@ def collect_direct_ratings_inspect(
     has_output = evaluations_path.exists() and evaluations_path.stat().st_size > 0
     existing = load_records(str(evaluations_path)) if has_output else []
     resolved_seed = None
-    if (collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
+    if (not collection_cfg.get("assignments_path")
+            and collection_cfg.get("sampler_mode") != DIRECT_SAMPLER_ALL_TO_ALL
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
             resolved_seed = (previous.eval.task_args_passed or {}).get("resolved_sampler_seed")
+            if resolved_seed is None:
+                resolved_seed = (previous.eval.metadata or {}).get("eigenbench", {}).get("resolved_sampler_seed")
             if type(resolved_seed) is not int:
                 raise ValueError("Cannot resume: the log does not record the resolved sampler seed")
-        else:
-            resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
-                             else randbits(64))
+        elif has_output:
+            resolved_seed = read_resolved_sampler_seed(evaluations_path)
+        elif not preview_path(collection_cfg).exists():
+            resolved_seed = randbits(64)
     ctx = _run_context_from_spec(spec, run_dir, models, resolved_sampler_seed=resolved_seed)
+    resolved_seed = ctx["resolved_sampler_seed"]
     estimate = write_call_estimate(spec, run_dir, context=ctx, resolved_sampler_seed=resolved_seed)
     planned = estimate["rating_tasks"]
     # A completed run short-circuits only if it is this plan's collection; anything else
