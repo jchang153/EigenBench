@@ -202,7 +202,26 @@ For pairwise runs, use `evaluation.mode="pairwise_btd"` with
 collector's adaptive and mixed `all_to_all` pairwise protocols are not supported
 by Inspect. See the [protocol reference](docs/inspect-pairwise-protocol.md).
 
-### Frozen direct-rating assignments
+### Preview a judge draw
+
+Set `collection.sampler_mode="pair_balanced_random_matching"` for one primary
+rating per answer. On each prompt, every model judges once. Across the selected
+prompts for one constitution, each eligible judge rates each answerer equally
+often, to within one. Unlike `balanced_unique_judge`, the lineup is not a fixed
+rotation. Self-ratings are eligible unless `direct_rating.include_self=False`.
+
+```sh
+python scripts/run.py runs/my_run/spec.py --preview-assignments
+python scripts/run.py runs/my_run/spec.py
+```
+
+The first command saves `judge_assignments.json` next to the evaluations file
+without calling models. Inspect the rows, then run the same spec: it uses that
+file, even with an unset seed. A different panel, sampler setting, rubric, or
+selected dataset requires a new output directory. Each constitution can use a
+different set of prompts; sharing a prompt does not fix its judges across rubrics.
+
+### Import an external judge schedule
 
 Set `collection.assignments_path` (relative to the run directory or absolute)
 instead of setting a sampler or seed. The JSON file contains
@@ -222,13 +241,6 @@ disallowed self-judgments, and a changed dataset or rubric.
 It does not fill or rebalance the plan.
 Run `--estimate-calls` to check the exact judgment count and uncached answers
 before collecting.
-
-For example, **Pair-Balanced Random Matching** draws a one-to-one judge assignment
-for each prompt while keeping judge/answerer pair counts within one of each other
-per constitution. This is an example of a schedule prepared outside Inspect, not
-a built-in sampler mode. Constitutions can select different, overlapping prompt
-sets: count source scenario IDs once for run-wide coverage, but separately for
-each constitution's coverage.
 
 To keep second judgments out of the primary ranking, put them in a separate
 spec and output directory with `training.enabled=False`. Use the same source
