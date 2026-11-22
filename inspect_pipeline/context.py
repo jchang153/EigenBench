@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from secrets import randbits
 
 from inspect_ai.model import Model, ModelName, get_model
 
@@ -17,11 +18,13 @@ from eigenbench.config import (
 )
 from eigenbench.config.airisk import DATASET_ID, DATASET_REVISION
 from eigenbench.protocol.direct_rating import (
+    DIRECT_SAMPLER_PAIR_BALANCED,
     build_direct_assignments, direct_input_sha256, direct_response_keys,
     resolve_direct_generation_settings, resolve_direct_sampling_settings,
 )
 from eigenbench.protocol.response_cache import cached_seed
 
+from .assignment_preview import judgment_rows, preview_path, read_preview, save_preview
 from .generation import FAILURE_POLICIES
 from .models import (
     check_vllm_endpoint,
@@ -145,6 +148,46 @@ def _run_context(spec: str, models: dict[str, object] | None, cache: bool | None
     )
 
 
+def direct_plan(spec, selected, criteria, models, include_self, sampling, *,
+                resolved_seed=None, preview=False):
+    collection = spec["collection"]
+    external = collection.get("assignments_path")
+    if external and set(models) != set(spec["models"]):
+        raise ValueError("Explicit assignments cannot add or remove models from the spec panel")
+    path = preview_path(collection)
+    saved = path.exists() and not (external and Path(external).resolve() == path.resolve())
+    if preview or saved:
+        if sampling["sampler_mode"] != DIRECT_SAMPLER_PAIR_BALANCED or spec.get("extension"):
+            raise ValueError(f"{path}: preview requires a {DIRECT_SAMPLER_PAIR_BALANCED} direct-rating run")
+        if spec["dataset"].get("shuffle") and spec["dataset"].get("shuffle_seed") is None:
+            raise ValueError("Set dataset.shuffle_seed to preview shuffled scenarios")
+        panel = [(nick, value if isinstance(value, str) else model_identity(value))
+                 for nick, value in models.items()]
+        inputs = {"dataset_sha256": direct_input_sha256(selected),
+                  "criteria_sha256": direct_input_sha256(criteria), "panel_sha256": direct_input_sha256(panel),
+                  "include_self": include_self, "sampling": sampling}
+        if saved:
+            assignments, seed = read_preview(path, inputs, selected, criteria, models, include_self)
+            if resolved_seed is not None and resolved_seed != seed:
+                raise ValueError(f"{path}: saved sampler seed differs from the original run")
+            return assignments, seed if sampling["sampler_seed"] is None else resolved_seed
+        if Path(collection["evaluations_path"]).exists():
+            raise ValueError("Preview before collection or choose a new output directory")
+        if not selected:
+            raise ValueError("Cannot preview an empty scenario selection")
+    if (sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED
+            and sampling["sampler_seed"] is None and resolved_seed is None):
+        resolved_seed = randbits(64)
+    seed = sampling.get("sampler_seed") if resolved_seed is None else resolved_seed
+    assignments = build_direct_assignments(
+        selected, models, include_self=include_self, assignments_path=external,
+        criteria=criteria, **{**sampling, "sampler_seed": seed},
+    )
+    if preview:
+        save_preview(path, inputs, seed, assignments)
+    return assignments, resolved_seed
+
+
 def _run_context_from_spec(
     run_spec: dict,
     run_dir: Path,
@@ -180,19 +223,16 @@ def _run_context_from_spec(
         generation = resolve_pairwise_generation_settings(collection_cfg)
     assignments = []
     assignments_path = collection_cfg.get("assignments_path")
+    if not is_direct and preview_path(collection_cfg).exists():
+        raise ValueError("This directory has a direct-rating preview; use a new output directory")
     if is_direct:
         sampling = resolve_direct_sampling_settings(
             collection_cfg, num_models=len(spec_models), include_self=include_self
         )
         if build_assignments:
-            plan_sampling = sampling if resolved_sampler_seed is None else {
-                **sampling, "sampler_seed": resolved_sampler_seed,
-            }
-            if assignments_path and set(spec_models) != set(run_spec["models"]):
-                raise ValueError("Explicit assignments cannot add or remove models from the spec panel")
-            assignments = build_direct_assignments(
-                selected, spec_models, include_self=include_self,
-                assignments_path=assignments_path, criteria=criteria, **plan_sampling,
+            assignments, resolved_sampler_seed = direct_plan(
+                run_spec, selected, criteria, spec_models, include_self, sampling,
+                resolved_seed=resolved_sampler_seed,
             )
     else:
         sampling = {"sampler_mode": collection_cfg.get("sampler_mode")}
@@ -219,6 +259,10 @@ def _run_context_from_spec(
         needed = direct_response_keys(assignments)
         seed = {key: answer for key, answer in seed.items() if key in needed}
         plan_meta["assignments_sha256"] = direct_input_sha256(assignments)
+    elif sampling["sampler_mode"] == DIRECT_SAMPLER_PAIR_BALANCED and build_assignments:
+        plan_meta["assignments_sha256"] = direct_input_sha256(judgment_rows(assignments))
+        if resolved_sampler_seed is not None:
+            plan_meta["resolved_sampler_seed"] = resolved_sampler_seed
 
     return {
         "is_direct": is_direct,
@@ -227,6 +271,7 @@ def _run_context_from_spec(
         "selected": selected,
         "criteria": criteria,
         "assignments": assignments,
+        "resolved_sampler_seed": resolved_sampler_seed,
         "generation": generation,
         "sampling": sampling,
         "include_self": include_self,

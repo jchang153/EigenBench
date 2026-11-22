@@ -119,20 +119,29 @@ def cli() -> None:
     parser.add_argument("spec", help="Path to run spec")
     parser.add_argument("--collection-enabled", type=str.lower, choices=["true", "false"], default=None,
                         help="Override collection.enabled (true/false)")
-    parser.add_argument("--resume-log", metavar="EVAL_LOG",
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--resume-log", metavar="EVAL_LOG",
                         help="Retry only unfinished hosted direct judgments from this Inspect log")
-    parser.add_argument(
+    action.add_argument(
         "--estimate-calls",
         action="store_true",
         help="Print the planned logical generation/API counts without running collection",
     )
+    action.add_argument("--preview-assignments", action="store_true",
+                        help="Save the pair-balanced judge draw for inspection without model calls")
     args = parser.parse_args()
-    if args.estimate_calls and args.resume_log:
-        parser.error("--estimate-calls and --resume-log cannot be combined")
     collection_override = None
     if args.collection_enabled is not None:
         collection_override = args.collection_enabled.lower() == "true"
-    if args.estimate_calls:
+    if args.preview_assignments:
+        from inspect_pipeline.assignment_preview import preview_path
+        from inspect_pipeline.collection.direct_rating import estimate_direct_calls_for_spec
+        spec, run_dir = load_run_spec(args.spec)
+        if spec["evaluation"]["mode"] != "direct_rating" or spec.get("extension"):
+            parser.error("--preview-assignments requires a direct-rating run, not an extension")
+        estimate = estimate_direct_calls_for_spec(spec, run_dir, preview=True)
+        print(f"{estimate['rating_tasks']} primary judgments: {preview_path(spec['collection'])}")
+    elif args.estimate_calls:
         print(pprint.pformat(estimate_calls(args.spec), sort_dicts=False))
     else:
         main(args.spec, collection_enabled=collection_override, resume_log=args.resume_log)

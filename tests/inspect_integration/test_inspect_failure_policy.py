@@ -565,7 +565,7 @@ def test_runner_resume_only_calls_missing_judgment(write_spec, tmp_path, monkeyp
     if frozen:
         plan["judgments"].reverse()
         manifest.write_text(json.dumps(plan))
-        with pytest.raises(ValueError, match="explicit judgment plan changed"):
+        with pytest.raises(ValueError, match="judgment plan changed"):
             collect_direct_ratings_inspect(str(spec), resume_log=log)
         assert not trace.exists()
         plan["judgments"].reverse()

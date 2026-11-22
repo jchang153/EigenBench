@@ -179,7 +179,7 @@ def _fingerprint_problems(path: Path, ctx: dict) -> list[str]:
     if stored.get("protocol") != current["protocol"]:
         problems.append("the judging protocol or its prompts changed")
     if stored.get("assignments_sha256") != current.get("assignments_sha256"):
-        problems.append("the explicit judgment plan changed")
+        problems.append("the judgment plan changed")
     return problems
 
 
@@ -218,7 +218,7 @@ def check_reusable(evaluations_path: str | Path, records: list[dict], ctx: dict,
     if fingerprint.exists():
         problems += _fingerprint_problems(fingerprint, ctx)
     elif ctx.get("meta", {}).get("assignments_sha256"):
-        problems.append(f"the explicit judgment plan cannot be verified without {FINGERPRINT_FILE}")
+        problems.append(f"the judgment plan cannot be verified without {FINGERPRINT_FILE}")
     if problems:
         listed = "\n  - ".join(problems)
         raise RuntimeError(

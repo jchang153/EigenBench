@@ -21,7 +21,6 @@ from eigenbench.config import load_run_spec
 from eigenbench.protocol.direct_rating import (
     DIRECT_SAMPLER_ALL_TO_ALL,
     DIRECT_SAMPLER_EXPLICIT,
-    build_direct_assignments,
     direct_response_keys,
     estimate_direct_calls,
     resolve_direct_generation_settings,
@@ -30,7 +29,8 @@ from eigenbench.protocol.direct_rating import (
 from eigenbench.protocol.response_cache import cached_seed
 from eigenbench.records import load_records
 
-from ..context import _run_context_from_spec, has_local_models, load_selection, resolve_spec_ref
+from ..assignment_preview import preview_path
+from ..context import _run_context_from_spec, direct_plan, has_local_models, load_selection, resolve_spec_ref
 from .phased import eval_phase, model_phase, use_run_context
 from inspect_pipeline.eigenbench import eigenbench
 from inspect_pipeline.phased import eigenbench_judge, eigenbench_responses
@@ -48,26 +48,18 @@ from ..models import model_execution
 from ..generation import STORE_RESPONSE
 
 
-def estimate_direct_calls_for_spec(spec: dict, run_dir: Path) -> dict:
-    """Count planned generations without collecting or writing artifacts."""
-
-    models = spec["models"]
-    collection_cfg = spec.get("collection", {})
-    evaluation_cfg = spec.get("evaluation", {})
-    include_self = bool(
-        (evaluation_cfg.get("direct_rating", {}) or {}).get("include_self", True)
-    )
-    resolve_direct_generation_settings(collection_cfg)
+def estimate_direct_calls_for_spec(spec: dict, run_dir: Path, *, preview: bool = False) -> dict:
+    """Count planned generations offline, optionally saving the draw for review."""
+    models, cfg = spec["models"], spec["collection"]
+    include_self = bool((spec["evaluation"].get("direct_rating") or {}).get("include_self", True))
+    resolve_direct_generation_settings(cfg)
     selected, criteria = load_selection(spec, run_dir)
-    sampling = resolve_direct_sampling_settings(
-        collection_cfg, num_models=len(models), include_self=include_self
-    )
-    assignments = build_direct_assignments(
-        selected, models, include_self=include_self,
-        assignments_path=collection_cfg.get("assignments_path"), criteria=criteria, **sampling,
-    )
-    seed = cached_seed(collection_cfg.get("cached_responses_path"), selected, models, merge_rows=True)
-    return _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed)
+    sampling = resolve_direct_sampling_settings(cfg, num_models=len(models), include_self=include_self)
+    assignments, seed = direct_plan(spec, selected, criteria, models, include_self, sampling, preview=preview)
+    cached = cached_seed(cfg.get("cached_responses_path"), selected, models, merge_rows=True)
+    if seed is not None:
+        sampling = {**sampling, "sampler_seed": seed}
+    return _estimate_direct_plan(selected, models, include_self, sampling, assignments, cached)
 
 
 def _estimate_direct_plan(selected, models, include_self, sampling, assignments, seed) -> dict:
@@ -291,7 +283,7 @@ def _resume_judgments(log: EvalLog, task, ctx, spec_ref: str, existing: list[dic
     if any(key not in old_meta or old_meta[key] != ctx["meta"][key] for key in identity):
         raise ValueError("Cannot resume: the log's dataset, rubric, model panel or settings differ")
     if old_meta.get("assignments_sha256") != ctx["meta"].get("assignments_sha256"):
-        raise ValueError("Cannot resume: the explicit judgment plan changed")
+        raise ValueError("Cannot resume: the judgment plan changed")
     config = log.eval.config
     if (config.limit is not None or config.sample_id is not None or config.sample_shuffle
             or config.epochs not in (None, 1)):
@@ -390,12 +382,16 @@ def collect_direct_ratings_inspect(
             and collection_cfg.get("sampler_seed") is None):
         if previous is not None:
             resolved_seed = (previous.eval.task_args_passed or {}).get("resolved_sampler_seed")
+            if resolved_seed is None:
+                resolved_seed = (previous.eval.metadata or {}).get("eigenbench", {}).get("resolved_sampler_seed")
             if type(resolved_seed) is not int:
                 raise ValueError("Cannot resume: the log does not record the resolved sampler seed")
-        else:
-            resolved_seed = (read_resolved_sampler_seed(evaluations_path) if has_output
-                             else randbits(64))
+        elif has_output:
+            resolved_seed = read_resolved_sampler_seed(evaluations_path)
+        elif not preview_path(collection_cfg).exists():
+            resolved_seed = randbits(64)
     ctx = _run_context_from_spec(spec, run_dir, models, resolved_sampler_seed=resolved_seed)
+    resolved_seed = ctx["resolved_sampler_seed"]
     estimate = write_call_estimate(spec, run_dir, context=ctx, resolved_sampler_seed=resolved_seed)
     planned = estimate["rating_tasks"]
     # A completed run short-circuits only if it is this plan's collection; anything else

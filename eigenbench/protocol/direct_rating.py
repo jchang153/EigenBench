@@ -361,6 +361,8 @@ def _pair_balanced_assignments(selected, model_nicks, include_self, seed, criter
 
     if not criteria:
         raise ValueError("pair_balanced_random_matching requires the ordered rubric criteria")
+    # Rubrics can select overlapping prompt sets. Reuse the answer, not a fixed
+    # judge lineup: balance the pairs over each rubric's own selected prompts.
     rng = random.Random(None if seed is None else f"{seed}:primary:{direct_input_sha256(criteria)}")
     n = len(model_nicks)
     shifts = range(0 if include_self else 1, n)
@@ -561,7 +563,7 @@ def build_direct_assignments(
     return assignments
 
 
-def direct_input_sha256(value: list) -> str:
+def direct_input_sha256(value: object) -> str:
     return hashlib.sha256(json.dumps(value).encode()).hexdigest()
 
 

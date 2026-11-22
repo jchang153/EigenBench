@@ -71,10 +71,10 @@ def test_sparse_frozen_plan_estimates_collects_and_caches_exact_edges(frozen, ph
     assert collect_direct_ratings_inspect(spec, scoring=False) == output
     rows.reverse()
     manifest.write_text(json.dumps(plan))
-    with pytest.raises(RuntimeError, match="explicit judgment plan changed"):
+    with pytest.raises(RuntimeError, match="judgment plan changed"):
         collect_direct_ratings_inspect(spec, scoring=False)
     manifest.with_name(FINGERPRINT_FILE).unlink()
-    with pytest.raises(RuntimeError, match="explicit judgment plan cannot be verified"):
+    with pytest.raises(RuntimeError, match="judgment plan cannot be verified"):
         collect_direct_ratings_inspect(spec, scoring=False)
 
 
