@@ -1,6 +1,6 @@
 """Jonathan's grouped pairwise protocol as a native Inspect task.
 
-    inspect eval inspect_pipeline/pairwise.py -T spec=runs/my_run/spec.py
+    inspect eval inspect_pipeline/pairwise.py@eigenbench_pairwise
 
 One sample per ordered comparison. Responses and reflections are shared within
 sampled groups. See docs/inspect-pairwise-protocol.md for reference behavior.
@@ -49,6 +49,7 @@ STORE_EVAL2_RESPONSE = "eigenbench:eval2_response"
 STORE_EVAL1_REFLECTION = "eigenbench:eval1_reflection"
 STORE_EVAL2_REFLECTION = "eigenbench:eval2_reflection"
 STORE_JUDGE_RESPONSE = "eigenbench:judge_response"
+DEFAULT_PAIRWISE_SPEC = "runs/inspect_register_pairwise/spec.py"
 
 def pairwise_cache_scope(kind: str, *parts) -> str:
     """Use the same generation scopes in single-task and phased collection.
@@ -426,7 +427,7 @@ def build_pairwise_task(
 
 @task
 def eigenbench_pairwise(
-    spec: str,
+    spec: str = DEFAULT_PAIRWISE_SPEC,
     *,
     models: dict[str, object] | None = None,
     cache: bool | None = None,
@@ -436,6 +437,7 @@ def eigenbench_pairwise(
 
     Args:
         spec: run spec module or path with ``evaluation.mode='pairwise_btd'``.
+            Defaults to the pinned Inspect Register pairwise configuration.
         models: optional override of the spec's models (Python callers only).
         cache: override ``collection.inspect.cache``.
 
